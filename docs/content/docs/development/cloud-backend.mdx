@@ -13,6 +13,7 @@ description: IDONE 登录、TokenONE 功能渠道与独立 PostgreSQL 部署
 - 管理员通过 `ADMIN_SUBJECTS` 指定 IDONE 的 `sub`，不自动提升首位登录者。
 - 管理员在 `/admin/channels` 配置功能、TokenONE 分组和模型白名单。同一功能可设置多个渠道，用户在已有模型选择器中选择模型与渠道，不能直接指定分组。
 - 每次调用前，服务端使用已验证身份、渠道绑定的数字 `group_id` 和固定 `key_name` 请求 Enhancer 的 `/internal/tokenone/api-key/ensure`，自动获取或创建 Key。未验证邮箱可登录，但不能调用模型。
+- TokenONE 账号由 IDONE 注册 webhook 创建；CreativeOne 默认发送 `allow_user_creation: false`，缺少账号返回「模型服务账号尚未同步」，不创建账号、不调用模型，也不阻止登录和数据同步。已有账号仍可自动获取/创建功能分组 Key。需要同时部署支持该字段的新版 Enhancer；旧版接口严格校验会拒绝请求，禁止回退到旧的自动建号调用。
 - Key 仅在请求期间留在服务端内存；数据库只保存绑定 ID。不缓存长期 Key，也不在分组无权限、停用、额度不足时私建备用 Key。
 - 模型经 `TOKENONE_BASE_URL` 的 OpenAI 兼容接口访问。目前支持图片生成/编辑、Responses/Chat Completions、视频任务及内容、语音生成；云端渠道不开放自定义请求脚本和 Gemini 原生协议。
 - 请求错误日志仅记错误码和请求 ID，不记录 Cookie、身份令牌、Key 或原始上游响应。
@@ -73,6 +74,8 @@ IDONE 应用专属元数据通过 `IDONE_DISCOVERY_URL` 配置，应用名应与
 `npm start` 面向容器注入环境变量，不自动读取 `.env`；本地开发使用 `npm run dev`。未设置云端开关时仍为原本地模式，Key 保存在浏览器并直接请求模型。
 
 仅联调身份和存储时，可暂不设置 `ENHANCER_BASE_URL`、`ENHANCER_INTERNAL_SECRET`、`TOKENONE_BASE_URL`。相关管理/模型接口明确返回「未配置」，不会使用占位凭据或自动连接其他服务。
+
+默认不自动创建 TokenONE 账号。仅本地测试需要绕过注册 webhook 时，在 CreativeOne 的开发环境同时设置 `NODE_ENV=development` 和 `DEV_AUTO_CREATE_TOKENONE_USER=true`，并让 Enhancer 也显式使用 `NODE_ENV=development`。开关默认关闭，不加入生产 Compose；在生产或未明确声明为开发环境时误开，CreativeOne 拒绝启动，Enhancer 也会拒绝对应建号请求。Webhook 建号不受该开关影响；不更改已有账号密码或余额。
 
 当前本机配置使用 `http://192.168.10.38:3002`（不替换原 3001 前端）、`http://192.168.10.38:8000` 的 IDONE 应用 `creativeone-local`、4011 后端和仅回环暴露的 5433 PostgreSQL。数据库由 `creativeone-local-postgres` 容器及同名持久化卷保存；媒体目录为 `server/data/media`。业务测试用户位于 AgentONE 组织，不具备 IDONE 系统管理员权限，随机测试密码仅保存在本机 `server/.env` 的 `LOCAL_TEST_PASSWORD`，不要提交或复制该文件至文档。
 

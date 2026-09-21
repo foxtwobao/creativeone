@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [调整] TokenONE 账号改由 IDONE 注册同步，模型调用缺少账号时显示同步提示，仅显式开发环境允许开启测试自动建号，用户 Key 创建逻辑保持不变。
 + [调整] Docker 部署配置统一为根目录一份 .env，仅列部署、身份与模型连接参数，内部配置沿用默认值，可选连接参数支持留空。
 + [调整] 服务器 Compose 使用 PostgreSQL 18 Alpine，并将数据库卷挂载点调整为 `/var/lib/postgresql`，已有旧版数据需单独迁移。
 + [新增] 服务器版使用单个 creativeone 镜像集成前端与 API，配套 PostgreSQL 和媒体卷，新增 Docker Hub 双架构发布工作流并完善容器配置。

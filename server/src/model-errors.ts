@@ -1,6 +1,8 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    TOKENONE_USER_NOT_FOUND: "你的模型服务账号尚未同步，请稍后手动重试；若持续出现，请联系管理员检查 IDONE 同步状态。",
+    TOKENONE_USER_CREATION_FORBIDDEN: "当前环境不允许自动创建模型服务账号，请联系管理员检查开发配置。",
     INSUFFICIENT_BALANCE: "账户余额不足，暂时无法使用模型。请前往 TokenONE 充值，完成后手动重试。",
     API_KEY_DISABLED: "当前模型 Key 已停用，请联系管理员处理后重试。",
     API_KEY_EXPIRED: "当前模型 Key 已过期，请联系管理员处理后重试。",

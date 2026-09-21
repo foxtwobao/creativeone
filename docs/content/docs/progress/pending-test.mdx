@@ -7,6 +7,7 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- TokenONE 账号边界：默认 Key 请求显式禁止建号，账号不存在或已删除时显示同步提示，模型接口不被调用；Webhook 同步完成后可手动重试，已有账号仍可创建/复用分组 Key。开发自动建号需 CreativeOne 开关及两端 `NODE_ENV=development`，生产误开拒绝。需同时部署新版 Enhancer；不得回退旧接口。Enhancer 的 Key/Webhook 22 项模拟测试与 CreativeOne 策略/错误提示 7 项测试通过，未构建、未请求真实模型。待真实注册 webhook、生产环境缺账号提示与开发开关联调；不重置现有密码、不改余额。TODO 无需调整。
 - Docker 单配置文件：只复制根目录 `.env.example` 为 `.env`，Compose 仅列部署、IDONE 和模型连接参数，不再依赖 `server/.env`；源码开发仍保留独立配置。会话 7 天、登录 10 分钟、媒体 100 MiB、JSON 20 MiB 默认值移入后端配置，不改变已确认边界；内部路径/端口继续由镜像提供。验收精简配置启动、缺少必填项报错、可选 Discovery/模型服务留空及登录/生成；独立 CDN 需额外配置白名单。本次未构建或重启容器，未改本地凭据；TODO 无需调整。
 - PostgreSQL 18 部署配置：主 Compose 使用 `postgres:18-alpine`，数据库卷挂载到 `/var/lib/postgresql`，源码部署通过叠加配置继承。需使用新卷验收初始化及重建容器后的持久化；已有旧版数据库必须先备份并单独迁移。本次未启动、升级或迁移数据库，未执行构建；TODO 无需调整。
 - 服务器 Docker 部署：单镜像包含 Nginx/API，仅发布 `creativeone`，应用非 root 运行；Compose 保留应用、PostgreSQL 和独立媒体卷。镜像部署、源码叠加、本地 include 三种 Compose 配置检查均通过。核对 Docker Hub 双架构构建、生产 HTTPS IDONE 登录、静态资源 404、媒体读写、重启持久化与进程退出联动。工作流复用现有 Docker Hub Secrets，PR 不发布镜像；未执行本地镜像构建或生产联调，不能视为部署验收完成。TODO 无新增功能规划。

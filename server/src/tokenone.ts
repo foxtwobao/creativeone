@@ -33,6 +33,7 @@ export async function ensureKey(user: User, groupId: number, requestId: string) 
     const result = keySchema.parse(await enhancer("/internal/tokenone/api-key/ensure", requestId, {
         identity: { issuer: user.issuer, subject: user.subject, email: user.email, username: user.username, email_verified: user.email_verified },
         group_id: groupId, key_name: env.TOKENONE_KEY_NAME,
+        allow_user_creation: env.DEV_AUTO_CREATE_TOKENONE_USER === "true",
     }));
     if (result.api_key.group_id !== groupId) throw new HttpError(502, "KEY_GROUP_MISMATCH");
     await db.query(`INSERT INTO key_bindings VALUES ($1,$2,$3,$4) ON CONFLICT (user_id,group_id) DO UPDATE SET tokenone_user_id=EXCLUDED.tokenone_user_id,key_id=EXCLUDED.key_id`, [user.id, groupId, result.tokenone_user_id, result.api_key.id]);
