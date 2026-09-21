@@ -4,10 +4,20 @@ services:
     image: ${APP_IMAGE:-creativeone:local}
     ports:
       - "${APP_PORT:-3001}:3000"
-    env_file: ./server/.env
     environment:
+      # 对外访问地址与 IDONE 登录配置（来自根目录 .env）。
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+      IDONE_ISSUER: ${IDONE_ISSUER:?Set IDONE_ISSUER}
+      IDONE_DISCOVERY_URL: ${IDONE_DISCOVERY_URL:-}
+      IDONE_CLIENT_ID: ${IDONE_CLIENT_ID:?Set IDONE_CLIENT_ID}
+      IDONE_CLIENT_SECRET: ${IDONE_CLIENT_SECRET:?Set IDONE_CLIENT_SECRET}
+      ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:?Set ADMIN_SUBJECTS}
+      # 模型服务；留空时仅启用登录与数据同步。
+      ENHANCER_BASE_URL: ${ENHANCER_BASE_URL:-}
+      ENHANCER_INTERNAL_SECRET: ${ENHANCER_INTERNAL_SECRET:-}
+      TOKENONE_BASE_URL: ${TOKENONE_BASE_URL:-}
+      # 数据库连接自动组装；内部目录、端口及运行边界使用镜像/程序默认值。
       DATABASE_URL: postgresql://creativeone:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/creativeone
-      MEDIA_DIR: /app/data/media
     volumes:
       - media:/app/data/media
     depends_on:

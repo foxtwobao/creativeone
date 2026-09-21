@@ -36,12 +36,14 @@ PostgreSQL 保存账号、会话、渠道、Key 绑定、JSON 文档和生成任
 服务器版只使用一个应用镜像 `<Docker Hub 用户名>/creativeone`，包含 Nginx 前端与 Node.js API；数据库使用独立 PostgreSQL 容器。对外只发布应用 3000 端口，4011 API 端口不映射到宿主机。应用以非 root 用户运行。
 
 1. 按根目录 `.env.example` 创建 `.env`，设置 `APP_IMAGE`、`APP_PORT` 和独立 PostgreSQL 密码（当前连接串使用密码原文，请使用 URL-safe 随机密码）。`APP_IMAGE` 使用已发布的镜像标签，生产建议固定版本或 `sha-` 标签。
-2. 按 `server/.env.example` 创建 `server/.env`，填写 IDONE Client ID/Secret、Issuer、管理员 sub、Enhancer 地址/服务密钥和 TokenONE Base URL。不要把这些值写入前端环境变量或提交 Git。
+2. 在同一份根目录 `.env` 中填写 IDONE Client ID/Secret、Issuer、管理员 sub、Enhancer 地址/服务密钥和 TokenONE Base URL。Compose 的 `environment` 已逐项列出这些参数，不再读取 `server/.env`，也不需要挂载配置文件。不要把密钥写入前端环境变量或提交 Git。仅启用登录与同步时，三个 Enhancer/TokenONE 连接参数均可留空；应用专属 Discovery 留空则使用标准发现地址。
 3. `APP_ORIGIN` 必须是浏览器访问的完整 origin，无尾斜杠，例如 `https://creative.example.com`。在 IDONE 注册回调 `https://creative.example.com/api/auth/callback`，启用 `openid profile email`、PKCE S256 和 `client_secret_post`。Issuer 必须与 discovery 和 ID Token 的 `iss` 完全一致。
 4. 让服务容器能够访问 Enhancer。示例里的 `tokenone-enhancer` 只是占位地址，Compose 不会部署或自动连接外部 TokenONE 网络；按环境使用可达内网地址或显式配置共享 Docker 网络。只向受信网络传输 Enhancer 服务密钥，跨不可信网络使用 HTTPS。
-5. 若生成文件来自独立 CDN，在 `MEDIA_DOWNLOAD_HOSTS` 配置准确 HTTPS 主机名（含非默认端口），逗号分隔；TokenONE 主机默认允许。下载拒绝重定向，不允许任意外部 URL，未允许的结果会显示错误。
+5. 若生成文件来自独立 CDN，需在 Compose 的 `app.environment` 额外添加 `MEDIA_DOWNLOAD_HOSTS`，值为准确 HTTPS 主机名（含非默认端口），多个以逗号分隔；TokenONE 主机默认允许。下载拒绝重定向，不允许任意外部 URL，未允许的结果会显示错误。为保持配置简洁，默认模板不列此高级参数。
 6. 使用已发布镜像执行 `docker compose pull`、`docker compose up -d`；源码构建使用 `docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build`，也可使用 `docker compose -f docker-compose.local.yml up -d --build`（需要支持 include 的 Compose）。生产环境在外层配置 HTTPS 反向代理。镜像设置 `NODE_ENV=production`，IDONE 必须使用 HTTPS，不能直接复用本机 HTTP 联调配置。
 7. 管理员登录后进入「渠道管理」，分别添加生图、聊天等渠道及真实可用模型，刷新页面生效。
+
+模板只列镜像、对外地址/端口、数据库密码、IDONE 身份配置和三个模型服务连接参数。会话、上传限制沿用下表已确认默认值；内部端口、媒体目录、生产模式和云端开关由镜像设置，无需重复填写。TokenONE Key 名称默认 `creativeone`，统计分析默认关闭。
 
 Compose 使用项目独立的 `postgres`、`media` 两个命名卷，数据库不发布宿主机端口；不会共享 IDONE 或 TokenONE 的数据库。服务启动时建表，不迁移旧浏览器数据。备份时需要同时备份 PostgreSQL 和媒体卷，恢复时保持一致；不要使用 `down -v` 除非明确要删除所有项目数据。
 
@@ -66,7 +68,7 @@ Compose 使用项目独立的 `postgres`、`media` 两个命名卷，数据库�
 
 IDONE 应用专属元数据通过 `IDONE_DISCOVERY_URL` 配置，应用名应与 IDONE 中创建的专用客户端一致，不得复用其他项目 Secret。显式 Discovery 的 Issuer 会单独严格核对。开发时默认仅回环地址允许 HTTP；同主机局域网 HTTP 需要明确设置 `IDONE_ALLOW_HTTP=true`，仅用于可信开发网络，`NODE_ENV=production` 时拒绝 HTTP。签名、Issuer、Audience、PKCE 等校验不关闭。
 
-启动独立 PostgreSQL，并在 `server/.env` 配置可用 `DATABASE_URL`。在 `server` 目录执行 `npm ci`、`npm run dev`；在 `web` 目录执行 `VITE_CLOUD_ENABLED=true npm run dev -- --port 3001`。Vite 将 `/api` 转发到 `127.0.0.1:4011`，`APP_ORIGIN` 应为 `http://localhost:3001`，浏览器也必须使用这个 origin。
+源码开发（不使用 Docker）才需要按 `server/.env.example` 创建 `server/.env`。启动独立 PostgreSQL，并在该文件配置可用 `DATABASE_URL`。在 `server` 目录执行 `npm ci`、`npm run dev`；在 `web` 目录执行 `VITE_CLOUD_ENABLED=true npm run dev -- --port 3001`。Vite 将 `/api` 转发到 `127.0.0.1:4011`，`APP_ORIGIN` 应为 `http://localhost:3001`，浏览器也必须使用这个 origin。
 
 `npm start` 面向容器注入环境变量，不自动读取 `.env`；本地开发使用 `npm run dev`。未设置云端开关时仍为原本地模式，Key 保存在浏览器并直接请求模型。
 

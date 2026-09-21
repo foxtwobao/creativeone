@@ -1,23 +1,24 @@
 import { z } from "zod";
 
 const positive = z.coerce.number().int().positive();
+const emptyAsUndefined = (value: unknown) => value === "" ? undefined : value;
 export const env = z.object({
     DATABASE_URL: z.string().min(1),
     APP_ORIGIN: z.url(),
     IDONE_ISSUER: z.url(),
-    IDONE_DISCOVERY_URL: z.url().optional(),
+    IDONE_DISCOVERY_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     IDONE_ALLOW_HTTP: z.enum(["true", "false"]).default("false"),
     IDONE_CLIENT_ID: z.string().min(1),
     IDONE_CLIENT_SECRET: z.string().min(1),
     ADMIN_SUBJECTS: z.string().min(1),
-    ENHANCER_BASE_URL: z.url().optional(),
-    ENHANCER_INTERNAL_SECRET: z.string().min(1).optional(),
-    TOKENONE_BASE_URL: z.url().optional(),
+    ENHANCER_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
+    ENHANCER_INTERNAL_SECRET: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
+    TOKENONE_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     TOKENONE_KEY_NAME: z.string().min(1).max(100).default("creativeone"),
-    SESSION_SECONDS: positive,
-    LOGIN_SECONDS: positive,
-    MAX_MEDIA_BYTES: positive,
-    MAX_JSON_BYTES: positive,
+    SESSION_SECONDS: positive.default(604800),
+    LOGIN_SECONDS: positive.default(600),
+    MAX_MEDIA_BYTES: positive.default(104857600),
+    MAX_JSON_BYTES: positive.default(20971520),
     MEDIA_DIR: z.string().min(1).default("./data/media"),
     MEDIA_DOWNLOAD_HOSTS: z.string().default(""),
     PORT: positive.default(4011),

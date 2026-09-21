@@ -119,7 +119,6 @@ bun run dev
 git clone https://github.com/foxtwobao/creativeone.git
 cd creativeone
 cp .env.example .env
-cp server/.env.example server/.env
 # 按部署文档填写镜像名、数据库密码和 IDONE / TokenONE 配置
 docker compose pull
 docker compose up -d
