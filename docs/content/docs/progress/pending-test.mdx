@@ -7,6 +7,7 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- PostgreSQL 18 部署配置：主 Compose 使用 `postgres:18-alpine`，数据库卷挂载到 `/var/lib/postgresql`，源码部署通过叠加配置继承。需使用新卷验收初始化及重建容器后的持久化；已有旧版数据库必须先备份并单独迁移。本次未启动、升级或迁移数据库，未执行构建；TODO 无需调整。
 - 服务器 Docker 部署：单镜像包含 Nginx/API，仅发布 `creativeone`，应用非 root 运行；Compose 保留应用、PostgreSQL 和独立媒体卷。镜像部署、源码叠加、本地 include 三种 Compose 配置检查均通过。核对 Docker Hub 双架构构建、生产 HTTPS IDONE 登录、静态资源 404、媒体读写、重启持久化与进程退出联动。工作流复用现有 Docker Hub Secrets，PR 不发布镜像；未执行本地镜像构建或生产联调，不能视为部署验收完成。TODO 无新增功能规划。
 - 云端设置页样式：收窄内容宽度，将深灰提示框改为主题自适应说明卡片，默认模型选择框去阴影并按行分区；小屏上下排列。视频按关闭开关隐藏，音频仅配置模型后显示；管理员区域仍仅管理员可见，后端权限未修改。验收明暗模式、配置弹窗及选择模型后保存。此次仅修改源码，未重新构建，当前构建预览仍是上次产物；TODO 无需调整。
 - 本地构建验收：按用户要求以云端模式执行 `npm run build` 成功，构建产物已在 `http://192.168.10.38:3002/studio` 启动预览；CreativeOne API 与本地 Enhancer 健康检查通过，登录接口代理正常返回未登录状态。构建存在分包体积及混合导入警告；未发起真实模型调用，页面交互和生图由用户测试。
