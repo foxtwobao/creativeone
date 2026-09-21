@@ -31,6 +31,17 @@ export function AppProviders({ children }: { children: ReactNode }) {
     const locale = i18n.resolvedLanguage as AppLocale;
 
     useEffect(() => {
+        const media = window.matchMedia("(prefers-color-scheme: dark)");
+        const syncTheme = () => {
+            const { mode, setTheme } = useThemeStore.getState();
+            if (mode === "system") setTheme("system");
+        };
+        media.addEventListener("change", syncTheme);
+        syncTheme();
+        return () => media.removeEventListener("change", syncTheme);
+    }, []);
+
+    useEffect(() => {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = theme;
     }, [dark, theme]);

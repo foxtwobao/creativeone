@@ -1,7 +1,16 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
+import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Popover, Tag, Tooltip, Typography } from "antd";
+import { ChevronDown, Send, X, Bot, Search } from "lucide-react";
+import { useLocation } from "react-router-dom";
+import { useInterfaceStore } from "@/stores/use-interface-store";
+import { useAgentStore } from "@/stores/use-agent-store";
+import { features } from "@/constant/features";
+import { StudioSettings } from "./studio-settings";
+import { splitErrorMessage } from "@/services/api/error-message";
+import { StudioInspiration } from "./studio-inspiration";
+import { createUserStore } from "@/services/cloud-storage";
+import { CLOUD_ENABLED } from "@/services/api/cloud";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -65,9 +74,13 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const logStore = createUserStore("image_generation_logs");
 
 export default function ImagePage() {
+    const { pathname } = useLocation();
+    const studio = useInterfaceStore((state) => state.studio) || !features.originalUi || pathname === "/studio";
+    const toggleAgent = useAgentStore((state) => state.togglePanel);
+    const [logSearch, setLogSearch] = useState("");
     const { message } = App.useApp();
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
@@ -362,8 +375,31 @@ export default function ImagePage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+        <div className={studio ? "studio-workbench" : "flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100"}>
+            {studio ? <main className={`studio-stage ${results.length ? "has-results" : ""}`}>
+                <div className="studio-page-tools"><span>创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
+                <section className="studio-compose-area">
+                    <h1><span>准备好了，</span>随时开始</h1>
+                    <div className="studio-compose-tools">
+                        <button className="studio-chip" onClick={() => setLogsOpen(true)}><History size={14} />历史记录</button>
+                        {features.assistant && <button className="studio-chip" onClick={toggleAgent}><Bot size={14} />启动助手</button>}
+                        <button className="studio-chip" onClick={() => setPromptDialogOpen(true)}><BookOpen size={14} />提示词</button>
+                        {features.imageAdvancedSettings && <button className="studio-chip" onClick={() => setSettingsOpen(true)}><SlidersHorizontal size={14} />详细设置</button>}
+                    </div>
+                    <div className="studio-composer" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void addReferences(event.dataTransfer.files).catch(() => message.error("参考图导入失败，请重试")); }}>
+                        {references.length ? <div className="studio-references">{references.map((item, index) => <div key={item.id}><img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} /><span>{imageReferenceLabel(index)}</span><button aria-label="移除参考图" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}><X size={12} /></button><ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} /></div>)}</div> : null}
+                        <div className="studio-input-row">
+                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
+                            <Input.TextArea aria-label="创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述你的灵感，让想象发生…" onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (canGenerate && !running) void generate(); } }} />
+                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings />}><button className="studio-model-button">模型<ChevronDown size={14} /></button></Popover>
+                            <button className="studio-send" aria-label="开始生成" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
+                        </div>
+                    </div>
+                    <div className="studio-composer-caption"><span>{references.length ? `${references.length} 张参考图 · ` : ""}{modelOptionLabel(effectiveConfig, model)} · {generationCount} 张</span><span>Enter 生成 · Shift + Enter 换行</span></div>
+                </section>
+                {results.length ? <section className="studio-results"><header><h2>{previewLog ? "历史作品" : "生成结果"}</h2>{running ? <span>正在生成 · {formatDuration(elapsedMs)}</span> : <span>灵感，已成形</span>}</header><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{results.map((result, index) => result.status === "success" && result.image ? <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} /> : <PendingImageCard key={result.id} />)}</div></section> : <StudioInspiration onSelect={setPrompt} onUpload={() => fileInputRef.current?.click()} />}
+                <p className="studio-local-note">{CLOUD_ENABLED ? "画布ONE · 创作数据按账号保存并同步到云端" : "画布ONE · 画布与创作记录保存在当前浏览器"}</p>
+            </main> : <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
@@ -517,7 +553,7 @@ export default function ImagePage() {
                         )}
                     </div>
                 </section>
-            </main>
+            </main>}
             <input
                 ref={fileInputRef}
                 type="file"
@@ -530,8 +566,9 @@ export default function ImagePage() {
                 }}
             />
             <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
+                {studio ? <Input className="mb-4" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => setLogSearch(event.target.value)} /> : null}
                 <LogPanel
-                    logs={logs}
+                    logs={studio ? logs.filter((log) => `${log.title} ${log.prompt}`.toLowerCase().includes(logSearch.toLowerCase())) : logs}
                     selectedLogIds={selectedLogIds}
                     activeLogId={previewLog?.id}
                     onSelectedLogIdsChange={setSelectedLogIds}
@@ -640,13 +677,15 @@ function PendingImageCard() {
 
 function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
+    const { message: errorMessage, details } = splitErrorMessage(error);
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
                 <div className="text-sm font-medium text-red-600 dark:text-red-300">{t("workbench.failed")}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {error}
+                    {errorMessage}
                 </Typography.Paragraph>
+                {details ? <details className="max-w-full text-left text-xs text-muted-foreground"><summary className="cursor-pointer text-center">错误详情</summary><pre className="mt-2 whitespace-pre-wrap break-all font-sans">{details}</pre></details> : null}
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
                 <Button size="small" danger onClick={onRetry}>

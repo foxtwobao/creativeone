@@ -1,4 +1,5 @@
-import localforage from "localforage";
+import { createUserStore, localUserStore } from "@/services/cloud-storage";
+import { CLOUD_ENABLED, cloudFileUrl } from "@/services/api/cloud";
 
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
@@ -14,10 +15,10 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
-const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
-const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
-const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const store = createUserStore("image_files");
+const previewStore = localUserStore("image_previews");
+const imageLogStore = createUserStore("image_generation_logs");
+const videoLogStore = createUserStore("video_generation_logs");
 const objectUrls = new Map<string, string>();
 const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
@@ -41,7 +42,7 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
-        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
+        if (CLOUD_ENABLED || options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
         const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
         if (!meta) throw error;
         return { url: input, width: meta.width, height: meta.height, bytes: 0, mimeType: "" };
@@ -58,9 +59,11 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         throwIfAborted(options?.signal);
         await store.setItem(storageKey, blob);
         throwIfAborted(options?.signal);
-        objectUrls.set(storageKey, url);
+        const persistentUrl = CLOUD_ENABLED ? cloudFileUrl("image_files", storageKey) : url;
+        objectUrls.set(storageKey, persistentUrl);
         await storeImagePreview(storageKey, blob);
-        return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
+        if (CLOUD_ENABLED) URL.revokeObjectURL(url);
+        return { url: persistentUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);
         await store.removeItem(storageKey).catch(() => undefined);
@@ -142,6 +145,7 @@ function throwIfAborted(signal?: AbortSignal) {
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
+    if (CLOUD_ENABLED) return cloudFileUrl("image_files", storageKey);
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
@@ -217,7 +221,7 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
     await store.setItem(storageKey, blob);
     await deleteImagePreview(storageKey);
     await storeImagePreview(storageKey, blob);
-    const url = URL.createObjectURL(blob);
+    const url = CLOUD_ENABLED ? cloudFileUrl("image_files", storageKey) : URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }

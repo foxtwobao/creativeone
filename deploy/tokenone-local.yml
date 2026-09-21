@@ -1,0 +1,52 @@
+name: creativeone-tokenone-local
+services:
+  tokenone:
+    image: weishaw/sub2api:latest
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "192.168.10.38:8080:8080"
+    environment:
+      AUTO_SETUP: "true"
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8080"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_USER: tokenone
+      DATABASE_PASSWORD: ${TOKENONE_LOCAL_DB_PASSWORD:?Required}
+      DATABASE_DBNAME: tokenone
+      DATABASE_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      ADMIN_EMAIL: ${TOKENONE_LOCAL_ADMIN_EMAIL:?Required}
+      ADMIN_PASSWORD: ${TOKENONE_LOCAL_ADMIN_PASSWORD:?Required}
+      JWT_SECRET: ${TOKENONE_LOCAL_JWT_SECRET:?Required}
+    volumes:
+      - tokenone:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tokenone
+      POSTGRES_DB: tokenone
+      POSTGRES_PASSWORD: ${TOKENONE_LOCAL_DB_PASSWORD:?Required}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenone -d tokenone"]
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+volumes:
+  tokenone:
+  postgres:
+  redis:

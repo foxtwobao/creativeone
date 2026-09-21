@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Executed automatically by the official nginx image entrypoint through /docker-entrypoint.d/*.sh before nginx starts.
+# Called by the server image startup script before nginx starts.
 # Generate runtime config.js from environment variables. Each analytics provider has an independent variable;
 # unset providers remain disabled, load no scripts, and send no external requests. Multiple providers may be enabled together.
 
@@ -13,9 +13,12 @@ sanitize_id() {
 
 GA4_ID=$(sanitize_id "${ANALYTICS_GA4_ID:-}")
 BAIDU_ID=$(sanitize_id "${ANALYTICS_BAIDU_ID:-}")
+CLOUD_MODE=false
+if [ "${CLOUD_ENABLED:-false}" = "true" ]; then CLOUD_MODE=true; fi
 
 cat > /usr/share/nginx/html/config.js <<EOF
 window.__RUNTIME_CONFIG__ = {
+  CLOUD_ENABLED: "${CLOUD_MODE}",
   ANALYTICS_GA4_ID: "${GA4_ID}",
   ANALYTICS_BAIDU_ID: "${BAIDU_ID}"
 };

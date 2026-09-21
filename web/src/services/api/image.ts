@@ -7,6 +7,8 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { CLOUD_ENABLED } from "@/services/api/cloud";
+import { cloudErrorMessage } from "./error-message";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
 
@@ -278,6 +280,8 @@ function parseImagePayload(payload: ImageApiResponse) {
 }
 
 function readApiErrorMessage(value: unknown): string {
+    const cloudMessage = CLOUD_ENABLED ? cloudErrorMessage(value) : "";
+    if (cloudMessage) return cloudMessage;
     if (!value) return "";
     if (typeof value === "string") {
         // The value may be serialized JSON, such as error.message, or a plain-text error.
@@ -428,6 +432,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function responseErrorMessage(value: unknown) {
+    const cloudMessage = CLOUD_ENABLED ? cloudErrorMessage(value) : "";
+    if (cloudMessage) return cloudMessage;
     if (!isRecord(value)) return "";
     const error = isRecord(value.error) ? value.error : undefined;
     const response = isRecord(value.response) ? value.response : undefined;
@@ -851,6 +857,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+    if (CLOUD_ENABLED) messages = await Promise.all(messages.map(async (message) => ({
+        ...message,
+        content: typeof message.content === "string" ? message.content : await Promise.all(message.content.map(async (part) =>
+            part.type === "image_url" && part.image_url.url.startsWith("/api/files/")
+                ? { ...part, image_url: { url: await imageToDataUrl({ url: part.image_url.url }) } } : part)),
+    })));
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {

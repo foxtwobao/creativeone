@@ -1,0 +1,8 @@
+{
+  "name": "creativeone-server",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "tsx watch --env-file=.env src/index.ts", "start": "tsx src/index.ts", "test": "tsx --test src/*.test.ts" },
+  "dependencies": { "cookie": "^1.0.2", "express": "^5.1.0", "multer": "^2.0.2", "openid-client": "^6.8.0", "pg": "^8.16.3", "tsx": "^4.20.6", "zod": "^4.1.12", "eventsource-parser": "^3.0.6" },
+  "devDependencies": { "@types/express": "^5.0.3", "@types/multer": "^2.0.0", "@types/node": "^22.0.0", "@types/pg": "^8.15.5" }
+}

@@ -1,4 +1,5 @@
 import { saveAs } from "file-saver";
+import { CLOUD_ENABLED } from "@/services/api/cloud";
 
 import i18n from "@/i18n";
 import { useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
@@ -18,6 +19,7 @@ type AppConfigFile = {
 };
 
 export function exportAppConfig() {
+    if (CLOUD_ENABLED) throw new Error("云端模式由管理员管理模型渠道，不支持导出连接凭据");
     const { config, webdav } = useConfigStore.getState();
     const { sources, schedule } = usePromptSourceStore.getState();
     const data: AppConfigFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), config, webdav, promptSources: { sources, schedule } };
@@ -25,6 +27,7 @@ export function exportAppConfig() {
 }
 
 export async function importAppConfig(file: File) {
+    if (CLOUD_ENABLED) throw new Error("云端模式由管理员管理模型渠道，不支持导入本地连接凭据");
     let data: AppConfigFile;
     try {
         data = JSON.parse(await file.text()) as AppConfigFile;

@@ -1,6 +1,7 @@
 import { FileText, ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
+import { features } from "./features";
 
-export const navigationTools = [
+const tools = [
     {
         slug: "canvas",
         icon: Maximize2,
@@ -27,4 +28,5 @@ export const navigationTools = [
     },
 ] as const;
 
-export type NavigationToolSlug = (typeof navigationTools)[number]["slug"];
+export const navigationTools = tools.filter(({ slug }) => (slug !== "canvas" || features.canvas) && (slug !== "video" || features.video));
+export type NavigationToolSlug = (typeof tools)[number]["slug"];

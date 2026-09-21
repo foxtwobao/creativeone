@@ -1,4 +1,5 @@
 import axios from "axios";
+import { CLOUD_ENABLED } from "@/services/api/cloud";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
@@ -139,7 +140,8 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
     if (result.url) {
         try {
             return await uploadMediaFile(result.url, "video");
-        } catch {
+        } catch (error) {
+            if (CLOUD_ENABLED) throw error;
             return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
         }
     }

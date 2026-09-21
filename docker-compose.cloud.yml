@@ -1,0 +1,7 @@
+# Source-build overlay: docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+services:
+  app:
+    image: creativeone:local
+    build:
+      context: .
+      dockerfile: Dockerfile

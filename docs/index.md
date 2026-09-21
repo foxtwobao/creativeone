@@ -16,6 +16,8 @@
 ## Development and Data
 
 - [Local Development](/docs/development/local-development)
+- [Multi-user Cloud Backend](/docs/development/cloud-backend)
+- [Local TokenONE Integration](/docs/development/local-tokenone)
 - [Canvas Data Structure](/docs/development/canvas-data-structure)
 - [How the Local Codex Connection Works](/docs/development/local-codex-canvas)
 
@@ -37,5 +39,5 @@
 
 ## Notes
 
-- Canvas projects and My Assets are primarily stored in the browser. WebDAV can be configured for cross-device synchronization.
-- The AI API key is stored in the browser, which sends requests directly to OpenAI-compatible endpoints.
+- In standalone mode, projects/assets and AI keys remain in the browser, with optional WebDAV synchronization and direct model requests.
+- Optional cloud mode adds IDONE authentication, server-side TokenONE feature routing and per-user PostgreSQL/media storage. Real provider and deployment acceptance remains in Pending Tests.

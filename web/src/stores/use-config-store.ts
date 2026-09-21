@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { CLOUD_ENABLED, cloudSession } from "@/services/api/cloud";
+import { createUserStore } from "@/services/cloud-storage";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
@@ -131,6 +133,23 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
     lastSyncedAt: "",
 };
 
+const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "models", "channelMode", "proxyEnabled", "proxyUrl"]);
+function applyCloudConfig(config: AiConfig): AiConfig {
+    if (!CLOUD_ENABLED) return config;
+    const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
+        id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability })),
+    }));
+    const next = { ...config, channels, models: modelOptionsFromChannels(channels), channelMode: "remote" as const, proxyEnabled: false, proxyUrl: "", baseUrl: "", apiKey: "", apiFormat: "openai" as const };
+    for (const [key, capability] of [["imageModel", "image"], ["textModel", "text"], ["videoModel", "video"], ["audioModel", "audio"]] as const) {
+        const choices = selectableModelsByCapability(next, capability);
+        next[key] = choices.includes(next[key]) ? next[key] : choices[0] || "";
+    }
+    next.model = next.imageModel;
+    return next;
+}
+const preferenceStore = CLOUD_ENABLED ? createUserStore("preferences") : null;
+
 type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
@@ -206,19 +225,20 @@ function isAiConfigReady(config: AiConfig, model: string) {
 export const useConfigStore = create<ConfigStore>()(
     persist(
         (set, get) => ({
-            config: defaultConfig,
+            config: applyCloudConfig(defaultConfig),
             webdav: defaultWebdavSyncConfig,
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
             updateConfig: (key, value) =>
                 set((state) => ({
-                    config: {
+                    config: CLOUD_ENABLED && managedKeys.has(key) ? state.config : {
                         ...state.config,
                         [key]: value,
                     },
                 })),
             importChannelCredentials: (input) => {
+                if (CLOUD_ENABLED) return { status: "invalid-base-url" };
                 const currentConfig = get().config;
                 const result = upsertChannelCredentials(currentConfig, input);
                 if (result.config !== currentConfig) set({ config: result.config });
@@ -238,12 +258,14 @@ export const useConfigStore = create<ConfigStore>()(
         }),
         {
             name: CONFIG_STORE_KEY,
-            partialize: (state) => ({ config: state.config, webdav: state.webdav }),
+            storage: preferenceStore ? createJSONStorage(() => ({ getItem: (key) => preferenceStore.getItem<string>(key), setItem: async (key, value) => { await preferenceStore.setItem(key, value); }, removeItem: (key) => preferenceStore.removeItem(key) })) : createJSONStorage(() => localStorage),
+            partialize: (state) => ({ config: CLOUD_ENABLED ? Object.fromEntries(Object.entries(state.config).filter(([key]) => !managedKeys.has(key))) as AiConfig : state.config, webdav: CLOUD_ENABLED ? defaultWebdavSyncConfig : state.webdav }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
                 const config = { ...defaultConfig, ...persistedConfig };
+                if (CLOUD_ENABLED) return { ...current, config: applyCloudConfig(config), webdav: defaultWebdavSyncConfig };
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
                 const channels = normalizeChannels(config);
                 const models = modelOptionsFromChannels(channels);
@@ -282,7 +304,7 @@ export const useConfigStore = create<ConfigStore>()(
 
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);
-    return useMemo(() => ({ ...config, channelMode: "local" as const }), [config]);
+    return useMemo(() => CLOUD_ENABLED ? config : ({ ...config, channelMode: "local" as const }), [config]);
 }
 
 /** Normalize a mixed list of raw model names or model objects into deduped ChannelModel entries. */
@@ -421,6 +443,7 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
+    if (CLOUD_ENABLED && !matched) return createModelChannel({ id: "unavailable", name: "渠道不可用", baseUrl: "", apiKey: "", models: [] });
     return matched || config.channels[0] || createModelChannel({ id: "default", name: i18n.t("config.channels.defaultName"), baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
 }
 

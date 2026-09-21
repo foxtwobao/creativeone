@@ -1,4 +1,14 @@
 .git
+**/node_modules
+**/dist
+**/data
+**/.env*
+**/*.sqlite*
+**/*.log
+**/test-results
+**/playwright-report
+.codex
+server/src/*.test.ts
 .idea
 docs2
 data

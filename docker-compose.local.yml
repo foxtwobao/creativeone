@@ -1,9 +1,5 @@
-services:
-  app:
-    image: infinite-canvas:local
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
+# Local source build of the same server edition.
+include:
+  - path:
+      - docker-compose.yml
+      - docker-compose.cloud.yml

@@ -5,19 +5,31 @@ import "streamdown/styles.css";
 import "./styles/globals.css";
 import { RouterProvider } from "react-router-dom";
 
-import { AppProviders } from "@/components/layout/app-providers";
 import "@/i18n";
 import { initAnalytics } from "@/lib/analytics";
-import { router } from "@/router";
+import { initializeCloud, CloudError } from "@/services/api/cloud";
+import LoginPage from "@/pages/login";
 
 initAnalytics();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 
-createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>
-        <AppProviders>
-            <RouterProvider router={router} />
-        </AppProviders>
-    </React.StrictMode>,
-);
+const root = createRoot(document.getElementById("root")!);
+async function start() {
+    try {
+        await initializeCloud();
+        const { initializeCloudStorage } = await import("@/services/cloud-storage");
+        await initializeCloudStorage();
+        const [{ AppProviders }, { router }] = await Promise.all([import("@/components/layout/app-providers"), import("@/router")]);
+        root.render(
+            <React.StrictMode>
+                <AppProviders>
+                    <RouterProvider router={router} />
+                </AppProviders>
+            </React.StrictMode>,
+        );
+    } catch (error) {
+        root.render(<LoginPage error={error instanceof CloudError && error.status === 401 ? undefined : error instanceof Error ? error.message : "无法连接云端服务"} />);
+    }
+}
+void start();

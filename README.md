@@ -2,7 +2,7 @@
   <img src="web/public/logo.svg" width="96" alt="infinite-canvas logo">
 </p>
 
-<h1 align="center">无限画布 (infinite-canvas)</h1>
+<h1 align="center">画布ONE</h1>
 
 <p align="center">
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
@@ -22,7 +22,9 @@
   <a href="docs/content/docs/overview/quick-start.mdx">快速开始</a> · <a href="docs/content/docs/overview/features.mdx">功能介绍</a> · <a href="docs/content/docs/overview/render.mdx">Render 部署</a> · <a href="docs/content/docs/overview/docker.mdx">Docker 部署</a> · <a href="docs/content/docs/canvas/canvas-node-manual.mdx">画布节点操作手册</a> · <a href="docs/content/docs/canvas/canvas-shortcuts.mdx">画布快捷键</a> · <a href="SECURITY.md">漏洞提交</a> · <a href="docs/content/docs/progress/todo.mdx">待办事项</a> · <a href="canvas-agent/README.md">本地 Canvas Agent</a> · <a href="plugins/infinite-canvas">Codex app 插件</a>
 </p>
 
-无限画布是一款面向图片创作的开源工作台。它把画布编排、AI 图片生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果。
+画布ONE 是一款面向图片创作的开源工作台。它把画布编排、AI 图片生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果。
+
+可选多用户模式：IDONE 登录、按功能配置 TokenONE 渠道、账号数据云同步；部署与联调说明见 [多用户云端后端](docs/content/docs/development/cloud-backend.mdx)。
 
 > [!CAUTION]
 > 项目目前处于开发阶段，不保证历史数据兼容。各种本地存储格式都可能直接调整，欢迎关注后续更新。
@@ -114,16 +116,20 @@ bun run dev
 ### Docker 运行
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone https://github.com/foxtwobao/creativeone.git
+cd creativeone
+cp .env.example .env
+cp server/.env.example server/.env
+# 按部署文档填写镜像名、数据库密码和 IDONE / TokenONE 配置
+docker compose pull
 docker compose up -d
 ```
 
-运行后默认端口3000，可访问 `http://localhost:3000`。
+服务器版只发布一个 `creativeone` 镜像，内含前端与 API；Compose 另启动 PostgreSQL，默认端口为 3001。生产环境需 HTTPS，访问地址必须与 `APP_ORIGIN` 和 IDONE 回调一致。
 
-首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
+登录后由管理员配置功能渠道，用户无需填写 API Key。配置、源码构建和镜像工作流详见 [服务器部署](docs/content/docs/development/cloud-backend.mdx)。
 
-如果默认的OpenAI接口调用方式与您的API不同，可自定义生图/视频脚本调用。
+本地浏览器直连模式仍可通过源码开发启动，不单独发布 Docker 镜像。
 
 ## 效果展示
 

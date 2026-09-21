@@ -1,4 +1,6 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
+import { CLOUD_ENABLED } from "@/services/api/cloud";
+import { CloudConfigPanel } from "@/components/layout/cloud-config-panel";
 import type { TFunction } from "i18next";
 import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -357,7 +359,7 @@ export function AppConfigModal() {
             styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
             footer={null}
         >
-            <AppConfigPanel showDoneButton initialTab={configTab} />
+            {CLOUD_ENABLED ? <CloudConfigPanel /> : <AppConfigPanel showDoneButton initialTab={configTab} />}
         </Modal>
     );
 }

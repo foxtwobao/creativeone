@@ -1,0 +1,8 @@
+# Overlay for the existing local IDONE stack; does not create or change its database.
+services:
+  casdoor:
+    ports: !override
+      - "192.168.10.38:8000:8000"
+    environment:
+      origin: http://192.168.10.38:8000
+      originFrontend: http://192.168.10.38:8000

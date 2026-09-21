@@ -1,9 +1,8 @@
 import type { CSSProperties } from "react";
-import { Tooltip } from "antd";
-import { BookOpen, Keyboard, Puzzle, Settings2 } from "lucide-react";
+import { Dropdown, Tooltip } from "antd";
+import { BookOpen, Keyboard, Monitor, Moon, Puzzle, Settings2, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { GitHubLink } from "@/components/layout/github-link";
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { DOCS_URL } from "@/constant/env";
@@ -23,6 +22,7 @@ type UserStatusActionsProps = {
 export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const { i18n, t } = useTranslation();
     const theme = useThemeStore((state) => state.theme);
+    const mode = useThemeStore((state) => state.mode);
     const setTheme = useThemeStore((state) => state.setTheme);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvasTheme = canvasThemes[theme];
@@ -55,7 +55,20 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                     {locale === "zh-CN" ? "中" : "EN"}
                 </button>
             </Tooltip>
-            <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={naturalIconClass} style={iconStyle} aria-label={t(theme === "dark" ? "topNav.lightTheme" : "topNav.darkTheme")} title={t(theme === "dark" ? "topNav.lightTheme" : "topNav.darkTheme")} />
+            <Dropdown trigger={["click"]} menu={{
+                selectable: true,
+                selectedKeys: [mode],
+                items: [
+                    { key: "system", label: "跟随系统", icon: <Monitor size={16} /> },
+                    { key: "light", label: "浅色模式", icon: <Sun size={16} /> },
+                    { key: "dark", label: "深色模式", icon: <Moon size={16} /> },
+                ],
+                onClick: ({ key }) => { if (key === "system" || key === "light" || key === "dark") setTheme(key); },
+            }}>
+                <button type="button" className={naturalIconClass} style={iconStyle} aria-label="主题设置" title={`主题：${mode === "system" ? "跟随系统" : mode === "dark" ? "深色" : "浅色"}`}>
+                    {mode === "system" ? <Monitor /> : mode === "dark" ? <Moon /> : <Sun />}
+                </button>
+            </Dropdown>
             <VersionReleaseModal style={versionStyle} />
             <GitHubLink className={cn("bg-transparent hover:bg-transparent dark:hover:bg-transparent", gitHubClassName)} style={gitHubStyle} />
             {onOpenShortcuts ? (
