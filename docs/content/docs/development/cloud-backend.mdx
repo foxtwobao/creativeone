@@ -5,46 +5,60 @@ description: IDONE 登录、TokenONE 功能渠道与独立 PostgreSQL 部署
 
 # 多用户云端后端
 
-云端模式在现有前端上增加 Node.js 服务，保留未启用云端时的本地模式。云端模式必须登录，浏览器只持有项目会话，不保存 TokenONE Key。新旧 UI 使用相同后端。
+应用必须连接 Node.js 后端并登录，不再提供本地模式。浏览器只持有项目会话，不保存 TokenONE Key。新旧 UI 使用相同后端。
+
+Enhance 使用与管理页面相同的站点根地址，应用请求统一走 `/api/apps/*`；`ENHANCER_BASE_URL` 不包含该路径前缀。本地统一入口为 `http://192.168.10.38:3001`，TokenONE 模型服务地址仍独立配置。
 
 ## 请求与身份
 
 - IDONE 使用 OIDC Authorization Code、PKCE、state、nonce 和签名校验；以 `issuer + sub` 识别用户，不按邮箱合并账号。
 - 管理员通过 `ADMIN_SUBJECTS` 指定 IDONE 的 `sub`，不自动提升首位登录者。
-- 管理员在 `/admin/channels` 配置功能、TokenONE 分组和模型白名单。同一功能可设置多个渠道，用户在已有模型选择器中选择模型与渠道，不能直接指定分组。
-- 每次调用前，服务端使用已验证身份、渠道绑定的数字 `group_id` 和固定 `key_name` 请求 Enhancer 的 `/internal/tokenone/api-key/ensure`，自动获取或创建 Key。未验证邮箱可登录，但不能调用模型。
-- TokenONE 账号由 IDONE 注册 webhook 创建；CreativeOne 默认发送 `allow_user_creation: false`，缺少账号返回「模型服务账号尚未同步」，不创建账号、不调用模型，也不阻止登录和数据同步。已有账号仍可自动获取/创建功能分组 Key。需要同时部署支持该字段的新版 Enhancer；旧版接口严格校验会拒绝请求，禁止回退到旧的自动建号调用。
+- 管理员在 `/admin/channels` 按图片、文本、视频、音频四项功能配置模型白名单、默认模型和启用状态，每项功能只保留一份配置。用户在已有模型选择器中选择允许的模型，不能直接指定分组。
+- 每次调用前，服务端使用已验证身份的 `issuer`、`subject` 请求 Enhance `/api/apps/keys/ensure`，使用返回的个人 Key 和默认分组。请求不包含 `app_id`、`group_id`、`key_name` 或邮箱。未验证邮箱仍可登录，但不能调用模型。
+- TokenONE 账号由 IDONE 注册同步，v2 不提供自动建号选项；缺少账号显示同步提示，不调用模型，不影响登录和数据同步。分组由 Enhance 按应用统一管理，渠道仅限制功能与模型。
 - Key 仅在请求期间留在服务端内存；数据库只保存绑定 ID。不缓存长期 Key，也不在分组无权限、停用、额度不足时私建备用 Key。
 - 模型经 `TOKENONE_BASE_URL` 的 OpenAI 兼容接口访问。目前支持图片生成/编辑、Responses/Chat Completions、视频任务及内容、语音生成；云端渠道不开放自定义请求脚本和 Gemini 原生协议。
 - 请求错误日志仅记错误码和请求 ID，不记录 Cookie、身份令牌、Key 或原始上游响应。
+
+保存使用 `PUT /api/admin/channels/:capability`，只接受 `models`、`default_model`、`enabled`。默认模型必须在模型列表中；空列表仅允许停用。底层保留稳定的调用 ID，每个功能由唯一索引约束；其他已有数据库若存在重复功能记录，需要先人工整理，程序不自动删配置或迁移历史任务。默认模型在列表中排首位，用于没有有效个人模型偏好时的初始选择。
+
+## v2 账户与消耗接口（待真实联调）
+
+登录并通过 CSRF 校验后，可调用 `POST /api/tokenone/account/summary`、`POST /api/tokenone/usage/query`、`POST /api/tokenone/usage/stats`。请求只接收 v2 查询字段，身份由后端会话注入，不允许浏览器指定 `identity`。账户请求可传 `{}` 或 `api_key_ids`；消耗请求必传带时区的 `from`、`to`，可传 `api_key_ids`、`group_id`、`model`、`page_size`、`cursor`。时间范围、页大小等边界由 Enhance 按其契约校验，不增加应用侧重试。
+
+响应保留字符串 ID、USD 十进制金额和游标，不做金额浮点运算。调用者按 `has_more` 和 `next_cursor` 翻页；游标失效必须从首页重新查询并替换结果，不能追加重复累计。统计可使用明细的 `snapshot_cursor`。查询失败返回错误，不返回零消耗。
+
+`wallet.balance` 是账户共享余额；用量只覆盖本应用当前与历史 Key。`metered_cost` 为记录的计费用量，不代表已成功扣款；订阅保存窗口不代表实时剩余额度。账户与消耗展示页面尚未实现，接口和错误提示待真实联调。
+
+已有云端数据库在下次启动时移除渠道的旧 `group_id` 列，将 Key 绑定和任务的分组 ID 无损转换为文本；账号、文档、文件和任务记录保留。部署前备份 PostgreSQL。若默认组切换，旧组视频查询会返回 `TASK_GROUP_CHANGED`，需要管理员处理；不会自动改用新组查询原任务或重发生成。
 
 ## 存储与同步边界
 
 PostgreSQL 保存账号、会话、渠道、Key 绑定、JSON 文档和生成任务；文件内容保存在独立持久化卷。所有业务读写按当前登录用户过滤，文件需要登录才能访问，不提供公开分享链接。
 
-画布、素材、图片/视频历史、创作参数及提示词来源配置使用云端存储适配器。首次加载先读取云端，再初始化业务 store，避免空状态覆盖数据。缩略图和提示词抓取缓存按账号保存在浏览器，不上传。
+画布、素材、图片/视频历史、创作参数及提示词来源配置使用云端存储适配器。首次加载先读取云端，再初始化业务 store，避免空状态覆盖数据。插件私有数据也按账号保存到云端；缩略图和提示词抓取缓存只保留在当前页面内存中。
 
-修改自动保存；其他设备修改后，点击账号栏「同步」或刷新加载最新内容。当前不是实时协作编辑：为减少原代码改动，沿用现有 store 的文档粒度，画布集合可能作为同一文档发生冲突，而不是逐节点合并。旧 revision 写入返回冲突，保留本机草稿；可导出草稿后明确选择云端版本，不静默覆盖。删除保留 tombstone，避免旧设备恢复已删除数据。
+修改自动保存，账号栏通常只显示「正在保存」或「已保存」；保存失败时才显示重试入口。其他设备修改后刷新页面加载最新内容。当前不是实时协作编辑，沿用现有 store 的文档粒度，画布集合可能作为同一文档发生冲突。旧 revision 写入返回冲突，不覆盖云端；冲突时可导出当前未保存修改，或明确放弃后加载云端。删除保留 tombstone。
 
-原本地账号数据不自动导入云端。离线首次启动需要恢复网络；已打开页面的 JSON 保存失败会保留本机草稿，媒体上传失败则提示失败，不宣称已同步。关闭页面前应确认保存完成；草稿导出文件需妥善保管。
+浏览器不再持久化业务副本，也不读取旧本地数据。离线无法首次启动；已打开页面的 JSON 保存失败仅保留在当前页面内存中，媒体上传失败直接报错。有未保存内容时关闭或刷新页面会触发离开提醒，退出登录前也会检查保存状态；继续离开会丢失未保存修改。
 
 文件仅在明确请求删除且没有文档/生成任务引用时回收。云端任务保留生成结果，因此删除前端历史不一定释放对应原始文件；当前没有任务保留期限和自动裁剪策略。
 
-本地 Codex/Claude Agent 的进程、连接凭据、插件私有状态和会话仍属于当前设备，不纳入云同步，也不由 IDONE 管理。本地 Agent 默认不在云端模式自动连接；在可信设备上手动连接，其本地历史仍由本地 Agent 管理。不要在公用浏览器保存本地 Agent 凭据。
+本地 Codex/Claude Agent 的进程、连接凭据和会话仍属于当前设备，不纳入云同步，也不由 IDONE 管理。本地 Agent 默认不自动连接；在可信设备上手动连接，其本地历史仍由本地 Agent 管理。不要在公用浏览器保存本地 Agent 凭据。
 
 ## Docker 部署
 
 服务器版只使用一个应用镜像 `<Docker Hub 用户名>/creativeone`，包含 Nginx 前端与 Node.js API；数据库使用独立 PostgreSQL 容器。对外只发布应用 3000 端口，4011 API 端口不映射到宿主机。应用以非 root 用户运行。
 
 1. 按根目录 `.env.example` 创建 `.env`，设置 `APP_IMAGE`、`APP_PORT` 和独立 PostgreSQL 密码（当前连接串使用密码原文，请使用 URL-safe 随机密码）。`APP_IMAGE` 使用已发布的镜像标签，生产建议固定版本或 `sha-` 标签。
-2. 在同一份根目录 `.env` 中填写 IDONE Client ID/Secret、Issuer、管理员 sub、Enhancer 地址/服务密钥和 TokenONE Base URL。Compose 的 `environment` 已逐项列出这些参数，不再读取 `server/.env`，也不需要挂载配置文件。不要把密钥写入前端环境变量或提交 Git。仅启用登录与同步时，三个 Enhancer/TokenONE 连接参数均可留空；应用专属 Discovery 留空则使用标准发现地址。
+2. 在同一份根目录 `.env` 中填写 IDONE Client ID/Secret、Issuer、管理员 sub、Enhance 地址/应用接入凭证和 TokenONE Base URL。Compose 的 `environment` 已逐项列出这些参数，不再读取 `server/.env`，也不需要挂载配置文件。不要把密钥写入前端环境变量或提交 Git。仅启用登录与同步时，三个 Enhancer/TokenONE 连接参数均可留空；应用专属 Discovery 留空则使用标准发现地址。
 3. `APP_ORIGIN` 必须是浏览器访问的完整 origin，无尾斜杠，例如 `https://creative.example.com`。在 IDONE 注册回调 `https://creative.example.com/api/auth/callback`，启用 `openid profile email`、PKCE S256 和 `client_secret_post`。Issuer 必须与 discovery 和 ID Token 的 `iss` 完全一致。
-4. 让服务容器能够访问 Enhancer。示例里的 `tokenone-enhancer` 只是占位地址，Compose 不会部署或自动连接外部 TokenONE 网络；按环境使用可达内网地址或显式配置共享 Docker 网络。只向受信网络传输 Enhancer 服务密钥，跨不可信网络使用 HTTPS。
+4. 让服务容器能够访问 Enhancer。示例里的 `tokenone-enhancer` 只是占位地址，Compose 不会部署或自动连接外部 TokenONE 网络；按环境使用可达内网地址或显式配置共享 Docker 网络。只向受信网络传输 Enhance 应用接入凭证，跨不可信网络使用 HTTPS。
 5. 若生成文件来自独立 CDN，需在 Compose 的 `app.environment` 额外添加 `MEDIA_DOWNLOAD_HOSTS`，值为准确 HTTPS 主机名（含非默认端口），多个以逗号分隔；TokenONE 主机默认允许。下载拒绝重定向，不允许任意外部 URL，未允许的结果会显示错误。为保持配置简洁，默认模板不列此高级参数。
 6. 使用已发布镜像执行 `docker compose pull`、`docker compose up -d`；源码构建使用 `docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build`，也可使用 `docker compose -f docker-compose.local.yml up -d --build`（需要支持 include 的 Compose）。生产环境在外层配置 HTTPS 反向代理。镜像设置 `NODE_ENV=production`，IDONE 必须使用 HTTPS，不能直接复用本机 HTTP 联调配置。
-7. 管理员登录后进入「渠道管理」，分别添加生图、聊天等渠道及真实可用模型，刷新页面生效。
+7. 管理员登录后进入「功能模型配置」，分别编辑图片、文本等功能的真实可用模型、默认模型和启用状态，刷新页面生效。
 
-模板只列镜像、对外地址/端口、数据库密码、IDONE 身份配置和三个模型服务连接参数。会话、上传限制沿用下表已确认默认值；内部端口、媒体目录、生产模式和云端开关由镜像设置，无需重复填写。TokenONE Key 名称默认 `creativeone`，统计分析默认关闭。
+模板只列镜像、对外地址/端口、数据库密码、IDONE 身份配置和三个模型服务连接参数。会话、上传限制沿用下表已确认默认值；内部端口、媒体目录和生产模式由镜像设置，无需重复填写。TokenONE Key 名称和应用默认 Composite 分组由 Enhance 管理；应用凭证必须具备 `keys:ensure`、`groups:read` 权限，账户及消耗查询还需 `account:read`、`usage:read`。
 
 Compose 使用项目独立的 `postgres`、`media` 两个命名卷，数据库不发布宿主机端口；不会共享 IDONE 或 TokenONE 的数据库。服务启动时建表，不迁移旧浏览器数据。备份时需要同时备份 PostgreSQL 和媒体卷，恢复时保持一致；不要使用 `down -v` 除非明确要删除所有项目数据。
 
@@ -65,21 +79,34 @@ Compose 使用项目独立的 `postgres`、`media` 两个命名卷，数据库�
 
 前端和后端同一镜像、同一提交，不再需要 `creativeone-server` 镜像。原文档镜像和 GitHub Pages 改为仅手动触发，不参与服务器版本的自动发布。保留原有上游项目文档作参考；当前服务器部署以本页为准。
 
+## 从旧版升级到 Enhance v2
+
+先等待 main 对应的 Server Docker image 工作流成功，并记录新镜像的 `sha-` 标签。升级操作在现有部署目录进行，沿用 Compose 项目名、数据库密码、卷和生产 IDONE 配置，不复制开发环境的 HTTP 地址。
+
+1. 停止应用写入：`docker compose stop app`。保持 PostgreSQL 运行。
+2. 备份数据库：`docker compose exec -T postgres pg_dump -U creativeone -d creativeone -Fc > creativeone-before-v2.dump`。同时备份媒体：`docker compose run --rm --no-deps --entrypoint tar app -C /app/data/media -czf - . > creativeone-media-before-v2.tar.gz`。另行安全备份现有 `.env`、Compose 配置，并记录旧镜像标签或 digest；任一步失败应停止升级。
+3. 检查重复功能：`docker compose exec -T postgres psql -U creativeone -d creativeone -c "SELECT capability, count(*) FROM channels GROUP BY capability HAVING count(*) > 1;"`。必须返回零行再启动新版。如果有重复，先导出渠道配置并人工选择每项保留的渠道 ID、模型和启用状态，整理到每个功能一条；不要直接清空表或自动删除。旧页面保存的模型包含渠道 ID，保留正在使用的 ID 可避免失效；历史任务保持不变。
+4. 更新部署文件，保留生产 `.env`，将 `APP_IMAGE` 改为新提交的固定镜像标签。设置 `ENHANCER_BASE_URL` 为 Enhance 站点根地址（不要追加 `/api/apps`），新增 `ENHANCER_APP_CREDENTIAL`，替换旧的内部调用密钥配置。应用凭证需具备 `keys:ensure`、`groups:read`、`account:read`、`usage:read` 权限。Enhance 必须支持 `/api/apps/*`，其应用默认分组和允许的 IDONE Issuer 应与生产环境一致；`TOKENONE_BASE_URL` 指向生产 TokenONE。
+5. 执行 `docker compose pull app` 和 `docker compose up -d --no-deps app`。只重建应用，避免顺带更换数据库大版本。启动会把分组 ID 改为文本、移除渠道分组字段并添加功能唯一约束，不迁移浏览器旧数据。
+6. 查看 `docker compose logs --tail=100 app`，验收登录、管理员功能模型配置、已有素材和历史、媒体上传及一次真实生成。正常显示保存状态，刷新后数据仍在。旧浏览器未上传内容不会自动导入，升级前应先保存或导出。
+
+不要执行 `docker compose down -v`。如果需要回滚，先停应用，再用升级前的数据库和媒体备份配合旧镜像恢复；不能只切旧镜像，因为数据库结构已变化。备份后的新增业务数据需要另行保留再恢复。
+
 ## 本地开发
 
 IDONE 应用专属元数据通过 `IDONE_DISCOVERY_URL` 配置，应用名应与 IDONE 中创建的专用客户端一致，不得复用其他项目 Secret。显式 Discovery 的 Issuer 会单独严格核对。开发时默认仅回环地址允许 HTTP；同主机局域网 HTTP 需要明确设置 `IDONE_ALLOW_HTTP=true`，仅用于可信开发网络，`NODE_ENV=production` 时拒绝 HTTP。签名、Issuer、Audience、PKCE 等校验不关闭。
 
-源码开发（不使用 Docker）才需要按 `server/.env.example` 创建 `server/.env`。启动独立 PostgreSQL，并在该文件配置可用 `DATABASE_URL`。在 `server` 目录执行 `npm ci`、`npm run dev`；在 `web` 目录执行 `VITE_CLOUD_ENABLED=true npm run dev -- --port 3001`。Vite 将 `/api` 转发到 `127.0.0.1:4011`，`APP_ORIGIN` 应为 `http://localhost:3001`，浏览器也必须使用这个 origin。
+源码开发（不使用 Docker）才需要按 `server/.env.example` 创建 `server/.env`。启动独立 PostgreSQL，并在该文件配置可用 `DATABASE_URL`。在 `server` 目录执行 `npm ci`、`npm run dev`；在 `web` 目录执行 `npm run dev -- --port 3001`。Vite 默认将 `/api` 转发到 `127.0.0.1:4011`，可在 `web/.env.local` 使用 `VITE_API_PROXY_TARGET` 覆盖，`APP_ORIGIN` 应为 `http://localhost:3001`，浏览器也必须使用这个 origin。
 
-`npm start` 面向容器注入环境变量，不自动读取 `.env`；本地开发使用 `npm run dev`。未设置云端开关时仍为原本地模式，Key 保存在浏览器并直接请求模型。
+`npm start` 面向容器注入环境变量，不自动读取 `.env`；本地开发使用 `npm run dev`。前端始终要求后端和登录，不再使用云端模式开关。
 
-仅联调身份和存储时，可暂不设置 `ENHANCER_BASE_URL`、`ENHANCER_INTERNAL_SECRET`、`TOKENONE_BASE_URL`。相关管理/模型接口明确返回「未配置」，不会使用占位凭据或自动连接其他服务。
+仅联调身份和存储时，可暂不设置 `ENHANCER_BASE_URL`、`ENHANCER_APP_CREDENTIAL`、`TOKENONE_BASE_URL`。相关管理/模型接口明确返回「未配置」，不会使用占位凭据或自动连接其他服务。
 
-默认不自动创建 TokenONE 账号。仅本地测试需要绕过注册 webhook 时，在 CreativeOne 的开发环境同时设置 `NODE_ENV=development` 和 `DEV_AUTO_CREATE_TOKENONE_USER=true`，并让 Enhancer 也显式使用 `NODE_ENV=development`。开关默认关闭，不加入生产 Compose；在生产或未明确声明为开发环境时误开，CreativeOne 拒绝启动，Enhancer 也会拒绝对应建号请求。Webhook 建号不受该开关影响；不更改已有账号密码或余额。
+v2 仅使用应用接入凭证 `ENHANCER_APP_CREDENTIAL`，不复用旧内部 Secret；已删除 `TOKENONE_KEY_NAME` 和 `DEV_AUTO_CREATE_TOKENONE_USER` 配置。请由 Enhance 管理员为 CreativeOne 配置应用、统一 IDONE issuer、默认 Composite 分组和用户权益，再签发专属应用凭证。
 
-当前本机配置使用 `http://192.168.10.38:3002`（不替换原 3001 前端）、`http://192.168.10.38:8000` 的 IDONE 应用 `creativeone-local`、4011 后端和仅回环暴露的 5433 PostgreSQL。数据库由 `creativeone-local-postgres` 容器及同名持久化卷保存；媒体目录为 `server/data/media`。业务测试用户位于 AgentONE 组织，不具备 IDONE 系统管理员权限，随机测试密码仅保存在本机 `server/.env` 的 `LOCAL_TEST_PASSWORD`，不要提交或复制该文件至文档。
+当前本机配置使用 `http://192.168.10.38:3002`（不替换原 3001 前端）、`http://192.168.10.38:8000` 的 IDONE 应用 `creativeone-local`、4013 后端和仅回环暴露的 5433 PostgreSQL。数据库由 `creativeone-local-postgres` 容器及同名持久化卷保存；媒体目录为 `server/data/media`。业务测试用户位于 AgentONE 组织，不具备 IDONE 系统管理员权限，随机测试密码仅保存在本机 `server/.env` 的 `LOCAL_TEST_PASSWORD`，不要提交或复制该文件至文档。
 
-重新启动这套本机配置：先 `docker start creativeone-local-postgres`，在 `server` 目录执行 `npm run dev`，在 `web` 目录执行 `VITE_CLOUD_ENABLED=true npm run dev -- --host 192.168.10.38 --port 3002 --strictPort`。浏览器统一使用 `192.168.10.38:3002`，否则 Origin 和回调不匹配。现有 IDONE Compose 叠加 `deploy/idone-local.override.yml` 配置局域网端口及 Issuer；重新创建该容器时也应保留此覆盖配置与原数据库连接。
+重新启动这套本机配置：先 `docker start creativeone-local-postgres`，在 `server` 目录执行 `npm run dev`，在 `web` 目录执行 `npm run dev -- --host 192.168.10.38 --port 3002 --strictPort`。浏览器统一使用 `192.168.10.38:3002`，否则 Origin 和回调不匹配。现有 IDONE Compose 叠加 `deploy/idone-local.override.yml` 配置局域网端口及 Issuer；重新创建该容器时也应保留此覆盖配置与原数据库连接。
 
 改变 Issuer 会改变 OIDC 身份命名空间：旧 localhost 的项目身份/数据不会按邮箱自动并入新 IP 身份。旧数据保留在数据库，如有实际业务数据需另行确认迁移；不要通过忽略 Issuer 来合并身份。当前已验证 IP 地址下的真实授权、回调、管理员识别和退出。
 
@@ -90,9 +117,9 @@ IDONE 应用专属元数据通过 `IDONE_DISCOVERY_URL` 配置，应用名应与
 | 登录会话 | 7 天 | 要求重新登录 |
 | OIDC 登录流程 | 10 分钟 | 废弃流程，重新发起登录 |
 | 单个媒体文件 | 100 MiB | 上传或结果持久化失败，不自动重发模型调用 |
-| JSON 请求 | 20 MiB | 返回 413，JSON 草稿保留本机 |
+| JSON 请求 | 20 MiB | 返回 413，未保存修改仅保留当前页面内存 |
 | 模型请求 | 10 分钟 | 结果不确定时标记 unknown，不自动重试收费请求 |
-| 画布自动保存 | 原有 400ms 防抖 | 修改后触发保存，退出/同步前主动提交待保存内容 |
+| 画布自动保存 | 原有 400ms 防抖 | 修改后触发保存，退出/重试前主动提交待保存内容 |
 
 ## 验证状态
 

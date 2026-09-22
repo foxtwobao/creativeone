@@ -14,7 +14,7 @@ services:
       ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:?Set ADMIN_SUBJECTS}
       # 模型服务；留空时仅启用登录与数据同步。
       ENHANCER_BASE_URL: ${ENHANCER_BASE_URL:-}
-      ENHANCER_INTERNAL_SECRET: ${ENHANCER_INTERNAL_SECRET:-}
+      ENHANCER_APP_CREDENTIAL: ${ENHANCER_APP_CREDENTIAL:-}
       TOKENONE_BASE_URL: ${TOKENONE_BASE_URL:-}
       # 数据库连接自动组装；内部目录、端口及运行边界使用镜像/程序默认值。
       DATABASE_URL: postgresql://creativeone:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/creativeone

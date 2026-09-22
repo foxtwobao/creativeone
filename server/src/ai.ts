@@ -64,16 +64,18 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     if (req.method === "GET" && videoMatch) {
         task = (await db.query("SELECT * FROM generation_tasks WHERE user_id=$1 AND channel_id=$2 AND upstream_id=$3 AND capability='video'", [user.id, channelId, videoMatch[1]])).rows[0];
         if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
-        channel = { id: channelId, group_id: task.group_id, capability: "video", models: [task.model], enabled: true, is_default: false, name: "" };
+        channel = { id: channelId, capability: "video", models: [task.model], enabled: true };
     } else {
         channel = (await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows[0];
         if (!channel) throw new HttpError(403, "CHANNEL_UNAVAILABLE");
         if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && endpoints[path] === channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
         if (req.method === "POST" && (!req.body || typeof req.body.model !== "string" || !channel.models.includes(req.body.model))) throw new HttpError(403, "MODEL_NOT_ALLOWED");
     }
-    const key = await ensureKey(user, channel.group_id, res.locals.requestId);
+    const apiKey = await ensureKey(user, res.locals.requestId);
+    if (task && task.group_id !== apiKey.group_id) throw new HttpError(409, "TASK_GROUP_CHANGED");
+    const key = apiKey.key;
     if (path === "models") {
-        // Administrator-curated model metadata, scoped to this feature's group.
+        // Administrator-curated model metadata, filtered by this channel’s model allowlist.
         const response = await fetch(upstreamUrl("models"), { headers: { Authorization: `Bearer ${key}` }, redirect: "error", signal: AbortSignal.timeout(600_000) });
         if (!response.ok) throw await tokenoneError(response);
         const data = await response.json() as { data?: { id: string }[] };
@@ -97,7 +99,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         } else { headers["Content-Type"] = "application/json"; body = JSON.stringify(req.body); }
     }
     const signal = AbortSignal.timeout(600_000);
-    if (!task) await db.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status) VALUES ($1,$2,$3,$4,$5,$6,$7,'running')", [taskId, user.id, channelId, channel.group_id, req.body.model, channel.capability, path]);
+    if (!task) await db.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status) VALUES ($1,$2,$3,$4,$5,$6,$7,'running')", [taskId, user.id, channelId, apiKey.group_id, req.body.model, channel.capability, path]);
     try {
         const upstream = await fetch(upstreamUrl(path), { method: req.method, headers, body, redirect: "error", signal });
         if (!upstream.ok) {

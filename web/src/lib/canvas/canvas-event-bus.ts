@@ -1,4 +1,4 @@
-import localforage from "localforage";
+import { createUserStore } from "@/services/cloud-storage";
 
 import type { PluginStorage } from "@/types/canvas-plugin";
 
@@ -26,22 +26,13 @@ export function onCanvasEvent(event: string, handler: Handler) {
     return () => set!.delete(handler);
 }
 
-// Private plugin storage isolated by pluginId namespace.
-const stores = new Map<string, LocalForage>();
-
+// Plugin keys remain isolated within the current user's cloud documents.
 export function createPluginStorage(pluginId: string): PluginStorage {
-    let store = stores.get(pluginId);
-    if (!store) {
-        store = localforage.createInstance({ name: "infinite-canvas-plugins", storeName: pluginId });
-        stores.set(pluginId, store);
-    }
+    const store = createUserStore("app_state");
+    const name = (key: string) => `plugin:${btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify([pluginId, key])))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
     return {
-        get: (key) => store!.getItem(key),
-        set: async (key, value) => {
-            await store!.setItem(key, value);
-        },
-        remove: async (key) => {
-            await store!.removeItem(key);
-        },
+        get: (key) => store.getItem(name(key)),
+        set: async (key, value) => { await store.setItem(name(key), value); },
+        remove: (key) => store.removeItem(name(key)),
     };
 }

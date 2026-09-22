@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS login_flows (
 CREATE TABLE IF NOT EXISTS channels (
     id uuid PRIMARY KEY, name text NOT NULL, capability text NOT NULL
         CHECK (capability IN ('image','text','video','audio')),
-    group_id integer NOT NULL CHECK (group_id > 0), models jsonb NOT NULL,
+    models jsonb NOT NULL,
     enabled boolean NOT NULL DEFAULT true, is_default boolean NOT NULL DEFAULT false
 );
-CREATE UNIQUE INDEX IF NOT EXISTS channels_default ON channels(capability) WHERE is_default AND enabled;
+CREATE UNIQUE INDEX IF NOT EXISTS channels_capability ON channels(capability);
 CREATE TABLE IF NOT EXISTS key_bindings (
-    user_id uuid NOT NULL REFERENCES users(id), group_id integer NOT NULL,
+    user_id uuid NOT NULL REFERENCES users(id), group_id text NOT NULL,
     tokenone_user_id text NOT NULL, key_id text NOT NULL,
     PRIMARY KEY (user_id, group_id)
 );
@@ -37,8 +37,13 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE TABLE IF NOT EXISTS generation_tasks (
     id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id), channel_id uuid NOT NULL,
-    group_id integer NOT NULL, model text NOT NULL, capability text NOT NULL, path text NOT NULL,
+    group_id text NOT NULL, model text NOT NULL, capability text NOT NULL, path text NOT NULL,
     status text NOT NULL, upstream_id text, result jsonb, error text,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS generation_tasks_owner ON generation_tasks(user_id, created_at DESC);
+
+-- v2 delegates group selection to Enhance; retain task and binding IDs without numeric conversion.
+ALTER TABLE channels DROP COLUMN IF EXISTS group_id;
+ALTER TABLE key_bindings ALTER COLUMN group_id TYPE text USING group_id::text;
+ALTER TABLE generation_tasks ALTER COLUMN group_id TYPE text USING group_id::text;

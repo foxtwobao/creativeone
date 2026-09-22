@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
-import { localForageStorage } from "@/lib/localforage-storage";
+import { cloudStateStorage } from "@/lib/cloud-state-storage";
 import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
@@ -46,7 +46,7 @@ const ASSET_STORE_KEY = "infinite-canvas:asset_store";
 
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
+        const value = await cloudStateStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(
@@ -68,8 +68,8 @@ const assetStorage: PersistStorage<AssetStore> = {
         );
         return parsed;
     },
-    setItem: (name, value) => localForageStorage.setItem(name, JSON.stringify(value)),
-    removeItem: (name) => localForageStorage.removeItem(name),
+    setItem: (name, value) => cloudStateStorage.setItem(name, JSON.stringify(value)),
+    removeItem: (name) => cloudStateStorage.removeItem(name),
 };
 
 export const useAssetStore = create<AssetStore>()(

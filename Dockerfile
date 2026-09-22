@@ -13,7 +13,7 @@ RUN bun run build
 FROM node:22-alpine
 RUN apk add --no-cache nginx bash tini
 WORKDIR /app/server
-ENV NODE_ENV=production CLOUD_ENABLED=true PORT=4011 MEDIA_DIR=/app/data/media
+ENV NODE_ENV=production PORT=4011 MEDIA_DIR=/app/data/media
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY server/src ./src

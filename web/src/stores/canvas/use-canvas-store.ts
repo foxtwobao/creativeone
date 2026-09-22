@@ -1,9 +1,10 @@
+import { useCloudStore } from "@/stores/use-cloud-store";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
-import { localForageStorage } from "@/lib/localforage-storage";
+import { cloudStateStorage } from "@/lib/cloud-state-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -45,16 +46,19 @@ type PersistedCanvasState = Pick<CanvasStore, "projects" | "deletedProjects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 
+export const hasPendingCanvasPersistence = () => saveTimer !== null;
+
 export async function flushCanvasPersistence() {
     if (!saveTimer || !queuedPersistState) return;
     clearTimeout(saveTimer);
     saveTimer = null;
-    await localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify({ state: queuedPersistState, version: 0 }));
+    try { await cloudStateStorage.setItem(CANVAS_STORE_KEY, JSON.stringify({ state: queuedPersistState, version: 0 })); }
+    finally { useCloudStore.getState().end(); }
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
+        const value = await cloudStateStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
         queuedPersistState = parsed.state as PersistedCanvasState;
@@ -65,12 +69,13 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.deletedProjects === nextState.deletedProjects) return;
         queuedPersistState = nextState;
         if (saveTimer) clearTimeout(saveTimer);
+        else useCloudStore.getState().begin();
         saveTimer = setTimeout(() => {
             saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
+            void Promise.resolve(cloudStateStorage.setItem(name, JSON.stringify(value))).finally(() => useCloudStore.getState().end());
         }, 400);
     },
-    removeItem: (name) => localForageStorage.removeItem(name),
+    removeItem: (name) => cloudStateStorage.removeItem(name),
 };
 
 export const useCanvasStore = create<CanvasStore>()(

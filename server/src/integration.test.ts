@@ -12,14 +12,14 @@ const media = await mkdtemp(join(tmpdir(), "creativeone-api-test-"));
 const adminSubject = randomUUID();
 Object.assign(process.env, {
     DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
-    ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "http://enhancer.test", ENHANCER_INTERNAL_SECRET: "internal-test-secret", TOKENONE_BASE_URL: "https://tokenone.test",
+    ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "http://enhancer.test", ENHANCER_APP_CREDENTIAL: "app-test-credential", TOKENONE_BASE_URL: "https://tokenone.test",
     SESSION_SECONDS: "604800", LOGIN_SECONDS: "600", MAX_MEDIA_BYTES: "104857600", MAX_JSON_BYTES: "20971520", MEDIA_DIR: media,
 });
 const { app } = await import("./index.js");
 const { db } = await import("./db.js");
 let server: Server, base: string;
 const admin = randomUUID(), alice = randomUUID(), bob = randomUUID(), unverified = randomUUID();
-const imageChannel = randomUUID(), textChannel = randomUUID();
+let imageChannel: string, textChannel: string;
 const realFetch = globalThis.fetch;
 const ensures: any[] = [];
 const forwardedKeys: string[] = [];
@@ -28,11 +28,12 @@ let modelFailure: { status: number; code: string } | undefined;
 globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.startsWith("http://enhancer.test")) {
-        assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer internal-test-secret");
-        if (url.endsWith("/groups")) return Response.json({ groups: [{ id: 8, name: "图片", status: "active" }, { id: 9, name: "聊天", status: "active" }] });
+        assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer app-test-credential");
+        if (url.endsWith("/groups")) return Response.json({ app_id: "creativeone", groups: [{ id: "8", name: "应用默认组", status: "active", is_default: true }] });
+        assert.equal(url, "http://enhancer.test/api/apps/keys/ensure");
         const body = JSON.parse(String(init?.body)); ensures.push(body);
         if (denyGroup) return Response.json({ error: "TOKENONE_GROUP_FORBIDDEN" }, { status: 403 });
-        return Response.json({ status: "ready", tokenone_user_id: body.identity.subject, api_key: { id: "key-1", key: `sk-${body.identity.subject}-${body.group_id}`, group_id: body.group_id, status: "active" } });
+        return Response.json({ status: "ready", tokenone_user_id: "42", api_key: { id: "701", key: `sk-${body.identity.subject}-8`, group_id: "8", status: "active" } });
     }
     if (url.startsWith("https://tokenone.test")) {
         forwardedKeys.push(new Headers(init?.headers).get("Authorization") || "");
@@ -66,27 +67,34 @@ test("anonymous requests and forged callback cannot access the application", asy
 test("admin role and CSRF protect channel configuration", async () => {
     assert.equal((await call("/admin/groups")).status, 403);
     assert.equal((await call("/admin/groups", admin)).status, 200);
-    const body = { name: "生图", capability: "image", group_id: 8, models: ["gpt-image-2"], enabled: true, is_default: true };
-    const missing = await realFetch(`${base}/api/admin/channels/${imageChannel}`, { method: "PUT", headers: { Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const body = { models: ["gpt-image-2"], default_model: "gpt-image-2", enabled: true };
+    const missing = await realFetch(`${base}/api/admin/channels/image`, { method: "PUT", headers: { Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     assert.equal(missing.status, 403);
-    assert.equal((await call(`/admin/channels/${imageChannel}`, admin, "PUT", body)).status, 200);
-    assert.equal((await call(`/admin/channels/${textChannel}`, admin, "PUT", { ...body, name: "聊天", capability: "text", group_id: 9, models: ["gpt-5.5"] })).status, 200);
+    const image = await call("/admin/channels/image", admin, "PUT", body);
+    assert.equal(image.status, 200);
+    imageChannel = (await image.json() as any).channel.id;
+    const text = await call("/admin/channels/text", admin, "PUT", { models: ["gpt-5.5"], default_model: "gpt-5.5", enabled: true });
+    assert.equal(text.status, 200);
+    textChannel = (await text.json() as any).channel.id;
+    assert.equal((await call("/admin/channels/image", admin, "PUT", { ...body, default_model: "not-allowed" })).status, 400);
+    const updated = await (await call("/admin/channels/image", admin, "PUT", body)).json() as any;
+    assert.equal(updated.channel.id, imageChannel);
 });
-test("feature and model cannot bypass administrator group routing", async () => {
+test("feature and model cannot bypass channel capability and model routing", async () => {
     const count = ensures.length;
     assert.equal((await call(`/ai/${imageChannel}/v1/responses`, alice, "POST", { model: "gpt-image-2" })).status, 403);
     assert.equal((await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "not-allowed" })).status, 403);
     assert.equal(ensures.length, count);
 });
 let savedUrl = "";
-test("each user's image request uses their verified identity and feature group; no Key reaches the client", async () => {
+test("each user's image request uses their verified identity and application group; no Key reaches the client", async () => {
     for (const id of [alice, bob]) {
         const response = await call(`/ai/${imageChannel}/v1/images/generations`, id, "POST", { model: "gpt-image-2", prompt: "test", group_id: 999, identity: { subject: "forged" } });
         assert.equal(response.status, 200);
         const text = await response.text();
-        assert.ok(!text.includes("sk-") && !text.includes("internal-test-secret"));
+        assert.ok(!text.includes("sk-") && !text.includes("app-test-credential"));
         assert.equal(ensures.at(-1).identity.subject, id);
-        assert.equal(ensures.at(-1).group_id, 8);
+        assert.deepEqual(ensures.at(-1), { identity: { issuer: "https://idone.test", subject: id } });
         assert.equal(forwardedKeys.at(-1), `Bearer sk-${id}-8`);
         if (id === alice) savedUrl = JSON.parse(text).data[0].url;
     }
@@ -103,10 +111,10 @@ test("unverified email and forbidden groups fail without creating a replacement 
     assert.equal(forwardedKeys.length, before);
     denyGroup = false;
 });
-test("streamed text is delivered and saved under the chat group", async () => {
+test("streamed text shares the application group and is saved for its owner", async () => {
     const response = await call(`/ai/${textChannel}/v1/responses`, alice, "POST", { model: "gpt-5.5", stream: true });
     assert.match(await response.text(), /你好/);
-    assert.equal(ensures.at(-1).group_id, 9);
+    assert.equal(forwardedKeys.at(-1), `Bearer sk-${alice}-8`);
     const { tasks } = await (await call("/tasks")).json() as any;
     assert.ok(tasks.some((task: any) => task.result?.text === "你好" && task.status === "succeeded"));
     const bobTasks = await (await call("/tasks", bob)).json() as any;
@@ -132,8 +140,11 @@ test("encoded media references survive deletion requests and immutable file keys
     const upload = (bytes: string) => realFetch(`${base}/api${path}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "image/png" }, body: bytes });
     assert.equal((await upload("original")).status, 200);
     assert.equal((await upload("replacement")).status, 409);
+    assert.ok(((await (await call("/files/image_files", alice)).json()) as any).keys.includes(key));
+    assert.ok(!((await (await call("/files/image_files", bob)).json()) as any).keys.includes(key));
     assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { revision: 0, value: { url: `/api${path}` }, deleted: false })).status, 200);
     assert.equal((await call(path, alice, "DELETE")).status, 200);
+    assert.ok(!((await (await call("/files/image_files", alice)).json()) as any).keys.includes(key));
     assert.equal((await call(path)).status, 200);
     assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { revision: 1, value: null, deleted: true })).status, 200);
     await call(path, alice, "DELETE");

@@ -12,7 +12,7 @@ description: 独立 TokenONE、Enhancer 与 CreativeOne 开发连接
 | CreativeOne | `http://192.168.10.38:3002` |
 | IDONE | `http://192.168.10.38:8000` |
 | TokenONE | `http://192.168.10.38:8080` |
-| Enhancer API | `http://192.168.10.38:4012`；健康检查 `/api/health` |
+| Enhance 统一入口 | `http://192.168.10.38:3001`，管理界面与 `/api/apps/*` 共用 |
 | TokenONE PostgreSQL | `127.0.0.1:5434`，数据库及用户均为 `tokenone` |
 
 TokenONE 使用独立 Compose 项目 `creativeone-tokenone-local`，不复用 CreativeOne 或 IDONE 数据库。PostgreSQL、Redis、TokenONE 数据各有命名卷。使用本机已有的 `weishaw/sub2api:latest` 镜像，本次启动镜像标注版本为 `0.2.7`；恢复线上备份前应核对应用版本与数据库结构兼容性，不能假定任意线上版本均可直接恢复。
@@ -25,21 +25,29 @@ TokenONE 使用独立 Compose 项目 `creativeone-tokenone-local`，不复用 Cr
 docker compose --env-file deploy/.env.tokenone-local -f deploy/tokenone-local.yml up -d
 ```
 
-在 `/home/hulei/projects/tokenone_enhance` 启动 Enhancer：
+Enhance 本地统一入口为 3001，开发代理转发到内部 4011 后端。CreativeOne 使用站点根地址和 `/api/apps/*`，不直连内部端口；原 `/internal/v2/*` 已停用且无兼容别名。模型仍直连 TokenONE 8080。4010 属于另一个 tokenlink 服务。
 
-```bash
-DOTENV_CONFIG_PATH=/home/hulei/projects/creativeone/deploy/.env.enhancer-local npm run dev:api
-```
+CreativeOne 本地后端使用 4013（`server/.env` 的 `PORT`），前端保留 3002；`web/.env.local` 设置 `VITE_API_PROXY_TARGET=http://127.0.0.1:4013`。默认 Vite 代理仍为 4011，只有本地配置覆盖为 4013，Docker 内部端口不变。
 
-必须指定该配置路径，不要直接读取 Enhancer 仓库原 `.env`，因为原配置指向线上服务。4010 的另一个 tokenlink 进程保持不变。
+已备份 CreativeOne PostgreSQL 至本地 `server/data/backups/` 后启动前后端，v2 数据库结构已应用；后端 `/healthz` 和前端页面均返回 200，前端代理的受保护接口返回预期的 `LOGIN_REQUIRED`。登录和真实模型调用仍待验收。
 
 - 新实例管理员为 `admin@creativeone.local`，初始随机密码在 `deploy/.env.tokenone-local` 的 `TOKENONE_LOCAL_ADMIN_PASSWORD`。恢复备份后，管理员账号和密码以备份内容为准。
 - 数据库密码在同文件的 `TOKENONE_LOCAL_DB_PASSWORD`，仅回环端口暴露。
-- Enhancer 独立服务配置在 `deploy/.env.enhancer-local`，SQLite 保存于 `server/data/enhancer-local.sqlite`。
-- CreativeOne 的 `server/.env` 已指向本地 Enhancer 和 TokenONE；内部 Secret 仅由两个后端持有。
+- `deploy/.env.enhancer-local` 和 `server/data/enhancer-local.sqlite` 是旧联调配置；当前 Enhance 使用其项目内的 PostgreSQL 配置。
+- CreativeOne 的 `server/.env` 已指向本地 Enhancer 和 TokenONE；v2 需要重新配置 `ENHANCER_APP_CREDENTIAL` 为 CreativeOne 专属应用接入凭证，仅由后端持有。
 - 上述环境文件均被 Git 忽略，权限为 600，不要公开其内容。
 
-## 当前联调状态
+## 本地 TokenONE 登录
+
+TokenONE 的独立 OIDC 配置已切换到本地 IDONE `http://192.168.10.38:8000`，使用本地 `tokenone` 应用的 Client ID/Secret 和应用专属 Discovery `/.well-known/tokenone/openid-configuration`。IDONE 已登记本地回调 `http://192.168.10.38:3001/api/v1/auth/oauth/oidc/callback`；原回调保留。
+
+修改前已将 TokenONE、IDONE 数据库备份到 CreativeOne 本地 `server/data/backups/`，随后重启本地 TokenONE 容器。从 8080 和 3001 发起 OIDC 登录均返回 302，目标为本地 8000，回调为本地 3001；完整浏览器登录仍待用户验收。本次未修改线上服务或账号身份绑定。
+
+## v2 待联调
+
+本地 `server/.env` 已配置用户提供的应用凭证及 3001 统一入口。真实 `GET /api/apps/groups` 已返回 200，应用为 `creativeone`，默认分组为 `composite`（字符串 ID `5`，状态 `active`）。Enhance 全局 `IDONE_ISSUER` 已统一为 `http://192.168.10.38:8000`，与 CreativeOne 相同；已备份 Enhance 环境配置并重启后端。使用 `creativeone-local` 的已验证本地身份查询 `/api/apps/account/summary` 和 `/api/apps/keys/ensure` 均返回 200，个人 Key 为 active、分组 ID 为 5。未输出 Key 明文，未调用真实模型；消耗查询与完整生成仍待验收。以下旧接口记录不代表当前接口已完成全部验收。渠道不再绑定分组，生图与聊天等功能统一使用 Enhance 应用默认分组。
+
+## 旧接口联调记录
 
 用户已决定不恢复线上备份，自行完成管理员合规确认，并新建上游账号 `test` 和「生图测试」分组（ID 2）。本地管理密钥已生成并写入 `deploy/.env.enhancer-local` 的 `SUB2API_ADMIN_KEY`，Enhancer 已重启，CreativeOne 管理后台可读取分组。
 
