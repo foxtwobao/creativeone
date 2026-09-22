@@ -13,7 +13,7 @@ import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectabl
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // Execute site-level Agent tools in the browser, including canvas lists, workbench generation, prompt search, and asset operations.
-// Their data lives locally in the browser through localforage and Zustand, so this module accesses the relevant stores directly.
+// Business data is saved to the server; tools access the current editor state through Zustand.
 
 export const SITE_TOOL_NAMES = [
     "canvas_list_projects",

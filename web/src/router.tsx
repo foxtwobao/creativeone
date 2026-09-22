@@ -13,7 +13,6 @@ import NotFound from "@/pages/not-found";
 import PromptsPage from "@/pages/prompts";
 import VideoPage from "@/pages/video";
 import { lazy, Suspense } from "react";
-import { CLOUD_ENABLED } from "@/services/api/cloud";
 const ChannelsPage = lazy(() => import("@/pages/admin/channels"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 
@@ -35,10 +34,8 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: features.canvas ? <CanvasPage /> : <Navigate to="/studio" replace /> },
             { path: "/canvas/:id", element: features.canvas ? <CanvasProjectPage /> : <Navigate to="/studio" replace /> },
             { path: "/config", element: <ConfigPage /> },
-            ...(CLOUD_ENABLED ? [
                 { path: "/admin/channels", element: <Suspense fallback={<div className="p-6">加载中…</div>}><ChannelsPage /></Suspense> },
                 { path: "/tasks", element: <Suspense fallback={<div className="p-6">加载中…</div>}><TasksPage /></Suspense> },
-            ] : []),
         ],
     },
     { path: "*", element: <NotFound /> },

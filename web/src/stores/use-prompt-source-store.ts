@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import { CLOUD_ENABLED } from "@/services/api/cloud";
-import { localForageStorage } from "@/lib/localforage-storage";
+import { cloudStateStorage } from "@/lib/cloud-state-storage";
 
 import { DEFAULT_PROMPT_SOURCES, createPromptSource, type PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -47,7 +46,7 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
         }),
         {
             name: PROMPT_SOURCE_STORE_KEY,
-            ...(CLOUD_ENABLED ? { storage: createJSONStorage(() => localForageStorage) } : {}),
+            storage: createJSONStorage(() => cloudStateStorage),
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;

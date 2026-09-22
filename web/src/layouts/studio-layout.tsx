@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Bot, Images, Maximize2, Menu, PanelLeftClose, PenLine, Settings2, Sparkles, Video, X } from "lucide-react";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
-import { CLOUD_ENABLED } from "@/services/api/cloud";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useInterfaceStore } from "@/stores/use-interface-store";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -24,21 +23,11 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
     const [mobileOpen, setMobileOpen] = useState(false);
     const setStudio = useInterfaceStore((state) => state.setStudio);
     const togglePanel = useAgentStore((state) => state.togglePanel);
-    const agentToken = useAgentStore((state) => state.token);
-    const agentEnabled = useAgentStore((state) => state.enabled);
-    const agentConnected = useAgentStore((state) => state.connected);
-    const connectAgent = useAgentStore((state) => state.connectAgent);
-    const autoConnect = useRef(false);
 
     useEffect(() => {
         setStudio(true);
     }, [setStudio]);
     useEffect(() => { setMobileOpen(false); }, [pathname]);
-    useEffect(() => {
-        if (!features.assistant || CLOUD_ENABLED || autoConnect.current || agentEnabled || agentConnected || !agentToken.trim()) return;
-        autoConnect.current = true;
-        connectAgent({ silent: true });
-    }, [agentToken, agentEnabled, agentConnected, connectAgent]);
 
     const canvasEditor = /^\/canvas\/[^/]+/.test(pathname);
     return (

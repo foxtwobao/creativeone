@@ -27,17 +27,17 @@ export function CloudConfigPanel() {
                     .filter(([, capability]) => capability !== "audio" || selectableModelsByCapability(config, "audio").length > 0)
                     .map(([key, capability, label, description]) => <div key={key} className="grid items-center gap-3 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] sm:gap-8">
                         <div><h3 className="text-sm font-medium text-foreground">{label}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p></div>
-                        <ModelPicker config={config} capability={capability} value={config[key]} onChange={(value) => update(key, value)} fullWidth className="h-11 rounded-xl border-border bg-background px-3 shadow-none" placeholder="管理员尚未配置该功能渠道" />
+                        <ModelPicker config={config} capability={capability} value={config[key]} onChange={(value) => update(key, value)} fullWidth className="h-11 rounded-xl border-border bg-background px-3 shadow-none" placeholder="管理员尚未配置该功能模型" />
                     </div>)}
             </div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">模型名称后标注所属渠道；可用渠道由管理员统一配置。</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">各项功能的可用模型由管理员统一配置。</p>
         </section>
         {cloudSession?.user.admin ? <section className="flex flex-wrap items-center justify-between gap-4 border-t border-border/60 pt-6">
             <div className="flex items-start gap-3">
                 <ShieldCheck size={18} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <div><h2 className="text-sm font-medium text-foreground">管理员设置</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">维护功能渠道、模型与分组，仅管理员可见。</p></div>
+                <div><h2 className="text-sm font-medium text-foreground">管理员设置</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">按功能维护可用模型、默认模型和启用状态，仅管理员可见。</p></div>
             </div>
-            <Link to="/admin/channels" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => useConfigStore.getState().setConfigDialogOpen(false)}>管理功能渠道<ArrowUpRight size={15} aria-hidden="true" /></Link>
+            <Link to="/admin/channels" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => useConfigStore.getState().setConfigDialogOpen(false)}>功能模型配置<ArrowUpRight size={15} aria-hidden="true" /></Link>
         </section> : null}
         <p className="text-xs leading-5 text-muted-foreground">分组授权、订阅和余额由 TokenONE 管理。</p>
     </div>;

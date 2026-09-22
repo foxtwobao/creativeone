@@ -10,7 +10,6 @@ import { StudioSettings } from "./studio-settings";
 import { splitErrorMessage } from "@/services/api/error-message";
 import { StudioInspiration } from "./studio-inspiration";
 import { createUserStore } from "@/services/cloud-storage";
-import { CLOUD_ENABLED } from "@/services/api/cloud";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -398,7 +397,7 @@ export default function ImagePage() {
                     <div className="studio-composer-caption"><span>{references.length ? `${references.length} 张参考图 · ` : ""}{modelOptionLabel(effectiveConfig, model)} · {generationCount} 张</span><span>Enter 生成 · Shift + Enter 换行</span></div>
                 </section>
                 {results.length ? <section className="studio-results"><header><h2>{previewLog ? "历史作品" : "生成结果"}</h2>{running ? <span>正在生成 · {formatDuration(elapsedMs)}</span> : <span>灵感，已成形</span>}</header><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{results.map((result, index) => result.status === "success" && result.image ? <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} /> : <PendingImageCard key={result.id} />)}</div></section> : <StudioInspiration onSelect={setPrompt} onUpload={() => fileInputRef.current?.click()} />}
-                <p className="studio-local-note">{CLOUD_ENABLED ? "画布ONE · 创作数据按账号保存并同步到云端" : "画布ONE · 画布与创作记录保存在当前浏览器"}</p>
+                <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
             </main> : <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel

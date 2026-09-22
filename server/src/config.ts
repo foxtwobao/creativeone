@@ -12,10 +12,8 @@ export const env = z.object({
     IDONE_CLIENT_SECRET: z.string().min(1),
     ADMIN_SUBJECTS: z.string().min(1),
     ENHANCER_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
-    ENHANCER_INTERNAL_SECRET: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
+    ENHANCER_APP_CREDENTIAL: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
     TOKENONE_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
-    TOKENONE_KEY_NAME: z.string().min(1).max(100).default("creativeone"),
-    DEV_AUTO_CREATE_TOKENONE_USER: z.enum(["true", "false"]).default("false"),
     SESSION_SECONDS: positive.default(604800),
     LOGIN_SECONDS: positive.default(600),
     MAX_MEDIA_BYTES: positive.default(104857600),
@@ -24,10 +22,6 @@ export const env = z.object({
     MEDIA_DOWNLOAD_HOSTS: z.string().default(""),
     PORT: positive.default(4011),
 }).parse(process.env);
-
-if (env.DEV_AUTO_CREATE_TOKENONE_USER === "true" && process.env.NODE_ENV !== "development") {
-    throw new Error("DEV_AUTO_CREATE_TOKENONE_USER is only allowed with NODE_ENV=development");
-}
 
 for (const name of ["APP_ORIGIN", "IDONE_ISSUER", "ENHANCER_BASE_URL", "TOKENONE_BASE_URL"] as const) {
     if (!env[name]) continue;

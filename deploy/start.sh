@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # The published image always uses the authenticated server edition.
-export CLOUD_ENABLED=true PORT=4011
+export PORT=4011
 sh /app/runtime-config.sh
 
 # If either process exits, stop the other; Compose owns container restarts.

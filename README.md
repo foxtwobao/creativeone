@@ -24,7 +24,7 @@
 
 画布ONE 是一款面向图片创作的开源工作台。它把画布编排、AI 图片生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果。
 
-可选多用户模式：IDONE 登录、按功能配置 TokenONE 渠道、账号数据云同步；部署与联调说明见 [多用户云端后端](docs/content/docs/development/cloud-backend.mdx)。
+必须登录后使用：IDONE 登录、按功能配置 TokenONE 渠道、账号数据云同步；部署与联调说明见 [多用户云端后端](docs/content/docs/development/cloud-backend.mdx)。
 
 > [!CAUTION]
 > 项目目前处于开发阶段，不保证历史数据兼容。各种本地存储格式都可能直接调整，欢迎关注后续更新。
@@ -93,7 +93,7 @@
 - Codex App 插件：提供 Codex app 插件，安装后会自动注册 MCP 并尝试拉起本地 Agent。
 - 插件系统：支持通过 URL 动态安装 / 启用 / 更新 / 卸载远程节点插件，并提供 TypeScript SDK 自行开发画布节点插件。
 - 自定义接口调用：可自定义生图 / 视频接口的调用方式，灵活适配各类中转站与自建服务。
-- 提示词库：内置 7 个开源提示词来源并支持自定义标准 JSON 来源，由浏览器前端直连并缓存到 IndexedDB。
+- 提示词库：内置 7 个开源提示词来源并支持自定义标准 JSON 来源，由浏览器前端读取并缓存在当前页面内存中。
 
 完整功能说明见 [功能介绍](docs/content/docs/overview/features.mdx)。
 

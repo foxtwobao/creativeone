@@ -1,13 +1,12 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { CLOUD_ENABLED } from "@/services/api/cloud";
 import { cloudErrorMessage } from "./error-message";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import type { ReferenceImage } from "@/types/image";
@@ -280,7 +279,7 @@ function parseImagePayload(payload: ImageApiResponse) {
 }
 
 function readApiErrorMessage(value: unknown): string {
-    const cloudMessage = CLOUD_ENABLED ? cloudErrorMessage(value) : "";
+    const cloudMessage = cloudErrorMessage(value);
     if (cloudMessage) return cloudMessage;
     if (!value) return "";
     if (typeof value === "string") {
@@ -369,8 +368,8 @@ function geminiModelName(model: string) {
 
 function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
     const baseUrl = geminiBaseUrl(config);
-    if (!action) return withLocalProxy(`${baseUrl}/models`);
-    return withLocalProxy(`${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`);
+    if (!action) return `${baseUrl}/models`;
+    return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;
 }
 
 function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
@@ -432,7 +431,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function responseErrorMessage(value: unknown) {
-    const cloudMessage = CLOUD_ENABLED ? cloudErrorMessage(value) : "";
+    const cloudMessage = cloudErrorMessage(value);
     if (cloudMessage) return cloudMessage;
     if (!isRecord(value)) return "";
     const error = isRecord(value.error) ? value.error : undefined;
@@ -857,7 +856,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 }
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
-    if (CLOUD_ENABLED) messages = await Promise.all(messages.map(async (message) => ({
+    messages = await Promise.all(messages.map(async (message) => ({
         ...message,
         content: typeof message.content === "string" ? message.content : await Promise.all(message.content.map(async (part) =>
             part.type === "image_url" && part.image_url.url.startsWith("/api/files/")

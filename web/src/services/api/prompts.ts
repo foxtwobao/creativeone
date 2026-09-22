@@ -1,4 +1,4 @@
-import { localUserStore } from "@/services/cloud-storage";
+import { createMemoryStore } from "@/services/cloud-storage";
 
 import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
@@ -46,7 +46,7 @@ type SourceCache = PromptSourceStatus & {
 };
 
 const cacheTtlMs = 1000 * 60 * 60;
-const promptCacheStore = localUserStore("prompt_cache");
+const promptCacheStore = createMemoryStore();
 const loadingSources = new Map<string, Promise<PromptSourceRefreshResult>>();
 
 function enabledSources() {

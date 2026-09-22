@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 
 import { parseChangelog } from "./src/lib/release";
 
@@ -25,32 +25,35 @@ function localPluginsManifest(): Plugin {
         }
     };
     return {
-        name: "local-plugins-manifest",
-        configureServer(server) {
-            server.middlewares.use("/plugins/index.json", (_req, res) => {
-                res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify(listLocalPlugins()));
-            });
+            name: "local-plugins-manifest",
+            configureServer(server) {
+                server.middlewares.use("/plugins/index.json", (_req, res) => {
+                    res.setHeader("Content-Type", "application/json");
+                    res.end(JSON.stringify(listLocalPlugins()));
+                });
+            },
+            generateBundle() {
+                this.emitFile({ type: "asset", fileName: "plugins/index.json", source: JSON.stringify(listLocalPlugins()) });
+            },
+        };
+    }
+
+    export default defineConfig(({ mode }) => {
+        const env = loadEnv(mode, webDir, "");
+        return {
+        server: {
+            proxy: { "/api": { target: env.VITE_API_PROXY_TARGET || "http://127.0.0.1:4011", changeOrigin: false } },
         },
-        generateBundle() {
-            this.emitFile({ type: "asset", fileName: "plugins/index.json", source: JSON.stringify(listLocalPlugins()) });
+        base: process.env.VITE_BASE || "/",
+        plugins: [react(), localPluginsManifest()],
+        resolve: {
+            alias: {
+                "@": resolve(webDir, "src"),
+            },
+        },
+        define: {
+            __APP_VERSION__: JSON.stringify(localVersion),
+            __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
         },
     };
-}
-
-export default defineConfig({
-    server: {
-        proxy: { "/api": { target: "http://127.0.0.1:4011", changeOrigin: false } },
-    },
-    base: process.env.VITE_BASE || "/",
-    plugins: [react(), localPluginsManifest()],
-    resolve: {
-        alias: {
-            "@": resolve(webDir, "src"),
-        },
-    },
-    define: {
-        __APP_VERSION__: JSON.stringify(localVersion),
-        __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
-    },
 });

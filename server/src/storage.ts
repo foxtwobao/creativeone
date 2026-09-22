@@ -92,6 +92,11 @@ storageRouter.put("/files/:namespace/:key", raw({ type: () => true, limit: env.M
     if (!Buffer.isBuffer(req.body)) throw new HttpError(400, "FILE_REQUIRED");
     res.json({ url: await saveFile(res.locals.user.id, ns, key, req.body, (req.get("Content-Type") || "application/octet-stream").split(";")[0]) });
 });
+storageRouter.get("/files/:namespace", async (req, res) => {
+    const ns = fileNamespace.parse(req.params.namespace);
+    const { rows } = await db.query("SELECT key FROM files WHERE user_id=$1 AND namespace=$2 AND NOT delete_requested ORDER BY key", [res.locals.user.id, ns]);
+    res.json({ keys: rows.map((row) => row.key) });
+});
 storageRouter.get("/files/:namespace/:key", async (req, res) => {
     const ns = fileNamespace.parse(req.params.namespace), key = requireKey(req.params.key);
     const { rows } = await db.query("SELECT * FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [res.locals.user.id, ns, key]);
