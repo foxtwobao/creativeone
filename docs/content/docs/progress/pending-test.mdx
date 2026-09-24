@@ -5,6 +5,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 镜像发布工作流：取消 PR 触发，保留 main 推送、`v*` 标签和手动触发；待下一次 PR 确认不再启动镜像构建。未执行本地构建，TODO 已检查，无对应事项需迁移。
 
 - 视频创作工作室：已恢复入口，统一图片页的输入框、模型/参数弹层、历史搜索与结果布局。待验收明暗主题、移动端、Enter 生成与 Shift+Enter 换行、参考图上传/粘贴/素材选择、排序、历史恢复和保存素材。
 - Ark 视频任务：创建和查询经服务端转发 TokenONE `/api/v3/contents/generations/tasks`，继续使用 Enhance 应用默认分组 Key；共享视频服务统一采用 Ark 协议。待验收首帧/首尾帧、参考图及视频/音频参考、参数支持、失败/取消/过期状态和跨账号隔离。沿用现有时长、数量及轮询限制。已确认一个真实任务远程生成成功并恢复到云端历史；下载失败后的自动恢复流程仍待完善。

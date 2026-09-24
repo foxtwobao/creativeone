@@ -14,15 +14,6 @@ on:
       - "VERSION"
       - "CHANGELOG.md"
       - ".github/workflows/docker-image.yml"
-  pull_request:
-    paths:
-      - "web/**"
-      - "server/**"
-      - "deploy/**"
-      - "docker-compose*.yml"
-      - "Dockerfile"
-      - ".dockerignore"
-      - ".github/workflows/docker-image.yml"
   workflow_dispatch:
 
 permissions:
@@ -36,7 +27,6 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -50,14 +40,13 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=branch
             type=ref,event=tag
-            type=ref,event=pr
             type=sha,prefix=sha-
       - name: Build and push server edition
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=creativeone
