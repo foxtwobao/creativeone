@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, ChevronDown, PenLine, Search, Send, X, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Input, InputNumber, Modal, Popover, Select, Switch, Tag, Typography } from "antd";
 import { createUserStore } from "@/services/cloud-storage";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
@@ -9,9 +9,8 @@ import { useTranslation } from "react-i18next";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
-import { canvasThemes } from "@/lib/canvas-theme";
-import { clampVideoSeconds } from "@/lib/media-size";
+import { videoResolutionOptions, videoSizeOptions, videoSecondsRange, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
+import { clampVideoSeconds, inferVideoRatio } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
@@ -19,9 +18,9 @@ import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
+import { splitErrorMessage } from "@/services/api/error-message";
 
 type GeneratedVideo = {
     id: string;
@@ -62,9 +61,6 @@ type GenerationLog = {
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
-type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-
-const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
 const logStore = createUserStore("video_generation_logs");
 
 export default function VideoPage() {
@@ -86,6 +82,7 @@ export default function VideoPage() {
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
+    const [logSearch, setLogSearch] = useState("");
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -370,116 +367,39 @@ export default function VideoPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
-                </aside>
-
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
-                        <div className="flex items-start justify-between gap-3">
-                            <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
-                            <div className="flex shrink-0 gap-2 lg:hidden">
-                                <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                    {t("workbench.logs")}
-                                </Button>
-                                <Button icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.settings")}
-                                </Button>
+        <div className="studio-workbench">
+            <main className={`studio-stage ${results.length ? "has-results" : ""}`}>
+                <div className="studio-page-tools"><span>视频创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
+                <section className="studio-compose-area">
+                    <h1><span>让灵感流动，</span>故事由此开始</h1>
+                    <div className="studio-compose-tools">
+                        <button className="studio-chip" onClick={() => setLogsOpen(true)}><History size={14} />历史记录</button>
+                        <button className="studio-chip" onClick={() => setPromptDialogOpen(true)}><BookOpen size={14} />提示词</button>
+                        <button className="studio-chip" onClick={() => setSettingsOpen(true)}><SlidersHorizontal size={14} />视频设置</button>
+                    </div>
+                    <div className="studio-composer" style={referenceDragTarget ? { outline: "2px solid var(--studio-accent)" } : undefined} onDragEnter={handleReferenceDragEnter} onDragLeave={handleReferenceDragLeave} onDragOver={(event) => event.preventDefault()} onDrop={handleReferenceDrop}>
+                        {references.length ? <div className="studio-references">{references.map((item, index) => (
+                            <div key={item.id}>
+                                <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} />
+                                <span>{effectiveConfig.videoMode === "reference" || references.length > 2 ? `参考图 ${index + 1}` : index === 0 ? "首帧" : "尾帧"}</span>
+                                <button aria-label="移除参考图" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}><X size={12} /></button>
+                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                             </div>
-                        </div>
-
-                        <div className="mt-6 space-y-5">
-                            <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("workbench.prompt")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
-                                            {t("workbench.viewPrompts")}
-                                        </Button>
-                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            {t("workbench.viewAssets")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("videoWorkbench.promptPlaceholder")} />
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("videoWorkbench.references")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("workbench.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("workbench.upload")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div
-                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onDragEnter={handleReferenceDragEnter}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={handleReferenceDragLeave}
-                                    onDrop={handleReferenceDrop}
-                                >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{index + 1}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("videoWorkbench.removeImage")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}</div> : null}
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.adjust")}
-                                </Button>
-                            </div>
-
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
-                            </div>
-                        </div>
-
-                        <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                {t("workbench.generate")}
-                            </Button>
+                        ))}</div> : null}
+                        <div className="studio-input-row">
+                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
+                            <Input.TextArea aria-label="视频创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述画面、动作与运镜，让故事动起来…" onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (canGenerate && !running) void generate(); } }} />
+                            <Popover trigger="click" placement="bottomRight" content={<GenerationSettings />}><button className="studio-model-button">模型<ChevronDown size={14} /></button></Popover>
+                            <button className="studio-send" aria-label="开始生成视频" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
                         </div>
                     </div>
-
-                    <div className="thin-scrollbar rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                            <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
-                        </div>
-                        {results.length ? (
-                            <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
-                            </div>
-                        ) : (
-                            <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
-                                <VideoIcon className="mb-4 size-11 text-stone-400" />
-                                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("videoWorkbench.empty")} />
-                            </div>
-                        )}
-                    </div>
+                    <div className="studio-composer-caption"><span>{modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(references.length > 2 ? "reference" : effectiveConfig.videoMode)}</span><span>Enter 生成 · Shift + Enter 换行</span></div>
                 </section>
+                {results.length ? <section className="studio-results">
+                    <header><h2>{previewLog ? "历史作品" : "生成结果"}</h2><span>{running ? `正在生成 · ${formatDuration(elapsedMs)}` : "每一帧，都是灵感"}</span></header>
+                    <div className="grid gap-4">{results.map((result) => result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />)}</div>
+                </section> : <section className="studio-inspiration"><div className="studio-inspiration-empty py-8"><VideoIcon size={28} strokeWidth={1.25} /><p>用文字开始，或添加参考图，让静止的画面成为故事。</p><button className="studio-chip" onClick={() => fileInputRef.current?.click()}><Plus size={14} />添加参考图</button></div></section>}
+                <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
             </main>
             <input
                 ref={fileInputRef}
@@ -493,11 +413,12 @@ export default function VideoPage() {
                 }}
             />
             <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
+                <Input className="mb-4" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => setLogSearch(event.target.value)} />
+                <LogPanel logs={logs.filter((log) => `${log.title} ${log.prompt}`.toLowerCase().includes(logSearch.toLowerCase()))} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
             </Drawer>
-            <Drawer title={t("workbench.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-                <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+            <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+                <div className="flex justify-center pb-4">
+                    <GenerationSettings />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -509,21 +430,22 @@ export default function VideoPage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const { t } = useTranslation();
-
-    return (
-        <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
-            <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
-            </div>
-        </>
-    );
+function GenerationSettings() {
+    const config = useEffectiveConfig();
+    const model = config.videoModel || config.model;
+    const updateConfig = useConfigStore((state) => state.updateConfig);
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    return <div className="studio-settings">
+        <h3>视频生成设置</h3>
+        <div><span>视频模型</span><ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} /></div>
+        <div><span>分辨率</span><Select aria-label="视频分辨率" value={normalizeResolution(config.vquality)} options={videoResolutionOptions} onChange={(value) => updateConfig("vquality", value)} /></div>
+        <div><span>宽高比</span><Select aria-label="视频宽高比" value={inferVideoRatio(config.size)} options={videoSizeOptions} onChange={(value) => updateConfig("size", value)} /></div>
+        <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={videoSecondsRange.min} max={videoSecondsRange.max} precision={0} value={Number(normalizeVideoSeconds(config.videoSeconds))} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div>
+        <div><span>参考模式</span><Select aria-label="视频参考模式" value={config.videoMode || "frames"} options={[{ value: "frames", label: "首尾帧" }, { value: "reference", label: "参考图" }]} onChange={(value) => updateConfig("videoMode", value)} /></div>
+        <div><span>生成音频</span><Switch aria-label="生成音频" checked={boolConfig(config.videoGenerateAudio, true)} onChange={(value) => updateConfig("videoGenerateAudio", String(value))} /></div>
+        <div><span>视频水印</span><Switch aria-label="视频水印" checked={boolConfig(config.videoWatermark, false)} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div>
+        <p className="pt-2 text-xs text-muted-foreground">超过两张图片时使用参考图模式；参数支持以所选模型为准。</p>
+    </div>;
 }
 
 function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
@@ -566,13 +488,15 @@ function PendingVideoCard() {
 
 function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
+    const { message: errorMessage, details } = splitErrorMessage(error);
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">
                 <div className="text-sm font-medium text-red-600 dark:text-red-300">{t("workbench.failed")}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
-                    {error}
+                    {errorMessage}
                 </Typography.Paragraph>
+                {details ? <details className="max-w-full text-left text-xs text-muted-foreground"><summary className="cursor-pointer text-center">错误详情</summary><pre className="mt-2 whitespace-pre-wrap break-all font-sans">{details}</pre></details> : null}
             </div>
             <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
                 <Button size="small" danger onClick={onRetry}>

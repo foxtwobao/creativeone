@@ -1,21 +1,26 @@
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Card, Empty, Image, Tag } from "antd";
-import { cloudApi } from "@/services/api/cloud";
+import { fetchTasks, queryVideoTask, type Task } from "@/services/api/tasks";
 
-type Task = { id: string; channel_id: string; upstream_id?: string; model: string; capability: string; status: string; result?: { text?: string; url?: string; data?: { url?: string }[] }; error?: string; error_message?: string; created_at: string };
-const labels: Record<string, string> = { running: "生成中", pending: "等待完成", succeeded: "已完成", failed: "失败", unknown: "结果待确认" };
+const labels: Record<string, string> = { queued: "排队中", cancelled: "已取消", expired: "已过期", running: "生成中", pending: "等待完成", succeeded: "已完成", failed: "失败", unknown: "结果待确认" };
 export default function TasksPage() {
     const { message } = App.useApp();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [error, setError] = useState("");
+    const [querying, setQuerying] = useState<string[]>([]);
     const load = async () => {
-        try { setTasks((await cloudApi<{ tasks: Task[] }>("/tasks")).tasks); setError(""); }
+        try { setTasks((await fetchTasks()).tasks); setError(""); }
         catch (error) { setError(error instanceof Error ? error.message : "加载失败"); }
     };
     useEffect(() => { void load(); }, []);
     const refreshVideo = async (task: Task) => {
-        try { await cloudApi(`/ai/${task.channel_id}/v1/videos/${task.upstream_id}`); await load(); }
-        catch (error) { message.error(error instanceof Error ? error.message : "查询失败"); }
+        setQuerying((ids) => [...ids, task.id]);
+        try {
+            const result = await queryVideoTask(task);
+            await load();
+            message.info(`视频状态：${labels[result.status || ""] || result.status || "未知"}`);
+        } catch (error) { message.error(error instanceof Error ? error.message : "查询失败"); }
+        finally { setQuerying((ids) => ids.filter((id) => id !== task.id)); }
     };
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-4">
         <div className="flex justify-between"><h1 className="text-xl font-semibold">云端生成任务</h1><Button onClick={() => void load()}>刷新</Button></div>
@@ -28,7 +33,7 @@ export default function TasksPage() {
             {task.result?.text ? <p className="whitespace-pre-wrap">{task.result.text}</p> : null}
             {Array.isArray(task.result?.data) ? <Image.PreviewGroup>{task.result.data.map((image, index) => image.url ? <Image key={index} src={image.url} width={180} /> : null)}</Image.PreviewGroup> : null}
             {task.result?.url ? <a href={task.result.url} download>下载生成文件</a> : null}
-            {task.capability === "video" && task.upstream_id ? <div className="mt-3 flex gap-3"><Button onClick={() => void refreshVideo(task)}>查询视频状态</Button>{task.status === "succeeded" ? <a href={`/api/ai/${task.channel_id}/v1/videos/${task.upstream_id}/content`} download>下载视频</a> : null}</div> : null}
+            {task.capability === "video" && task.upstream_id ? <div className="mt-3 flex gap-3"><Button loading={querying.includes(task.id)} onClick={() => void refreshVideo(task)}>查询视频状态</Button>{task.status === "succeeded" && task.result?.content?.video_url ? <Button href={task.result.content.video_url} download={`video-${task.upstream_id}.mp4`}>下载视频</Button> : null}</div> : null}
         </Card>)}
     </div></main>;
 }

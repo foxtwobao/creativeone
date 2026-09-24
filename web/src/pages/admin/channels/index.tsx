@@ -29,9 +29,13 @@ export default function ChannelsPage() {
     };
     useEffect(() => { if (cloudSession?.user.admin) void load(); }, []);
     if (!cloudSession?.user.admin) return <div className="p-6"><Alert type="error" title="只有管理员可以配置功能模型" /></div>;
-    const loadModels = async () => {
+    const loadModels = async (notify = false) => {
         setModelsLoading(true); setModelsError(""); setModels([]);
-        try { setModels((await cloudApi<{ models: string[] }>("/admin/models")).models); }
+        try {
+            const { models } = await cloudApi<{ models: string[] }>("/admin/models");
+            setModels(models);
+            if (notify) message.success(`已刷新 ${models.length} 个候选模型，请在「允许的模型」下拉框中搜索添加`);
+        }
         catch (error) { setModelsError(error instanceof Error ? error.message : "模型列表加载失败"); }
         finally { setModelsLoading(false); }
     };
@@ -71,8 +75,8 @@ export default function ChannelsPage() {
                 </Form.Item>
                 <div className="mb-4 space-y-2">
                     {modelsError ? <Alert type="warning" title={modelsError} description="仍可手动输入模型 ID，已选模型会保留。" /> : null}
-                    <Button type="link" className="!px-0" loading={modelsLoading} onClick={() => void loadModels()}>刷新模型列表</Button>
-                    <span className="ml-2 text-xs text-muted-foreground">当前管理员在应用默认分组下可见的模型</span>
+                    <Button type="link" className="!px-0" loading={modelsLoading} onClick={() => void loadModels(true)}>刷新模型列表</Button>
+                    <span className="ml-2 text-xs text-muted-foreground">刷新仅更新候选列表，不会自动添加到允许的模型</span>
                 </div>
                 <Form.Item name="default_model" label="默认模型" dependencies={["models"]} rules={[({ getFieldValue }) => ({ validator: (_, value) => {
                     const models: string[] = getFieldValue("models") || [];
