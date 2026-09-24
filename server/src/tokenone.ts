@@ -52,7 +52,7 @@ export async function ensureKey(user: User, requestId: string) {
 export function upstreamUrl(path: string) {
     if (!env.TOKENONE_BASE_URL) throw new HttpError(503, "TOKENONE_NOT_CONFIGURED");
     const base = env.TOKENONE_BASE_URL.replace(/\/+$/, "").replace(/\/v1$/, "");
-    return `${base}/v1/${path}`;
+    return `${base}/${path.startsWith("contents/generations/tasks") ? "api/v3" : "v1"}/${path}`;
 }
 export const channelRouter = Router();
 channelRouter.get("/channels", async (_req, res) => {

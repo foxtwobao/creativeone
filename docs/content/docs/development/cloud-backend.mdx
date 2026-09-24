@@ -54,7 +54,7 @@ PostgreSQL 保存账号、会话、渠道、Key 绑定、JSON 文档和生成任
 2. 在同一份根目录 `.env` 中填写 IDONE Client ID/Secret、Issuer、管理员 sub、Enhance 地址/应用接入凭证和 TokenONE Base URL。Compose 的 `environment` 已逐项列出这些参数，不再读取 `server/.env`，也不需要挂载配置文件。不要把密钥写入前端环境变量或提交 Git。仅启用登录与同步时，三个 Enhancer/TokenONE 连接参数均可留空；应用专属 Discovery 留空则使用标准发现地址。
 3. `APP_ORIGIN` 必须是浏览器访问的完整 origin，无尾斜杠，例如 `https://creative.example.com`。在 IDONE 注册回调 `https://creative.example.com/api/auth/callback`，启用 `openid profile email`、PKCE S256 和 `client_secret_post`。Issuer 必须与 discovery 和 ID Token 的 `iss` 完全一致。
 4. 让服务容器能够访问 Enhancer。示例里的 `tokenone-enhancer` 只是占位地址，Compose 不会部署或自动连接外部 TokenONE 网络；按环境使用可达内网地址或显式配置共享 Docker 网络。只向受信网络传输 Enhance 应用接入凭证，跨不可信网络使用 HTTPS。
-5. 若生成文件来自独立 CDN，需在 Compose 的 `app.environment` 额外添加 `MEDIA_DOWNLOAD_HOSTS`，值为准确 HTTPS 主机名（含非默认端口），多个以逗号分隔；TokenONE 主机默认允许。下载拒绝重定向，不允许任意外部 URL，未允许的结果会显示错误。为保持配置简洁，默认模板不列此高级参数。
+5. 若生成文件来自独立 CDN，需在 Compose 的 `app.environment` 额外添加 `MEDIA_DOWNLOAD_HOSTS`，值支持精确主机名和 `*.域名`，多个以逗号分隔，例如 `*.volces.com,*.volcengine.com`；泛域名同时匹配根域名和各级子域名，不匹配相似后缀，非默认端口需显式配置。仅允许 HTTPS，TokenONE 主机默认允许。下载拒绝重定向，不允许任意外部 URL，未允许的结果会显示错误。为保持配置简洁，默认模板不列此高级参数。
 6. 使用已发布镜像执行 `docker compose pull`、`docker compose up -d`；源码构建使用 `docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build`，也可使用 `docker compose -f docker-compose.local.yml up -d --build`（需要支持 include 的 Compose）。生产环境在外层配置 HTTPS 反向代理。镜像设置 `NODE_ENV=production`，IDONE 必须使用 HTTPS，不能直接复用本机 HTTP 联调配置。
 7. 管理员登录后进入「功能模型配置」，分别编辑图片、文本等功能的真实可用模型、默认模型和启用状态，刷新页面生效。
 

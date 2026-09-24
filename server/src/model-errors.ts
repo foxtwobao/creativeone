@@ -1,6 +1,7 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    TOKENONE_GENERATION_PERMISSION_DISABLED: "模型服务分组未启用生成权限（服务返回：图片生成未启用）；视频请求也可能受此开关限制，请管理员核查 TokenONE 中对应 Key 所属分组的生成能力配置。",
     TOKENONE_INVALID_RESPONSE: "模型服务返回的数据格式无效，请联系管理员。",
     ENHANCER_NOT_CONFIGURED: "Enhance 应用接入尚未配置，请联系管理员。",
     ENHANCER_FAILED: "Enhance 查询失败，请联系管理员并提供请求 ID。",
@@ -65,6 +66,9 @@ export function modelErrorMessage(code: string): string | undefined {
 // internal URLs, HTML or prompts and must not be forwarded or logged verbatim.
 export async function tokenoneError(response: Response): Promise<HttpError> {
     const body = await response.json().catch(() => null);
+    if (response.status === 403 && body?.error?.type === "permission_error" && body.error.message === "Image generation is not enabled for this group") {
+        return new HttpError(403, "TOKENONE_GENERATION_PERMISSION_DISABLED");
+    }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
     return new HttpError(response.status === 401 ? 502 : response.status, code || `TOKENONE_HTTP_${response.status}`);

@@ -31,3 +31,12 @@ test("upstream authentication failures are not mistaken for an expired app sessi
     assert.equal(error.status, 502);
     assert.equal(error.code, "API_KEY_DISABLED");
 });
+
+test("disabled generation permission has a fixed message and unknown provider text stays private", async () => {
+    const error = await tokenoneError(Response.json({ error: { type: "permission_error", message: "Image generation is not enabled for this group" } }, { status: 403 }));
+    assert.equal(error.code, "TOKENONE_GENERATION_PERMISSION_DISABLED");
+    assert.match(modelErrorMessage(error.code)!, /分组未启用生成权限/);
+    const unknown = await tokenoneError(Response.json({ error: { type: "permission_error", message: "private upstream details" } }, { status: 403 }));
+    assert.equal(unknown.code, "TOKENONE_HTTP_403");
+    assert.doesNotMatch(modelErrorMessage(unknown.code)!, /private upstream/);
+});

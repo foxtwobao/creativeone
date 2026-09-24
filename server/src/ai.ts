@@ -7,10 +7,11 @@ import { env } from "./config.js";
 import { ensureKey, upstreamUrl, type Channel } from "./tokenone.js";
 import { HttpError, requireUuid } from "./http.js";
 import { saveFile } from "./storage.js";
+import { isAllowedMediaUrl } from "./media-hosts.js";
 import { tokenoneError, modelErrorMessage } from "./model-errors.js";
 
 const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES, fieldSize: env.MAX_JSON_BYTES } }).any();
-const endpoints: Record<string, string> = { "images/generations": "image", "images/edits": "image", "responses": "text", "chat/completions": "text", "audio/speech": "audio", "videos": "video" };
+const endpoints: Record<string, string> = { "images/generations": "image", "images/edits": "image", "responses": "text", "chat/completions": "text", "audio/speech": "audio", "contents/generations/tasks": "video" };
 const allowedMediaHosts = new Set([...(env.TOKENONE_BASE_URL ? [new URL(env.TOKENONE_BASE_URL).host] : []), ...env.MEDIA_DOWNLOAD_HOSTS.split(",").map((item) => item.trim()).filter(Boolean)]);
 
 async function readBytes(response: Response) {
@@ -27,7 +28,7 @@ async function readBytes(response: Response) {
 async function persistRemoteMedia(userId: string, url: string, signal: AbortSignal) {
     const parsed = new URL(url);
     // Only administrator-trusted result hosts; redirects cannot escape the allowlist.
-    if (!allowedMediaHosts.has(parsed.host) || parsed.username || parsed.password || parsed.protocol !== "https:") throw new HttpError(502, "MEDIA_HOST_NOT_ALLOWED");
+    if (!isAllowedMediaUrl(parsed, allowedMediaHosts)) throw new HttpError(502, "MEDIA_HOST_NOT_ALLOWED");
     const response = await fetch(parsed, { redirect: "error", signal });
     if (!response.ok) throw new HttpError(502, "MEDIA_DOWNLOAD_FAILED");
     const mime = (response.headers.get("content-type") || "application/octet-stream").split(";")[0];
@@ -57,13 +58,14 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
 }, async (req, res) => {
     const channelId = requireUuid(req.params.channel);
     const path = (Array.isArray(req.params.path) ? req.params.path : [req.params.path]).join("/");
-    const videoMatch = /^videos\/([\w-]+)(\/content)?$/.exec(path);
+    const videoMatch = /^contents\/generations\/tasks\/([\w-]+)$/.exec(path);
     const user = res.locals.user;
     let task: any;
     let channel: Channel;
     if (req.method === "GET" && videoMatch) {
         task = (await db.query("SELECT * FROM generation_tasks WHERE user_id=$1 AND channel_id=$2 AND upstream_id=$3 AND capability='video'", [user.id, channelId, videoMatch[1]])).rows[0];
         if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
+        if (task.status === "succeeded" && task.result) return res.json(task.result);
         channel = { id: channelId, capability: "video", models: [task.model], enabled: true };
     } else {
         channel = (await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows[0];
@@ -141,7 +143,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             return;
         }
         let result: any = await upstream.json();
-        if (result?.error) {
+        if (result?.error && channel.capability !== "video") {
             await db.query("UPDATE generation_tasks SET status='failed',error='TOKENONE_GENERATION_FAILED',updated_at=now() WHERE id=$1", [taskId]);
             throw new HttpError(422, "TOKENONE_GENERATION_FAILED");
         }
@@ -155,8 +157,11 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             const video = result.data || result;
             const upstreamId = video.id || video.task_id;
             if (!task && (typeof upstreamId !== "string" || !/^[\w-]+$/.test(upstreamId))) throw new HttpError(502, "INVALID_VIDEO_TASK");
-            status = ["failed", "error", "cancelled"].includes(video.status) ? "failed" : ["completed", "succeeded", "success"].includes(video.status) ? "succeeded" : "pending";
-            if (typeof video.url === "string" && status === "succeeded") video.url = await persistRemoteMedia(user.id, video.url, signal);
+            status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : video.status === "succeeded" ? "succeeded" : "pending";
+            if (status === "succeeded") {
+                if (typeof video.content?.video_url !== "string") throw new HttpError(502, "INVALID_VIDEO_TASK");
+                video.content.video_url = await persistRemoteMedia(user.id, video.content.video_url, signal);
+            }
             await db.query("UPDATE generation_tasks SET upstream_id=COALESCE(upstream_id,$2) WHERE id=$1", [taskId, upstreamId || videoMatch?.[1]]);
         }
         await db.query("UPDATE generation_tasks SET status=$2,result=$3,updated_at=now() WHERE id=$1", [taskId, status, JSON.stringify(result)]);
