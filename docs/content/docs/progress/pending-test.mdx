@@ -5,6 +5,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- New API 豆包路径适配：根据线上诊断，原 `/api/v3/contents/generations/tasks` 返回 404；服务端视频创建与查询统一改走 `/doubao/api/v3/contents/generations/tasks`（查询追加任务 ID）。待部署后验收视频创建、状态轮询及结果保存。本次未运行测试、语法检查或构建，未调用真实模型或部署。TODO 已检查，无对应事项需迁移；下方旧 Ark 路径记录已由本次适配取代。
+
 - 媒体下载全域名规则：`MEDIA_DOWNLOAD_HOSTS=*` 允许任意 HTTPS 主机，保留 URL 凭据及重定向限制，图片与视频共用。已补充针对性的测试用例但按项目约定未运行测试或构建。线上容器已备份并部署源码补丁及 `*` 配置，后端健康，运行时验证原失败域名允许、HTTP/内嵌凭据拒绝；未调用真实计费模型，待用户验收生成下载。该补丁尚未发布为镜像，下次 Portainer 重建须使用包含本改动的新镜像并同步环境变量。TODO 已检查，无需调整。
 
 - 线上图片下载白名单诊断：拒绝结果 URL 时仅记录 host/protocol，不输出图片路径、签名参数或完整 URL。已通过复现确认图片结果来自白名单外的 HTTPS 主机，现按用户要求支持 `*`；真实图片下载保存仍待验收。TODO 已检查，无需调整。

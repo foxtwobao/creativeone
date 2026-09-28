@@ -47,7 +47,7 @@ docker compose -f docker-compose.yml -f docker-compose.lab.yml up -d --no-deps -
 - `APP_USER_LOGIN_REQUIRED` 显示“请先登录模型服务完成账户关联，完成后回到此页重试。”并提供固定门户登录链接，新标签页打开，保留当前编辑内容。没有 return_to 或自动重试；真实 IDONE 登录由用户手动完成。
 - `/api/tokenone/account/summary`、`/api/tokenone/usage/query`、`/api/tokenone/usage/stats` 对已认证请求返回 HTTP 501 / `TOKENONE_ACCOUNT_USAGE_UNAVAILABLE`，不访问上游、不返回伪造零余额。当前前端没有对应查询页面或自动请求，不作为生成前置条件。
 - 配置生效后验证 groups、未关联身份的登录提示、门户登录后 ensure 与重复 Key 复用、未登录/普通用户/管理员权限、凭证撤销/应用停用/无分组权益，以及凭证不泄露。
-- 图片、文本、视频、音频按实际启用的模型逐项验收；现有视频仍走 `/api/v3/contents/generations/tasks`，必须确认 New API 与渠道支持，不能以取 Key 成功替代模型验收。真实计费调用需相应授权。
+- 图片、文本、视频、音频按实际启用的模型逐项验收；视频创建与查询已适配 New API 豆包兼容入口 `/doubao/api/v3/contents/generations/tasks`（查询追加任务 ID）。根据线上诊断，原 `/api/v3/contents/generations/tasks` 返回 404；新路径尚待部署后真实联调，不能以取 Key 成功替代模型验收。真实计费调用需相应授权。
 
 本次 13 项后端模拟测试和 3 项前端错误状态测试通过；未运行构建、类型检查、数据库迁移、真实身份登录、模型调用或容器验收。Docker 静态资源与持久化部署仍需实际验证。完整待测项见[待验收清单](/docs/progress/pending-test)。
 
