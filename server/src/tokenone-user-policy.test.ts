@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 function run(script: string) {
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
         import assert from 'node:assert/strict';
-        const { ensureKey, enhancer, channelRouter } = await import('./src/tokenone.ts');
+        const { ensureKey, enhancer, channelRouter, modelProvider } = await import('./src/tokenone.ts');
         const { db } = await import('./src/db.ts');
         const user = { id: 'local-user', email_verified: true, issuer: 'https://idone.test', subject: 'verified-sub', email: 'private@example.test', username: 'private' };
         ${script}
@@ -32,7 +32,9 @@ test("v2 ensure sends only verified identity and preserves decimal IDs and the c
         return Response.json({ status: 'ready', tokenone_user_id: '9007199254740995', api_key: { id: '9007199254740997', key: 'sk-test', group_id: group, status: 'active' } });
     };
     assert.equal((await ensureKey(user, 'trace-test')).group_id, group);
-    assert.deepEqual(writes[0][1], ['local-user', group, '9007199254740995', '9007199254740997']);
+    assert.deepEqual(writes[0][1], ['local-user', group, '9007199254740995', '9007199254740997', modelProvider]);
+    assert.match(modelProvider, /^reseller:/);
+    assert.ok(writes[0][0].includes('ON CONFLICT (user_id,provider,group_id)'));
     assert.ok(!JSON.stringify(writes).includes('sk-test'));
     group = '9';
     assert.equal((await ensureKey(user, 'trace-test')).group_id, '9');
@@ -40,7 +42,7 @@ test("v2 ensure sends only verified identity and preserves decimal IDs and the c
 
 test("Enhance failures retain safe v2 codes without retries or replacement accounts", () => run(`
     const { modelErrorMessage } = await import('./src/model-errors.ts');
-    for (const [status, code] of [[503, 'TOKENONE_USER_NOT_FOUND'], [409, 'APP_KEY_UNAVAILABLE'], [409, 'IDENTITY_CONFLICT'], [403, 'SCOPE_FORBIDDEN'], [401, 'UNAUTHORIZED'], [503, 'APP_KEY_RECOVERY_UNAVAILABLE']]) {
+    for (const [status, code] of [[403, 'APP_USER_LOGIN_REQUIRED'], [409, 'APP_KEY_RESULT_AMBIGUOUS'], [503, 'TOKENONE_USER_NOT_FOUND'], [409, 'APP_KEY_UNAVAILABLE'], [409, 'IDENTITY_CONFLICT'], [403, 'SCOPE_FORBIDDEN'], [401, 'UNAUTHORIZED'], [503, 'APP_KEY_RECOVERY_UNAVAILABLE']]) {
         let calls = 0;
         globalThis.fetch = async () => { calls++; return Response.json({ error: code, retryable: true, detail: 'sk-private' }, { status }); };
         await assert.rejects(ensureKey(user, 'trace'), { code, status: status === 401 ? 502 : status });
@@ -59,37 +61,25 @@ test("malformed upstream Key IDs are upstream errors and unverified users never 
     assert.equal(calls, 1);
 `));
 
-test("account and usage routes enforce session identity and preserve amounts, pagination and query errors", () => run(`
+test("unsupported account and usage routes never call Reseller or fabricate amounts", () => run(`
     const { default: express } = await import('express');
     const app = express();
-    app.use(express.json(), (_req, res, next) => { res.locals.user = user; res.locals.requestId = 'trace'; next(); }, channelRouter);
-    app.use((error, _req, res, _next) => res.status(error.status || 400).json({ error: error.code || 'INVALID_REQUEST' }));
+    app.use(express.json(), (_req, res, next) => { res.locals.user = user; next(); }, channelRouter);
+    app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.code }));
     const server = app.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     const realFetch = globalThis.fetch;
-    let calls = 0, fail = false;
-    globalThis.fetch = async (url, init) => {
-        calls++;
-        assert.ok(["account/summary", "usage/query", "usage/stats"].some(path => url === "https://enhancer.test/api/apps/" + path));
-        const body = JSON.parse(init.body);
-        assert.deepEqual(body.identity, { issuer: user.issuer, subject: user.subject });
-        if (fail) return Response.json({ error: 'INVALID_OR_EXPIRED_CURSOR' }, { status: 400 });
-        if (url.endsWith('/summary')) return Response.json({ wallet: { balance: '1.0000000001' }, keys: [] });
-        assert.equal(body.cursor, 'opaque-cursor');
-        return Response.json({ items: [{ id: '9007199254740993' }], has_more: true, next_cursor: 'next', snapshot_cursor: 'snapshot', totals: { metered_cost: '0.1000000001' } });
-    };
-    const call = (path, body) => realFetch('http://127.0.0.1:' + server.address().port + '/tokenone' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; throw new Error('Must not contact upstream'); };
     try {
-        assert.equal((await call('/account/summary', { identity: { subject: 'forged' } })).status, 400);
+        for (const path of ['/account/summary', '/usage/query', '/usage/stats']) {
+            const response = await realFetch('http://127.0.0.1:' + server.address().port + '/tokenone' + path, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity: { subject: 'forged' } }),
+            });
+            assert.equal(response.status, 501);
+            assert.deepEqual(await response.json(), { error: 'TOKENONE_ACCOUNT_USAGE_UNAVAILABLE' });
+        }
         assert.equal(calls, 0);
-        assert.equal((await (await call('/account/summary', {})).json()).wallet.balance, '1.0000000001');
-        const query = { from: '2026-09-01T00:00:00+08:00', to: '2026-09-02T00:00:00+08:00', cursor: 'opaque-cursor' };
-        const page = await (await call('/usage/query', query)).json();
-        assert.equal(page.items[0].id, '9007199254740993');
-        assert.equal(page.next_cursor, 'next');
-        assert.equal((await (await call('/usage/stats', query)).json()).totals.metered_cost, '0.1000000001');
-        fail = true;
-        assert.equal((await (await call('/usage/query', query)).json()).error, 'INVALID_OR_EXPIRED_CURSOR');
     } finally { server.close(); server.closeAllConnections(); }
 `));
 
@@ -134,4 +124,31 @@ test("feature configuration requires a listed default model and permits empty di
     assert.equal(featureModelsSchema.safeParse({ models: ['image-a'], default_model: 'image-b', enabled: true }).success, false);
     assert.equal(featureModelsSchema.safeParse({ models: ['image-a'], default_model: 'image-a', enabled: true, name: 'extra' }).success, false);
     assert.equal(featureModelsSchema.safeParse({ models: ['image-a', 'image-b'], default_model: 'image-b', enabled: true }).success, true);
+`));
+
+test("legacy video tasks never acquire a new provider Key and saved results remain readable", () => run(`
+    const { default: express } = await import('express');
+    const { aiRouter } = await import('./src/ai.ts');
+    const app = express();
+    app.use((_req, res, next) => { res.locals.user = user; next(); }, aiRouter);
+    app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.code }));
+    const task = { provider: 'legacy-enhance', group_id: '8', status: 'unknown' };
+    db.query = async () => ({ rows: [task] });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; throw new Error('Must not contact upstream'); };
+    const call = () => realFetch('http://127.0.0.1:' + server.address().port + '/ai/11111111-1111-4111-8111-111111111111/v1/contents/generations/tasks/task-old');
+    try {
+        const response = await call();
+        assert.equal(response.status, 409);
+        assert.deepEqual(await response.json(), { error: 'TASK_PROVIDER_CHANGED' });
+        task.status = 'succeeded';
+        task.result = { content: { video_url: '/api/files/saved' } };
+        assert.deepEqual(await (await call()).json(), task.result);
+        db.query = async () => ({ rows: [task, { ...task, provider: modelProvider }] });
+        assert.equal((await call()).status, 409);
+        assert.equal(calls, 0);
+    } finally { server.close(); server.closeAllConnections(); }
 `));

@@ -5,6 +5,24 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 真实管理员模型列表请求返回 TOKENONE_GROUP_FORBIDDEN：Reseller 查询 New API 用户可用分组后未找到应用默认组 1-Creative，需在 New API 核验并配置用户分组权益，再刷新 CreativeOne 模型列表；不是 CreativeOne 管理员权限或模型 ID 配置问题，尚未修改关联项目配置。
+
+- CreativeOne 管理员配置：已按用户指定的 lab IDONE 账号准确 subject 替换 ADMIN_SUBJECTS，仅保留该管理员，旧配置已安全备份并重启后端。确认该用户已在当前 issuer 下登录过、配置匹配且健康检查为 200；待刷新页面验收功能模型配置入口和管理员操作。仅变更 CreativeOne 权限，不修改 IDONE 用户权限或旧数据归属。
+
+- Reseller 本机切换已执行：creativeone 应用回调登记确认后，停止后端并备份数据库与媒体，再按原 npm run dev 重启 4013。健康检查和前端页面为 200，未登录接口为 401，登录跳转为 302、使用 lab IDONE creativeone 应用及正确回调/PKCE；分组读取为 200，默认组 1-Creative（7）。5 条旧绑定和 29 条任务均保留 legacy-enhance。待用户重新登录，确认新管理员 subject 与旧数据归属，再验收门户关联、ensure 和真实模型；未执行真实计费调用。下方未重启/回调缺失条目为此前记录。
+
+- 用户选定 IDONE creativeone 应用：已备份并更新本机服务端 Client ID/Secret、lab issuer 与应用 Discovery，关闭旧 HTTP 开发开关。待 IDONE 应用追加本机 `http://192.168.10.38:3002/api/auth/callback` 后再重启；未修改旧身份数据或管理员配置，需确认新的管理员 subject 和旧数据归属。下方 IDONE 保留旧配置的条目为此前核验记录。
+
+- IDONE lab 只读核验：Discovery 正常，但不存在 creativeone-local；creativeone 客户端凭据与本机不同，且只登记线上回调，未登记本机 3002 回调。CreativeOne 两个旧 subject 均不存在于 lab IDONE，不能自动迁移身份；局域网身份下的 37 条文档、20 个文件、29 条任务及旧绑定需明确目标用户后备份迁移。尚未修改 IDONE 或旧身份数据，也未重启切换。
+
+- Reseller 凭证实测：本机 Node 的 `/api/apps/groups` 返回 200，应用 creativeone，默认分组 1-Creative（字符串 ID 7，active）；HTTPS 校验成功。运行进程仍使用旧模型地址。CreativeOne 保留的 issuer 为 `http://192.168.10.38:8000`，Discovery 连接被拒绝，而 Reseller 运行 issuer 是 `https://idone.lab.home.arpa`，待确认身份配置后再备份数据库、重启和验收个人 Key。未调用 ensure 或真实模型，未修改关联项目。
+
+- Reseller / New API 迁移：补齐 `APP_USER_LOGIN_REQUIRED` 白名单、中文提示和全局新标签页门户登录入口；图片/文本/视频/音频及管理员模型请求需浏览器验收，关联完成后手动重试。账户余额/明细/统计三个接口改为 501 功能不可用，不调用上游或伪造零数据。13 项后端模拟测试、3 项前端错误状态测试通过，覆盖错误不重试、邮箱限制、身份与 Key 隔离、管理员模型权限、停用接口及历史任务保护；未构建或类型检查。
+- 提供方隔离：旧 Key 绑定与任务保留在 `legacy-enhance`，新绑定按用户/提供方/分组保存，新视频任务记录提供方；同数字 ID 不覆盖旧绑定，旧任务不使用新 Key 查询，已保存结果仍可读取，任务 ID 冲突拒绝猜测。数据库迁移和回滚仍需备份后在隔离库验收。
+- 部署模板已指向 lab Reseller、New API 和 IDONE，增加可选 `docker-compose.lab.yml` 只读 CA 挂载；本机 `server/.env` 已安全备份并写入新凭证和模型地址，保留 IDONE，未重启服务。待核验新应用凭证、客户端/回调/issuer、DNS/HTTPS/CA（包括容器）、groups、门户关联和 Key 复用，以及撤销/停用/无权益/未登录权限。真实模型尚未调用，尤其视频 `/api/v3/contents/generations/tasks` 的 New API 支持仍需确认。旧凭证停用另行安排，Docker 静态资源仍待验收。TODO 已检查并补充暂不支持的账户/用量后续事项。
+
+以下 Enhance 联调条目为先前变更记录，其账户/用量接口行为已被本次 Reseller 调整取代，历史测试不代表迁移验收完成。
+
 - 镜像发布工作流：取消 PR 触发，保留 main 推送、`v*` 标签和手动触发；待下一次 PR 确认不再启动镜像构建。未执行本地构建，TODO 已检查，无对应事项需迁移。
 
 - 视频创作工作室：已恢复入口，统一图片页的输入框、模型/参数弹层、历史搜索与结果布局。待验收明暗主题、移动端、Enter 生成与 Shift+Enter 换行、参考图上传/粘贴/素材选择、排序、历史恢复和保存素材。

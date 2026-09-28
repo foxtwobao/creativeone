@@ -1,4 +1,5 @@
 import axios from "axios";
+import { cloudErrorMessage } from "./error-message";
 
 import i18n from "@/i18n";
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
@@ -40,7 +41,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             });
             return await audioPluginBlob(result, format);
         } catch (error) {
-            throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
+            throw new Error(await readAxiosError(error, apiText("audioGenerationFailed")));
         }
     }
     assertAudioConfig(requestConfig, model);
@@ -62,7 +63,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         await assertAudioBlob(response.data);
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
-        throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
+        throw new Error(await readAxiosError(error, apiText("audioGenerationFailed")));
     }
 }
 
@@ -132,12 +133,13 @@ function readApiErrorMessage(value: unknown): string {
     );
 }
 
-function readAxiosError(error: unknown, fallback: string) {
+async function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return apiText("requestCanceled");
     if (axios.isAxiosError(error)) {
         if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
-        const responseData = error.response?.data;
-        const apiMsg = readApiErrorMessage(responseData);
+        const data = error.response?.data;
+        const responseData = data instanceof Blob ? await data.text().then((text) => JSON.parse(text)).catch(() => null) : data;
+        const apiMsg = cloudErrorMessage(responseData) || readApiErrorMessage(responseData);
         if (apiMsg) return apiMsg;
         const statusMsg = statusMessage(error.response?.status, fallback);
         if (statusMsg) return statusMsg;

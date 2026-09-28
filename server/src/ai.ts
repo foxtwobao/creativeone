@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createParser } from "eventsource-parser";
 import { db } from "./db.js";
 import { env } from "./config.js";
-import { ensureKey, upstreamUrl, type Channel } from "./tokenone.js";
+import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError, requireUuid } from "./http.js";
 import { saveFile } from "./storage.js";
 import { isAllowedMediaUrl } from "./media-hosts.js";
@@ -63,7 +63,9 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     let task: any;
     let channel: Channel;
     if (req.method === "GET" && videoMatch) {
-        task = (await db.query("SELECT * FROM generation_tasks WHERE user_id=$1 AND channel_id=$2 AND upstream_id=$3 AND capability='video'", [user.id, channelId, videoMatch[1]])).rows[0];
+        const { rows } = await db.query("SELECT * FROM generation_tasks WHERE user_id=$1 AND channel_id=$2 AND upstream_id=$3 AND capability='video'", [user.id, channelId, videoMatch[1]]);
+        if (rows.length > 1) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
+        task = rows[0];
         if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
         if (task.status === "succeeded" && task.result) return res.json(task.result);
         channel = { id: channelId, capability: "video", models: [task.model], enabled: true };
@@ -73,6 +75,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && endpoints[path] === channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
         if (req.method === "POST" && (!req.body || typeof req.body.model !== "string" || !channel.models.includes(req.body.model))) throw new HttpError(403, "MODEL_NOT_ALLOWED");
     }
+    if (task && task.provider !== modelProvider) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
     const apiKey = await ensureKey(user, res.locals.requestId);
     if (task && task.group_id !== apiKey.group_id) throw new HttpError(409, "TASK_GROUP_CHANGED");
     const key = apiKey.key;
@@ -101,7 +104,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         } else { headers["Content-Type"] = "application/json"; body = JSON.stringify(req.body); }
     }
     const signal = AbortSignal.timeout(600_000);
-    if (!task) await db.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status) VALUES ($1,$2,$3,$4,$5,$6,$7,'running')", [taskId, user.id, channelId, apiKey.group_id, req.body.model, channel.capability, path]);
+    if (!task) await db.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status,provider) VALUES ($1,$2,$3,$4,$5,$6,$7,'running',$8)", [taskId, user.id, channelId, apiKey.group_id, req.body.model, channel.capability, path, modelProvider]);
     try {
         const upstream = await fetch(upstreamUrl(path), { method: req.method, headers, body, redirect: "error", signal });
         if (!upstream.ok) {

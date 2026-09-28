@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "./db.js";
 import { env } from "./config.js";
@@ -17,13 +17,17 @@ export const featureModelsSchema = z.object({
 });
 const decimalId = z.string().regex(/^[1-9][0-9]*$/);
 const keySchema = z.object({ status: z.literal("ready"), tokenone_user_id: decimalId, api_key: z.object({ id: decimalId, key: z.string().min(1), group_id: decimalId, status: z.literal("active") }) });
+// Service addresses identify the binding namespace; credentials may rotate without changing ownership.
+export const modelProvider = `reseller:${createHash("sha256").update(JSON.stringify([
+    env.ENHANCER_BASE_URL?.replace(/\/+$/, ""), env.TOKENONE_BASE_URL?.replace(/\/+$/, "").replace(/\/v1$/, ""),
+])).digest("hex")}`;
 const identity = (user: User) => ({ issuer: user.issuer, subject: user.subject });
 const enhanceErrors = new Set([
     "INVALID_REQUEST", "INVALID_OR_EXPIRED_CURSOR", "UNAUTHORIZED", "APP_DISABLED", "SCOPE_FORBIDDEN", "ISSUER_FORBIDDEN", "KEY_FORBIDDEN",
     "TOKENONE_USER_INACTIVE", "TOKENONE_GROUP_FORBIDDEN", "IDENTITY_CONFLICT", "TOKENONE_GROUP_UNAVAILABLE", "APP_KEY_BINDING_DISABLED",
     "APP_KEY_UNAVAILABLE", "TOKENONE_KEY_QUOTA_EXHAUSTED", "APP_KEY_RESULT_AMBIGUOUS", "TOKENONE_USER_NOT_FOUND", "APP_SERVICE_NOT_CONFIGURED",
     "APP_WRITES_DISABLED", "TOKENONE_DATABASE_NOT_CONFIGURED", "APP_KEY_ENCRYPTION_NOT_CONFIGURED", "APP_KEY_RECOVERY_UNAVAILABLE",
-    "APP_DATABASE_UNAVAILABLE", "APP_SERVICE_UNAVAILABLE",
+    "APP_DATABASE_UNAVAILABLE", "APP_SERVICE_UNAVAILABLE", "APP_USER_LOGIN_REQUIRED",
 ]);
 export async function enhancer(path: string, requestId: string, body?: unknown) {
     if (!env.ENHANCER_BASE_URL || !env.ENHANCER_APP_CREDENTIAL) throw new HttpError(503, "ENHANCER_NOT_CONFIGURED");
@@ -46,7 +50,7 @@ export async function ensureKey(user: User, requestId: string) {
     const parsed = keySchema.safeParse(await enhancer("/keys/ensure", requestId, { identity: identity(user) }));
     if (!parsed.success) throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
     const result = parsed.data;
-    await db.query(`INSERT INTO key_bindings (user_id,group_id,tokenone_user_id,key_id) VALUES ($1,$2,$3,$4) ON CONFLICT (user_id,group_id) DO UPDATE SET tokenone_user_id=EXCLUDED.tokenone_user_id,key_id=EXCLUDED.key_id`, [user.id, result.api_key.group_id, result.tokenone_user_id, result.api_key.id]);
+    await db.query(`INSERT INTO key_bindings (user_id,group_id,tokenone_user_id,key_id,provider) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id,provider,group_id) DO UPDATE SET tokenone_user_id=EXCLUDED.tokenone_user_id,key_id=EXCLUDED.key_id`, [user.id, result.api_key.group_id, result.tokenone_user_id, result.api_key.id, modelProvider]);
     return result.api_key;
 }
 export function upstreamUrl(path: string) {
@@ -85,16 +89,9 @@ channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) 
     res.json({ channel: rows[0] });
 });
 
-// Enhance validates query ranges and pagination limits; the browser cannot select an identity.
-const summarySchema = z.object({ api_key_ids: z.array(decimalId).optional() }).strict();
-const usageSchema = summarySchema.extend({
-    from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }),
-    group_id: z.number().int().positive().optional(), model: z.string().optional(),
-    page_size: z.number().int().positive().optional(), cursor: z.string().nullable().optional(),
-});
+// Reseller does not implement account or usage APIs; never forward these requests.
 for (const path of ["/account/summary", "/usage/query", "/usage/stats"] as const) {
-    channelRouter.post(`/tokenone${path}`, async (req, res) => {
-        const query = (path === "/account/summary" ? summarySchema : usageSchema).parse(req.body);
-        res.json(await enhancer(path, res.locals.requestId, { ...query, identity: identity(res.locals.user) }));
+    channelRouter.post(`/tokenone${path}`, (_req, _res) => {
+        throw new HttpError(501, "TOKENONE_ACCOUNT_USAGE_UNAVAILABLE");
     });
 }

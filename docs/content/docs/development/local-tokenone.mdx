@@ -1,58 +1,90 @@
 ---
 title: 本地 TokenONE 联调
-description: 独立 TokenONE、Enhancer 与 CreativeOne 开发连接
+description: Reseller / New API 迁移配置与验收
 ---
 
-# 本地 TokenONE 联调
+# Reseller / New API 联调
 
-当前本地服务：
+本机已完成配置切换：确认 creativeone 应用回调登记后，备份数据库与媒体并重启 CreativeOne 后端。页面、后端健康检查、登录跳转及 Reseller 分组读取通过；真实用户登录、管理员身份、旧数据归属和模型调用尚待验收。实际配置如下：
 
-| 服务 | 地址 / 配置 |
+| 配置 | 目标地址 |
 | --- | --- |
-| CreativeOne | `http://192.168.10.38:3002` |
-| IDONE | `http://192.168.10.38:8000` |
-| TokenONE | `http://192.168.10.38:8080` |
-| Enhance 统一入口 | `http://192.168.10.38:3001`，管理界面与 `/api/apps/*` 共用 |
-| TokenONE PostgreSQL | `127.0.0.1:5434`，数据库及用户均为 `tokenone` |
+| `ENHANCER_BASE_URL` | `https://tokenonereseller.lab.home.arpa`（门户根地址，不带 `/api/apps`） |
+| `TOKENONE_BASE_URL` | `https://tokenone.lab.home.arpa`（New API 模型服务） |
+| `IDONE_ISSUER` | 已按用户选择配置 `https://idone.lab.home.arpa`，使用 `creativeone` 应用，已重启生效 |
+| 用户账户关联入口 | `https://tokenonereseller.lab.home.arpa/auth/login` |
 
-TokenONE 使用独立 Compose 项目 `creativeone-tokenone-local`，不复用 CreativeOne 或 IDONE 数据库。PostgreSQL、Redis、TokenONE 数据各有命名卷。使用本机已有的 `weishaw/sub2api:latest` 镜像，本次启动镜像标注版本为 `0.2.7`；恢复线上备份前应核对应用版本与数据库结构兼容性，不能假定任意线上版本均可直接恢复。
+## 配置准备
 
-## 启停与凭据
+- 在 Reseller 启用 `creativeone` 应用，选择 New API 中已存在且用户有权使用的默认分组，启用 `groups:read`、`keys:ensure`。分组数字 ID 不沿用 Enhance；`auto_authorize_exclusive_group` 必须为 false。
+- 新生成的应用接入凭证只写服务端 `ENHANCER_APP_CREDENTIAL`，不能复用旧 Enhance 凭证，不能提供 New API 管理员令牌。Docker 使用根目录 `.env`，源码开发使用 `server/.env`；不要在报告、日志或 Git 中记录凭证。
+- 核验本地 IDONE Client ID/Secret、应用 Discovery、管理员 sub，以及 `APP_ORIGIN/api/auth/callback`。会话身份始终以经过验证的 issuer/sub 为准；改变 issuer 不会按邮箱合并旧用户或业务数据。不要修改在线 IDONE，也不要把 issuer 只当成地址替换。
+- 已安全备份并更新本机 `server/.env` 的三个模型连接参数，文件权限保持 600；IDONE 配置完全保留。未启动/重建容器或重启后端，运行进程仍使用旧配置。旧 `deploy/tokenone-local.yml`、Enhance 联调配置和历史数据保留，不作为新服务的部署入口。
 
-在 CreativeOne 根目录启动 TokenONE：
+## HTTPS 与容器
+
+从 CreativeOne 实际运行环境检查三个 lab 域名的 DNS、HTTPS 和 Caddy 根证书信任；宿主机连通不能代替容器内连通。禁止关闭 TLS 校验。
+
+源码开发需在启动 Node 前设置 `NODE_EXTRA_CA_CERTS` 为可读的 Caddy 根证书绝对路径；不要仅写进运行时加载的 dotenv。Docker 在根目录 `.env` 填写 `LAB_CA_CERT_FILE` 为已有根证书路径，叠加 `docker-compose.lab.yml` 只读挂载：
 
 ```bash
-docker compose --env-file deploy/.env.tokenone-local -f deploy/tokenone-local.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.lab.yml up -d --no-deps --force-recreate app
 ```
 
-Enhance 本地统一入口为 3001，开发代理转发到内部 4011 后端。CreativeOne 使用站点根地址和 `/api/apps/*`，不直连内部端口；原 `/internal/v2/*` 已停用且无兼容别名。模型仍直连 TokenONE 8080。4010 属于另一个 tokenlink 服务。
+执行前按下一节备份并准备包含本次变更的镜像，保持原 Compose 项目名与数据卷。覆盖配置不会替你配置 DNS。重建后在容器内核验实际地址、证书路径和健康状态，检查时不要打印整份环境变量或带凭证的请求。
 
-CreativeOne 本地后端使用 4013（`server/.env` 的 `PORT`），前端保留 3002；`web/.env.local` 设置 `VITE_API_PROXY_TARGET=http://127.0.0.1:4013`。默认 Vite 代理仍为 4011，只有本地配置覆盖为 4013，Docker 内部端口不变。
+## 数据隔离与回滚
 
-已备份 CreativeOne PostgreSQL 至本地 `server/data/backups/` 后启动前后端，v2 数据库结构已应用；后端 `/healthz` 和前端页面均返回 200，前端代理的受保护接口返回预期的 `LOGIN_REQUIRED`。登录和真实模型调用仍待验收。
+1. 停止应用写入，安全备份旧 `.env`、Compose 配置、镜像标签、PostgreSQL 和媒体卷；任一备份失败则停止切换。
+2. 新版首次启动会为旧 `key_bindings` 和 `generation_tasks` 增加 `legacy-enhance` 提供方命名空间，保留旧记录。新绑定按 `(user_id, provider, group_id)` 更新，provider 由 Reseller 与模型服务地址组合生成，不包含凭证；凭证轮换不改变归属。
+3. 新任务记录当前 provider。旧服务未完成的视频任务返回 `TASK_PROVIDER_CHANGED`，不会先获取新 Key 或向新服务查询；已保存的单条成功结果仍可读取。相同上游任务 ID 对应多条本地记录时拒绝猜测归属。分组变化继续返回 `TASK_GROUP_CHANGED`。
+4. `APP_KEY_RESULT_AMBIGUOUS` 交管理员核验，不删除绑定、不创建替代 Key。旧 Key 不会自动撤销，验收后另行安排停用。
+5. 回滚必须配套恢复旧代码/镜像、配置和对应数据库结构及绑定，不能只切旧镜像，也不能把 Reseller Key 用到旧模型环境。先另行保留备份后的新增业务数据，再按备份恢复，不能直接丢弃新记录。
 
-- 新实例管理员为 `admin@creativeone.local`，初始随机密码在 `deploy/.env.tokenone-local` 的 `TOKENONE_LOCAL_ADMIN_PASSWORD`。恢复备份后，管理员账号和密码以备份内容为准。
-- 数据库密码在同文件的 `TOKENONE_LOCAL_DB_PASSWORD`，仅回环端口暴露。
-- `deploy/.env.enhancer-local` 和 `server/data/enhancer-local.sqlite` 是旧联调配置；当前 Enhance 使用其项目内的 PostgreSQL 配置。
-- CreativeOne 的 `server/.env` 已指向本地 Enhancer 和 TokenONE；v2 需要重新配置 `ENHANCER_APP_CREDENTIAL` 为 CreativeOne 专属应用接入凭证，仅由后端持有。
-- 上述环境文件均被 Git 忽略，权限为 600，不要公开其内容。
+## 行为与验收
 
-## 本地 TokenONE 登录
+- 服务端只向 `/api/apps/keys/ensure` 发送已验证身份的 issuer/subject，保留邮箱验证；个人 Key 不下发浏览器。`/api/admin/groups` 仍为管理员代理。
+- `APP_USER_LOGIN_REQUIRED` 显示“请先登录模型服务完成账户关联，完成后回到此页重试。”并提供固定门户登录链接，新标签页打开，保留当前编辑内容。没有 return_to 或自动重试；真实 IDONE 登录由用户手动完成。
+- `/api/tokenone/account/summary`、`/api/tokenone/usage/query`、`/api/tokenone/usage/stats` 对已认证请求返回 HTTP 501 / `TOKENONE_ACCOUNT_USAGE_UNAVAILABLE`，不访问上游、不返回伪造零余额。当前前端没有对应查询页面或自动请求，不作为生成前置条件。
+- 配置生效后验证 groups、未关联身份的登录提示、门户登录后 ensure 与重复 Key 复用、未登录/普通用户/管理员权限、凭证撤销/应用停用/无分组权益，以及凭证不泄露。
+- 图片、文本、视频、音频按实际启用的模型逐项验收；现有视频仍走 `/api/v3/contents/generations/tasks`，必须确认 New API 与渠道支持，不能以取 Key 成功替代模型验收。真实计费调用需相应授权。
 
-TokenONE 的独立 OIDC 配置已切换到本地 IDONE `http://192.168.10.38:8000`，使用本地 `tokenone` 应用的 Client ID/Secret 和应用专属 Discovery `/.well-known/tokenone/openid-configuration`。IDONE 已登记本地回调 `http://192.168.10.38:3001/api/v1/auth/oauth/oidc/callback`；原回调保留。
+本次 13 项后端模拟测试和 3 项前端错误状态测试通过；未运行构建、类型检查、数据库迁移、真实身份登录、模型调用或容器验收。Docker 静态资源与持久化部署仍需实际验证。完整待测项见[待验收清单](/docs/progress/pending-test)。
 
-修改前已将 TokenONE、IDONE 数据库备份到 CreativeOne 本地 `server/data/backups/`，随后重启本地 TokenONE 容器。从 8080 和 3001 发起 OIDC 登录均返回 302，目标为本地 8000，回调为本地 3001；完整浏览器登录仍待用户验收。本次未修改线上服务或账号身份绑定。
+## 本机配置验证进展
 
-## v2 待联调
+- 从本机 Node 直接请求新 Reseller 分组接口返回 200：应用 `creativeone`，默认分组 `1-Creative`，字符串 ID `7`，状态 active。凭证内容未输出；该结果不代表个人 Key 或真实模型已验收。
+- 本机 Node 对 Reseller HTTPS 验证成功；系统客户端对 New API HTTPS 返回 200。当前无需关闭 TLS 或额外注入 CA；容器环境仍需单独核验。
+- CreativeOne 运行进程仍为旧模型地址 `http://192.168.10.38:3001` / `http://192.168.10.38:8080`，issuer 为 `http://192.168.10.38:8000`。现有 Discovery 连接返回 `ECONNREFUSED`；Reseller 运行进程 issuer 是 `https://idone.lab.home.arpa`。身份配置不一致尚未解决，因此未重启切换、未发起 ensure 或真实登录，也未修改关联项目配置。
 
-本地 `server/.env` 已配置用户提供的应用凭证及 3001 统一入口。真实 `GET /api/apps/groups` 已返回 200，应用为 `creativeone`，默认分组为 `composite`（字符串 ID `5`，状态 `active`）。Enhance 全局 `IDONE_ISSUER` 已统一为 `http://192.168.10.38:8000`，与 CreativeOne 相同；已备份 Enhance 环境配置并重启后端。使用 `creativeone-local` 的已验证本地身份查询 `/api/apps/account/summary` 和 `/api/apps/keys/ensure` 均返回 200，个人 Key 为 active、分组 ID 为 5。未输出 Key 明文，未调用真实模型；消耗查询与完整生成仍待验收。以下旧接口记录不代表当前接口已完成全部验收。渠道不再绑定分组，生图与聊天等功能统一使用 Enhance 应用默认分组。
+### IDONE 只读核验结果
 
-## 旧接口联调记录
+lab IDONE 标准及 `creativeone` 应用 Discovery 均返回 200，issuer 为 `https://idone.lab.home.arpa`。只读查询 lab 数据库确认：
 
-用户已决定不恢复线上备份，自行完成管理员合规确认，并新建上游账号 `test` 和「生图测试」分组（ID 2）。本地管理密钥已生成并写入 `deploy/.env.enhancer-local` 的 `SUB2API_ADMIN_KEY`，Enhancer 已重启，CreativeOne 管理后台可读取分组。
+- 不存在当前配置引用的 `creativeone-local` 客户端。
+- 存在 `creativeone` 客户端，但 Client ID/Secret 与 CreativeOne 本机配置均不同。该客户端当前只登记 `https://creative.agentone.work/api/auth/callback`，未登记本机 `http://192.168.10.38:3002/api/auth/callback`。公开应用接口会掩码字段，客户端和回调结论以这次只读数据库核验为准。
+- CreativeOne 数据库有两个旧 issuer 身份，它们的 subject 均不在 lab IDONE 用户表中，不能仅改 issuer 或按邮箱自动认领。当前局域网身份下有 37 条文档、20 个文件、29 条生成任务、5 条 Key 绑定和 3 条会话记录；另一个 localhost 身份下有 1 条文档。
 
-CreativeOne 已将分组 2 配置为默认图片生成/编辑渠道。模型来自该上游账号实际配置的映射：`gpt-image-2`（默认）、`gpt-image-1.5`、`gpt-image-2.5`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`。这表明模型已配置，不代表每个模型已实际生成验收。聊天、视频、音频尚未配置，不借用生图渠道。
+切换前需在 IDONE 项目准备本地专用客户端（或明确配置现有客户端）、核验当前回调和应用 Discovery，再安全交付客户端凭据。由用户登录确定新的 subject 与管理员身份；旧数据需明确指定归属后，在备份基础上另行迁移，或明确保留在旧身份下。本次只核验，没有改写 IDONE、用户身份、会话或业务数据，没有重启 CreativeOne。
 
-本地 IDONE 测试用户 `creativeone-local` 已自动映射为 TokenONE 业务用户 ID 2，在生图分组创建 Key ID 1；再次 ensure 返回 `created=false`，验证复用同一把 Key。完整 Key 未返回浏览器或写入文档。
+### 用户选定 creativeone 应用后的配置
 
-此前该业务用户余额为 0，TokenONE 的 `/v1/models` 返回 `INSUFFICIENT_BALANCE`；用户随后告知已充值。余额问题现已具备中文处理提示，未知 403 不会误报为余额不足。上游账号和业务用户余额是不同概念；本地账面余额不等于免费上游额度。自动联调未增加余额，也未发起付费生成，实际生成仍待用户验收。
+用户已明确使用 lab IDONE 的 `creativeone` 应用。已安全备份 `server/.env`，将该应用的 Client ID/Secret 写入服务端，issuer 改为 `https://idone.lab.home.arpa`，Discovery 改为该域名下 `/.well-known/creativeone/openid-configuration`，关闭旧 HTTP 开发开关。未输出凭证，文件权限保持 600。
+
+仍待在 IDONE 的 creativeone 应用追加 `http://192.168.10.38:3002/api/auth/callback`，保留原线上回调。当前只完成 CreativeOne 文件配置，未重启、未修改 IDONE、未变更旧用户和 ADMIN_SUBJECTS。新用户的管理员授权及旧数据归属需要后续确认，不能沿用不存在于 lab IDONE 的旧 subject 自动授权。
+
+### 重启与初步验收
+
+用户完成回调配置后，只读确认 `http://192.168.10.38:3002/api/auth/callback` 已登记。停止 CreativeOne 后端后，将 PostgreSQL 自定义格式备份及媒体归档保存至 `server/data/backups/before-reseller-20260928-172244/`，备份目录权限 700、文件权限 600；数据库归档目录可正常读取。随后启动原有 `npm run dev`，后端监听 4013。
+
+- 后端 `/healthz` 返回 200，未登录 `/api/channels` 返回 401。
+- 前端 `http://192.168.10.38:3002/` 返回 200，经前端代理的登录入口返回 302，跳转 lab IDONE，client_id 与 creativeone 应用一致，回调正确，PKCE 为 S256。
+- 新 Reseller 分组接口返回 200，默认组仍为 1-Creative（ID 7，active）。
+- 数据库中 5 条旧 Key 绑定和 29 条生成任务均保留为 legacy-enhance，没有创建新 Key、合并用户或删除业务记录。
+- 真实用户须重新登录；旧 subject 不能作为 lab 管理员身份沿用。尚未调用 ensure、真实模型或自动登录，旧业务数据仍保留原用户归属。
+
+以上为最新状态，前文“未重启”和“回调待添加”段落保留为配置过程记录，现已完成。
+
+### 管理员配置完成
+
+已按用户指定的 lab IDONE 账号核对准确 subject，替换本机 ADMIN_SUBJECTS，仅保留该账号。更新前已安全备份配置，后端重启后健康检查为 200；该 subject 已存在于 CreativeOne 当前 lab issuer 用户记录中。管理员页面操作待用户刷新验收，旧业务数据归属仍未调整。此记录取代前文“新管理员尚待配置”的状态。

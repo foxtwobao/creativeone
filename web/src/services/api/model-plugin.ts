@@ -1,3 +1,4 @@
+import { cloudErrorMessage } from "./error-message";
 import axios, { type AxiosRequestConfig } from "axios";
 
 import i18n from "@/i18n";
@@ -158,6 +159,12 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") throw error;
         if (axios.isCancel(error)) throw error;
+        if (axios.isAxiosError(error)) {
+            const data = error.response?.data;
+            const body = data instanceof Blob ? await data.text().then((text) => JSON.parse(text)).catch(() => null) : data;
+            const message = cloudErrorMessage(body);
+            if (message) throw new Error(message);
+        }
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(i18n.t("modelPlugin.executionFailed", { message }));
     }

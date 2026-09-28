@@ -56,8 +56,8 @@ export default function ChannelsPage() {
     const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], default_model: "", enabled: false });
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-5">
         <h1 className="text-xl font-semibold">功能模型配置</h1>
-        <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Enhance 管理的应用默认分组。</p>
-        <p className="text-sm text-muted-foreground">应用当前分组：{groups.map((group) => `${group.name} (${group.id})${group.is_default ? " · 默认" : ""}${group.status !== "active" ? " · 不可用" : ""}`).join("、") || "暂无"}；分组配置请在 Enhance 管理后台调整。</p>
+        <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Reseller 管理的应用默认分组。</p>
+        <p className="text-sm text-muted-foreground">应用当前分组：{groups.map((group) => `${group.name} (${group.id})${group.is_default ? " · 默认" : ""}${group.status !== "active" ? " · 不可用" : ""}`).join("、") || "暂无"}；分组配置请在 Reseller 管理后台调整。</p>
         {error ? <Alert type="error" title={error} action={<Button onClick={() => void load()}>重试</Button>} /> : null}
         <Table<Channel> rowKey="capability" dataSource={rows} loading={loading} pagination={false} scroll={{ x: true }} columns={[
             { title: "功能", dataIndex: "capability", render: (value) => capabilities.find((item) => item.value === value)?.label },

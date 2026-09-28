@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
 export const useCloudStore = create<{
+    modelLoginRequired: boolean;
+    setModelLoginRequired: (required: boolean) => void;
     saving: number;
     errors: Record<string, string>;
     errorCodes: Record<string, string>;
@@ -8,6 +10,8 @@ export const useCloudStore = create<{
     end: () => void;
     setError: (key: string, error?: string, code?: string) => void;
 }>((set) => ({
+    modelLoginRequired: false,
+    setModelLoginRequired: (modelLoginRequired) => set({ modelLoginRequired }),
     saving: 0, errors: {}, errorCodes: {},
     begin: () => set((state) => ({ saving: state.saving + 1 })),
     end: () => set((state) => ({ saving: Math.max(0, state.saving - 1) })),

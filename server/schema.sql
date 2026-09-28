@@ -47,3 +47,16 @@ CREATE INDEX IF NOT EXISTS generation_tasks_owner ON generation_tasks(user_id, c
 ALTER TABLE channels DROP COLUMN IF EXISTS group_id;
 ALTER TABLE key_bindings ALTER COLUMN group_id TYPE text USING group_id::text;
 ALTER TABLE generation_tasks ALTER COLUMN group_id TYPE text USING group_id::text;
+
+-- Preserve old Enhance bindings and tasks in a separate namespace when upgrading.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='key_bindings' AND column_name='provider') THEN
+        ALTER TABLE key_bindings ADD COLUMN provider text NOT NULL DEFAULT 'legacy-enhance';
+        ALTER TABLE key_bindings ALTER COLUMN provider DROP DEFAULT;
+        ALTER TABLE key_bindings DROP CONSTRAINT key_bindings_pkey;
+        ALTER TABLE key_bindings ADD PRIMARY KEY (user_id, provider, group_id);
+    END IF;
+END $$;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'legacy-enhance';
+ALTER TABLE generation_tasks ALTER COLUMN provider DROP DEFAULT;

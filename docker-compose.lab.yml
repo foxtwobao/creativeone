@@ -1,0 +1,12 @@
+# 与 docker-compose.yml 一起使用；LAB_CA_CERT_FILE 必须指向已有的 Caddy 根证书。
+services:
+  app:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/creativeone/caddy-root.crt
+    volumes:
+      - type: bind
+        source: ${LAB_CA_CERT_FILE:?Set LAB_CA_CERT_FILE to the Caddy root certificate}
+        target: /etc/creativeone/caddy-root.crt
+        read_only: true
+        bind:
+          create_host_path: false

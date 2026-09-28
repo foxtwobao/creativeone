@@ -4,7 +4,8 @@ export type CloudUser = { id: string; username: string; displayName: string; ava
 export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; is_default: boolean };
 export let cloudSession: { user: CloudUser; csrf: string; channels: CloudChannel[] } | null = null;
 const errors: Record<string, string> = {
-    ENHANCER_NOT_CONFIGURED: "尚未配置 TokenONE Enhancer，当前仅启用登录和数据同步", TOKENONE_NOT_CONFIGURED: "尚未配置 TokenONE 模型服务",
+    ENHANCER_NOT_CONFIGURED: "尚未配置 TokenONE Reseller，当前仅启用登录和数据同步", TOKENONE_NOT_CONFIGURED: "尚未配置 TokenONE 模型服务",
+    APP_USER_LOGIN_REQUIRED: "请先登录模型服务完成账户关联，完成后回到此页重试。",
     LOGIN_REQUIRED: "请先登录", SESSION_EXPIRED: "登录已过期，请重新登录", CSRF_FAILED: "登录状态已变化，请重新打开页面",
     SYNC_CONFLICT: "其他设备已修改这份数据，当前修改尚未保存，请导出后重新加载云端版本",
     FILE_TOO_LARGE: "文件或请求内容超过允许大小", EMAIL_NOT_VERIFIED: "请先在 IDONE 验证邮箱",
@@ -24,6 +25,7 @@ export async function cloudApi<T>(path: string, init: RequestInit = {}): Promise
         const body = await response.json().catch(() => ({}));
         const error = new CloudError(response.status, body.error || `HTTP_${response.status}`, body.message, body.requestId);
         if (response.status === 401 || body.error === "CSRF_FAILED" || body.error === "ACCOUNT_CHANGED") useCloudStore.getState().setError("session", "登录状态已变化，请先导出未保存修改，再重新加载页面登录");
+        if (body.error === "APP_USER_LOGIN_REQUIRED") useCloudStore.getState().setModelLoginRequired(true);
         throw error;
     }
     return response.status === 204 ? undefined as T : response.json();
