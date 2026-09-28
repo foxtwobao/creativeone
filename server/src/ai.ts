@@ -27,8 +27,11 @@ async function readBytes(response: Response) {
 }
 async function persistRemoteMedia(userId: string, url: string, signal: AbortSignal) {
     const parsed = new URL(url);
-    // Only administrator-trusted result hosts; redirects cannot escape the allowlist.
-    if (!isAllowedMediaUrl(parsed, allowedMediaHosts)) throw new HttpError(502, "MEDIA_HOST_NOT_ALLOWED");
+    // HTTPS and credential restrictions apply even when host checks are disabled.
+    if (!isAllowedMediaUrl(parsed, allowedMediaHosts)) {
+        console.warn(JSON.stringify({ code: "MEDIA_HOST_NOT_ALLOWED", host: parsed.host, protocol: parsed.protocol }));
+        throw new HttpError(502, "MEDIA_HOST_NOT_ALLOWED");
+    }
     const response = await fetch(parsed, { redirect: "error", signal });
     if (!response.ok) throw new HttpError(502, "MEDIA_DOWNLOAD_FAILED");
     const mime = (response.headers.get("content-type") || "application/octet-stream").split(";")[0];

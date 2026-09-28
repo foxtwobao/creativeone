@@ -5,6 +5,10 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 媒体下载全域名规则：`MEDIA_DOWNLOAD_HOSTS=*` 允许任意 HTTPS 主机，保留 URL 凭据及重定向限制，图片与视频共用。已补充针对性的测试用例但按项目约定未运行测试或构建。线上容器已备份并部署源码补丁及 `*` 配置，后端健康，运行时验证原失败域名允许、HTTP/内嵌凭据拒绝；未调用真实计费模型，待用户验收生成下载。该补丁尚未发布为镜像，下次 Portainer 重建须使用包含本改动的新镜像并同步环境变量。TODO 已检查，无需调整。
+
+- 线上图片下载白名单诊断：拒绝结果 URL 时仅记录 host/protocol，不输出图片路径、签名参数或完整 URL。已通过复现确认图片结果来自白名单外的 HTTPS 主机，现按用户要求支持 `*`；真实图片下载保存仍待验收。TODO 已检查，无需调整。
+
 - 真实管理员模型列表请求返回 TOKENONE_GROUP_FORBIDDEN：Reseller 查询 New API 用户可用分组后未找到应用默认组 1-Creative，需在 New API 核验并配置用户分组权益，再刷新 CreativeOne 模型列表；不是 CreativeOne 管理员权限或模型 ID 配置问题，尚未修改关联项目配置。
 
 - CreativeOne 管理员配置：已按用户指定的 lab IDONE 账号准确 subject 替换 ADMIN_SUBJECTS，仅保留该管理员，旧配置已安全备份并重启后端。确认该用户已在当前 issuer 下登录过、配置匹配且健康检查为 200；待刷新页面验收功能模型配置入口和管理员操作。仅变更 CreativeOne 权限，不修改 IDONE 用户权限或旧数据归属。

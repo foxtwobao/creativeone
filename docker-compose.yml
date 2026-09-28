@@ -16,6 +16,7 @@ services:
       ENHANCER_BASE_URL: ${ENHANCER_BASE_URL:-}
       ENHANCER_APP_CREDENTIAL: ${ENHANCER_APP_CREDENTIAL:-}
       TOKENONE_BASE_URL: ${TOKENONE_BASE_URL:-}
+      MEDIA_DOWNLOAD_HOSTS: ${MEDIA_DOWNLOAD_HOSTS:-}
       # 数据库连接自动组装；内部目录、端口及运行边界使用镜像/程序默认值。
       DATABASE_URL: postgresql://creativeone:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/creativeone
     volumes:
