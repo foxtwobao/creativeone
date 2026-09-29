@@ -1,6 +1,8 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    IMAGE_MODEL_TYPE_REQUIRED: "请管理员在功能模型配置中为每个图片模型选择类型。",
+    INVALID_IMAGE_MODEL_TYPES: "模型类型配置与图片模型列表不一致，请重新配置。",
     TOKENONE_GENERATION_PERMISSION_DISABLED: "模型服务分组未启用生成权限（服务返回：图片生成未启用）；视频请求也可能受此开关限制，请管理员核查 TokenONE 中对应 Key 所属分组的生成能力配置。",
     TOKENONE_INVALID_RESPONSE: "模型服务返回的数据格式无效，请联系管理员。",
     ENHANCER_NOT_CONFIGURED: "Reseller 应用接入尚未配置，请联系管理员。",

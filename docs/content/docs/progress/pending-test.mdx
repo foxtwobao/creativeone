@@ -5,6 +5,21 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 图片模型类型回显：移除类型字段的 `preserve={false}`，避免弹窗销毁后重建时清掉提前回填的值；每次编辑先重置表单，再载入服务端已保存配置。待验收保存后重开、取消未保存修改后重开、切换功能及删除模型后保存；未运行构建或语法检查。TODO 已检查，无新增未实现事项。
+
+- Grok 图片读取修复：真实生成任务已返回成功，但同时含 URL 和空 `b64_json` 的响应会被保存为零字节 PNG；服务端现仅在 Base64 非空时使用内联数据，否则下载 URL。补充 Grok 编辑响应的空 Base64 + URL 回归，校验下载文件 MIME 与字节，15 项隔离数据库集成测试通过，临时库已清理，本机热更新后健康检查正常；未构建或调用真实模型。待用户验收新生成结果；已有零字节结果不会自动恢复，未自动重新生成。
+- Banana 提示词验收：用户确认更换提示词后正常生成，本机也有成功保存记录；此前 422 不再作为未解决的 Banana 协议参数问题，保留下方诊断供追溯。JSON 参考图等场景仍待验收。
+
+- Banana 实测失败诊断：请求 `630c2bf1-2f30-4981-b9ac-3c766756c317` 已正确按 Banana 类型调用 `images/generations`，历史参数为 `banana2-1k`、`1:1`、1 张、无参考图。New API 渠道 32 收到上游 HTTP 422 后包装为 502，上游请求 ID 为 `20260929152522564347095Z97neukk`，错误正文未提供具体拒绝原因；需在上游核查。更早一次同型号请求进入结果下载阶段，被 `oss.juheai.club` 域名规则拒绝，两种失败需分别处理。本次只读诊断，未重试计费请求、未修改关联项目或下载规则；TODO 保留上游联调事项。
+
+- 本地媒体下载配置：`server/.env` 已设置 `MEDIA_DOWNLOAD_HOSTS=*`，本地开发后端已重新加载。允许任意 HTTPS 结果主机，待验收原报 `MEDIA_HOST_NOT_ALLOWED` 的图片下载；TODO 无需调整。
+
+- 图片模型类型配置：功能模型配置保留「图片」一项，为列表中的每个模型选择 GPT Image / OpenAI Images、Banana 或 Grok；类型保存在服务端，图片工作台、画布参数面板与请求适配统一读取，不再根据模型名称或别名猜测类型。未配置类型时提示管理员配置并阻止调用。本机已备份原配置并新增类型字段，现有模型需逐个选择类型后保存、刷新页面；待验收新增/删除模型、修改类型、保存后重开及自定义别名。
+- 图片模型适配拆分：GPT Image、Banana、Grok 请求参数分别维护。图片页与画布参数面板按配置类型隐藏无效选项，Banana/Grok 不再复用 GPT 的质量、透明背景或像素尺寸校验。待浏览器验收切换、自动尺寸、参考图、历史恢复及画布操作。
+- Banana OpenAI 兼容：按[知梦接口文档](https://zhimengapi.pages.dev/gemini/openai-compatible)，文生图和参考图生成统一用 `/v1/images/generations`；`size` 发送宽高比（包含文档示例 `4:5`），参考图按原顺序发送 `image_urls`（data URL），带 `n` 与 `response_format: "url"`。分辨率取模型 `-1k/-2k/-4k` 后缀，面板显示对应档位与切换模型提示，不发送可能冲突的 resolution/aspect_ratio 或 GPT 专用参数；复用服务端图片权限、任务记录和 URL 图片下载保存。已移除本次新增的 Gemini 原生转发及专用解析，真实渠道透传与生成仍待联调。
+- Grok 文生图与编辑：使用 `aspect_ratio` / `resolution` 和 JSON `image` / `images`，按已知型号显示参数；`grok-imagine-image-2.0` 允许 low/medium/auto 质量。未添加参考图数量裁剪或修改现有生成数量、并发、超时和重试配置，上游不支持的数量/参考图由上游报错。当前本机 New API xAI 专用适配器只转换 model/prompt/n/response_format，分辨率与编辑参考图等参数仍需上游完整透传支持；未修改关联项目。
+- 本次验证：8 项前端测试及 22 项后端测试（15 项隔离 PostgreSQL 集成、7 项用户策略）通过；覆盖显式模型类型保存/回读/修改/缺失校验、自定义别名、Banana 模型后缀/宽高比参数、JSON 参考图顺序、OpenAI 路由、账号权限及 URL 图片下载保存，保留 GPT Image 与 Grok 的回归用例。未运行构建、类型/语法检查，未部署或调用真实计费模型；临时测试数据库已清理。TODO 已检查，继续保留 OpenAI 兼容协议的上游联调事项。
+
 - New API 豆包路径适配：根据线上诊断，原 `/api/v3/contents/generations/tasks` 返回 404；服务端视频创建与查询统一改走 `/doubao/api/v3/contents/generations/tasks`（查询追加任务 ID）。待部署后验收视频创建、状态轮询及结果保存。本次未运行测试、语法检查或构建，未调用真实模型或部署。TODO 已检查，无对应事项需迁移；下方旧 Ark 路径记录已由本次适配取代。
 
 - 媒体下载全域名规则：`MEDIA_DOWNLOAD_HOSTS=*` 允许任意 HTTPS 主机，保留 URL 凭据及重定向限制，图片与视频共用。已补充针对性的测试用例但按项目约定未运行测试或构建。线上容器已备份并部署源码补丁及 `*` 配置，后端健康，运行时验证原失败域名允许、HTTP/内嵌凭据拒绝；未调用真实计费模型，待用户验收生成下载。该补丁尚未发布为镜像，下次 Portainer 重建须使用包含本改动的新镜像并同步环境变量。TODO 已检查，无需调整。

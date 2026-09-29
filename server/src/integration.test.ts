@@ -23,6 +23,7 @@ let imageChannel: string, textChannel: string;
 const realFetch = globalThis.fetch;
 const ensures: any[] = [];
 const forwardedKeys: string[] = [];
+const forwardedRequests: Array<{ url: string; body: any }> = [];
 let denyGroup = false;
 let modelFailure: { status: number; code: string } | undefined;
 globalThis.fetch = async (input, init) => {
@@ -35,9 +36,16 @@ globalThis.fetch = async (input, init) => {
         if (denyGroup) return Response.json({ error: "TOKENONE_GROUP_FORBIDDEN" }, { status: 403 });
         return Response.json({ status: "ready", tokenone_user_id: "42", api_key: { id: "701", key: `sk-${body.identity.subject}-8`, group_id: "8", status: "active" } });
     }
+    if (url === "https://tokenone.test/banana-result.jpg") {
+        assert.equal(new Headers(init?.headers).get("Authorization"), null);
+        return new Response(new Uint8Array([255, 216, 255, 217]), { headers: { "Content-Type": "image/jpeg" } });
+    }
     if (url.startsWith("https://tokenone.test")) {
         forwardedKeys.push(new Headers(init?.headers).get("Authorization") || "");
+        forwardedRequests.push({ url, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
         if (modelFailure) return Response.json({ code: modelFailure.code, message: "private upstream details" }, { status: modelFailure.status });
+        if (forwardedRequests.at(-1)?.body?.model === "banana2-2k") return Response.json({ data: [{ url: "https://tokenone.test/banana-result.jpg" }] });
+        if (forwardedRequests.at(-1)?.body?.model === "grok-imagine-image") return Response.json({ data: [{ url: "https://tokenone.test/banana-result.jpg", b64_json: "" }] });
         if (url.endsWith("/responses")) return new Response('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"你好"}\n\nevent: response.completed\ndata: {"type":"response.completed"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
         return Response.json({ data: [{ b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6swAAAABJRU5ErkJggg==" }] });
     }
@@ -67,7 +75,7 @@ test("anonymous requests and forged callback cannot access the application", asy
 test("admin role and CSRF protect channel configuration", async () => {
     assert.equal((await call("/admin/groups")).status, 403);
     assert.equal((await call("/admin/groups", admin)).status, 200);
-    const body = { models: ["gpt-image-2"], default_model: "gpt-image-2", enabled: true };
+    const body = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, default_model: "gpt-image-2", enabled: true };
     const missing = await realFetch(`${base}/api/admin/channels/image`, { method: "PUT", headers: { Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     assert.equal(missing.status, 403);
     const image = await call("/admin/channels/image", admin, "PUT", body);
@@ -85,6 +93,33 @@ test("feature and model cannot bypass channel capability and model routing", asy
     assert.equal((await call(`/ai/${imageChannel}/v1/responses`, alice, "POST", { model: "gpt-image-2" })).status, 403);
     assert.equal((await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "not-allowed" })).status, 403);
     assert.equal(ensures.length, count);
+});
+test("image types are explicit, persisted and validated independently of model names", async () => {
+    const original = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, default_model: "gpt-image-2", enabled: true };
+    const config = { models: ["banana-looking-alias", "custom-image"], image_types: { "banana-looking-alias": "openai", "custom-image": "banana" }, default_model: "custom-image", enabled: true };
+    try {
+        assert.equal((await call("/admin/channels/image", admin, "PUT", { ...config, image_types: {} })).status, 400);
+        assert.equal((await call("/admin/channels/image", admin, "PUT", { ...config, image_types: { ...config.image_types, ghost: "grok" } })).status, 400);
+        assert.equal((await call("/admin/channels/image", admin, "PUT", { ...config, image_types: { ...config.image_types, "custom-image": "unknown" } })).status, 400);
+        assert.equal((await call("/admin/channels/text", admin, "PUT", config)).status, 400);
+        assert.equal((await call("/admin/channels/image", alice, "PUT", config)).status, 403);
+        assert.equal((await call("/admin/channels/image", admin, "PUT", config)).status, 200);
+        for (const path of ["/channels", "/admin/channels"]) {
+            const { channels } = await (await call(path, admin)).json() as any;
+            const channel = channels.find((item: any) => item.id === imageChannel);
+            assert.deepEqual(channel.image_types, config.image_types);
+            assert.deepEqual(channel.models, ["custom-image", "banana-looking-alias"]);
+        }
+        const edited = { ...config, models: ["custom-image"], image_types: { "custom-image": "grok" } };
+        const response = await (await call("/admin/channels/image", admin, "PUT", edited)).json() as any;
+        assert.deepEqual(response.channel.image_types, { "custom-image": "grok" });
+        await db.query("UPDATE channels SET image_types='{}' WHERE id=$1", [imageChannel]);
+        const before = ensures.length;
+        const request = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "custom-image", prompt: "猫" });
+        assert.equal(request.status, 400);
+        assert.equal((await request.json() as any).error, "IMAGE_MODEL_TYPE_REQUIRED");
+        assert.equal(ensures.length, before);
+    } finally { await call("/admin/channels/image", admin, "PUT", original); }
 });
 let savedUrl = "";
 test("each user's image request uses their verified identity and application group; no Key reaches the client", async () => {
@@ -175,6 +210,41 @@ test("model failures return friendly messages and request IDs, retain specific t
         } finally { modelFailure = undefined; }
     }
 });
+test("Banana OpenAI requests preserve parameters, image permissions, user Key and URL result storage", async () => {
+    await call("/admin/channels/image", admin, "PUT", { models: ["gpt-image-2", "banana2-2k", "grok-imagine-image"], image_types: { "gpt-image-2": "openai", "banana2-2k": "banana", "grok-imagine-image": "grok" }, default_model: "gpt-image-2", enabled: true });
+    const before = forwardedKeys.length;
+    assert.equal((await call(`/ai/${imageChannel}/v1/chat/completions`, alice, "POST", { model: "banana2-2k" })).status, 403);
+    assert.equal((await call(`/ai/${textChannel}/v1/images/generations`, alice, "POST", { model: "banana2-2k" })).status, 403);
+    assert.equal(forwardedKeys.length, before);
+    for (const image_urls of [[], ["data:image/png;base64,YQ==", "data:image/jpeg;base64,Yg=="]]) {
+        const body = { model: "banana2-2k", prompt: "猫", size: "16:9", response_format: "url", n: 1, ...(image_urls.length ? { image_urls } : {}) };
+        const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", body);
+        assert.equal(response.status, 200);
+        assert.deepEqual(forwardedRequests.at(-1), { url: "https://tokenone.test/v1/images/generations", body });
+        assert.equal(forwardedKeys.at(-1), `Bearer sk-${alice}-8`);
+        const result = await response.json() as any;
+        assert.ok(result.data[0].url.startsWith("/api/files/"));
+        assert.ok(!JSON.stringify(result).includes("sk-"));
+        const file = await realFetch(`${base}${result.data[0].url}`, { headers: headers(alice) });
+        assert.equal(file.status, 200);
+        assert.match(file.headers.get("Content-Type") || "", /^image\/jpeg/);
+        const task = (await db.query("SELECT status,capability,path FROM generation_tasks WHERE id=$1", [response.headers.get("X-Generation-Task-Id")])).rows[0];
+        assert.deepEqual(task, { status: "succeeded", capability: "image", path: "images/generations" });
+    }
+});
+
+test("Grok edits preserve JSON references and model-specific parameters", async () => {
+    const body = { model: "grok-imagine-image", prompt: "猫", aspect_ratio: "16:9", resolution: "2k", n: 1, response_format: "url", image: { type: "image_url", url: "data:image/png;base64,YQ==" } };
+    const response = await call(`/ai/${imageChannel}/v1/images/edits`, alice, "POST", body);
+    assert.equal(response.status, 200);
+    assert.deepEqual(forwardedRequests.at(-1), { url: "https://tokenone.test/v1/images/edits", body });
+    const result = await response.json() as any;
+    const file = await realFetch(`${base}${result.data[0].url}`, { headers: headers(alice) });
+    assert.equal(file.status, 200);
+    assert.match(file.headers.get("Content-Type") || "", /^image\/jpeg/);
+    assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array([255, 216, 255, 217]));
+});
+
 test("account switching and logout invalidate stale clients", async () => {
     const changed = await realFetch(`${base}/api/tasks`, { headers: { ...headers(bob), "X-Expected-User": alice } });
     assert.equal(changed.status, 409);

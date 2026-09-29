@@ -1,7 +1,8 @@
 import { useCloudStore } from "@/stores/use-cloud-store";
+import type { ImageModelType } from "../../../../shared/image-models";
 
 export type CloudUser = { id: string; username: string; displayName: string; avatarUrl: string; email: string; emailVerified: boolean; admin: boolean };
-export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; is_default: boolean };
+export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; image_types: Record<string, ImageModelType>; is_default: boolean };
 export let cloudSession: { user: CloudUser; csrf: string; channels: CloudChannel[] } | null = null;
 const errors: Record<string, string> = {
     ENHANCER_NOT_CONFIGURED: "尚未配置 TokenONE Reseller，当前仅启用登录和数据同步", TOKENONE_NOT_CONFIGURED: "尚未配置 TokenONE 模型服务",

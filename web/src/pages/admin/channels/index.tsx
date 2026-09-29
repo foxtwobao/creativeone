@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Form, Modal, Select, Switch, Table, Tag } from "antd";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
+import { imageModelTypes, imageModelTypeLabels, type ImageModelType } from "../../../../../shared/image-models";
 
-type Channel = { id?: string; capability: string; models: string[]; default_model: string; enabled: boolean };
+type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; default_model: string; enabled: boolean };
 type Group = { id: string; name: string; status: string; is_default: boolean };
 const capabilities = [{ value: "image", label: "图片生成 / 编辑" }, { value: "text", label: "聊天 / 文本生成" }, { value: "video", label: "视频生成" }, { value: "audio", label: "音频生成" }];
 
@@ -41,19 +42,22 @@ export default function ChannelsPage() {
     };
     const edit = (channel: Channel) => {
         setEditing(channel.capability);
-        form.setFieldsValue({ models: channel.models, default_model: channel.default_model, enabled: channel.enabled });
+        form.resetFields();
+        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, default_model: channel.default_model, enabled: channel.enabled });
         if (!modelsLoading) void loadModels();
     };
     const save = async () => {
         const values = await form.validateFields();
         setSaving(true);
         try {
-            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models: [...new Set<string>(values.models.map((model: string) => model.trim()).filter(Boolean))] }) });
+            const models = [...new Set<string>(values.models.map((model: string) => model.trim()).filter(Boolean))];
+            const image_types = editing === "image" ? Object.fromEntries(models.map((model) => [model, values.image_types[model]])) : {};
+            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types }) });
             setEditing(null); await load(); message.success("配置已保存，重新加载页面后生效");
         } catch (error) { message.error(error instanceof Error ? error.message : "保存失败"); }
         finally { setSaving(false); }
     };
-    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], default_model: "", enabled: false });
+    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, default_model: "", enabled: false });
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-5">
         <h1 className="text-xl font-semibold">功能模型配置</h1>
         <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Reseller 管理的应用默认分组。</p>
@@ -61,7 +65,7 @@ export default function ChannelsPage() {
         {error ? <Alert type="error" title={error} action={<Button onClick={() => void load()}>重试</Button>} /> : null}
         <Table<Channel> rowKey="capability" dataSource={rows} loading={loading} pagination={false} scroll={{ x: true }} columns={[
             { title: "功能", dataIndex: "capability", render: (value) => capabilities.find((item) => item.value === value)?.label },
-            { title: "模型", dataIndex: "models", render: (models: string[]) => models.join("、") || "尚未配置" },
+            { title: "模型", dataIndex: "models", render: (models: string[], channel) => models.length ? <div className="space-y-1">{models.map((model) => <div key={model} className="flex flex-wrap items-center gap-2"><span>{model}</span>{channel.capability === "image" ? <Tag>{imageModelTypeLabels[channel.image_types[model]] || "未配置类型"}</Tag> : null}</div>)}</div> : "尚未配置" },
             { title: "默认模型", dataIndex: "default_model", render: (value) => value || "—" },
             { title: "状态", render: (_, channel) => <Tag>{channel.enabled ? "启用" : "停用"}</Tag> },
             { title: "操作", render: (_, channel) => <Button type="link" disabled={Boolean(error)} onClick={() => edit(channel)}>编辑</Button> },
@@ -78,6 +82,12 @@ export default function ChannelsPage() {
                     <Button type="link" className="!px-0" loading={modelsLoading} onClick={() => void loadModels(true)}>刷新模型列表</Button>
                     <span className="ml-2 text-xs text-muted-foreground">刷新仅更新候选列表，不会自动添加到允许的模型</span>
                 </div>
+                {editing === "image" && selectedModels.length ? <div className="mb-4 space-y-2">
+                    <p className="text-sm text-muted-foreground">为每个模型选择调用类型，模型名称和别名不会自动决定类型。</p>
+                    {selectedModels.map((model) => <Form.Item key={model} name={["image_types", model]} label={model} rules={[{ required: true, message: "请选择图片模型类型" }]}>
+                        <Select aria-label={`${model} 的图片模型类型`} placeholder="选择模型类型" options={imageModelTypes.map((value) => ({ value, label: imageModelTypeLabels[value] }))} />
+                    </Form.Item>)}
+                </div> : null}
                 <Form.Item name="default_model" label="默认模型" dependencies={["models"]} rules={[({ getFieldValue }) => ({ validator: (_, value) => {
                     const models: string[] = getFieldValue("models") || [];
                     return models.length ? models.includes(value) ? Promise.resolve() : Promise.reject(new Error("请选择已配置的模型")) : Promise.resolve();

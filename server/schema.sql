@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS channels (
     enabled boolean NOT NULL DEFAULT true, is_default boolean NOT NULL DEFAULT false
 );
 CREATE UNIQUE INDEX IF NOT EXISTS channels_capability ON channels(capability);
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS image_types jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS key_bindings (
     user_id uuid NOT NULL REFERENCES users(id), group_id text NOT NULL,
     tokenone_user_id text NOT NULL, key_id text NOT NULL,

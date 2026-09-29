@@ -7,6 +7,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lock
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
+COPY shared /app/shared
 RUN bun run build
 
 # 单镜像服务器版：Nginx 前端与 Node.js API。
@@ -17,6 +18,7 @@ ENV NODE_ENV=production PORT=4011 MEDIA_DIR=/app/data/media
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY server/src ./src
+COPY shared /app/shared
 COPY server/schema.sql ./schema.sql
 
 COPY --from=web-build /app/web/dist /usr/share/nginx/html

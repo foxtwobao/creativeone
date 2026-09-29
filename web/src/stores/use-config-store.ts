@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { cloudSession } from "@/services/api/cloud";
 import { createUserStore } from "@/services/cloud-storage";
+import type { ImageModelType } from "../../../shared/image-models";
 
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -11,6 +12,7 @@ export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 export type ChannelModel = {
     name: string;
     capability: ModelCapability;
+    imageType?: ImageModelType;
     script?: string;
 };
 
@@ -87,7 +89,7 @@ const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "mode
 function applyCloudConfig(config: AiConfig): AiConfig {
     const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
         id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
-        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability })),
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name] })),
     }));
     const next = { ...config, channels, models: modelOptionsFromChannels(channels), baseUrl: "", apiKey: "", apiFormat: "openai" as const };
     for (const [key, capability] of [["imageModel", "image"], ["textModel", "text"], ["videoModel", "video"], ["audioModel", "audio"]] as const) {
@@ -124,6 +126,10 @@ function findChannelModel(config: AiConfig, value: string): { channel: ModelChan
 
 export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
     return findChannelModel(config, value)?.model.capability;
+}
+
+export function modelImageTypeOf(config: AiConfig, value: string) {
+    return findChannelModel(config, value)?.model.imageType;
 }
 
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
@@ -241,6 +247,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     return {
         ...config,
         model: modelOptionName(value || config.model),
+        imageType: modelImageTypeOf(config, value || config.model),
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
@@ -257,4 +264,3 @@ export function buildApiUrl(baseUrl: string, path: string) {
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
 }
-

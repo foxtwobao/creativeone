@@ -42,7 +42,7 @@ async function persistImages(userId: string, payload: any, signal: AbortSignal) 
     // OpenAI image responses contain either inline bytes or an expiring URL.
     if (!Array.isArray(payload?.data)) return payload;
     for (const image of payload.data) {
-        if (typeof image.b64_json === "string") {
+        if (typeof image.b64_json === "string" && image.b64_json) {
             image.url = await saveFile(userId, "image_files", `image:${randomUUID()}`, Buffer.from(image.b64_json, "base64"), "image/png");
             delete image.b64_json;
         } else if (typeof image.url === "string") image.url = await persistRemoteMedia(userId, image.url, signal);
@@ -77,6 +77,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         if (!channel) throw new HttpError(403, "CHANNEL_UNAVAILABLE");
         if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && endpoints[path] === channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
         if (req.method === "POST" && (!req.body || typeof req.body.model !== "string" || !channel.models.includes(req.body.model))) throw new HttpError(403, "MODEL_NOT_ALLOWED");
+        if (req.method === "POST" && channel.capability === "image" && !channel.image_types?.[req.body.model]) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
     }
     if (task && task.provider !== modelProvider) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
     const apiKey = await ensureKey(user, res.locals.requestId);

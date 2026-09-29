@@ -5,9 +5,11 @@ import { Button } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
+import { imageModelProfile } from "../../../../shared/image-models";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { inferMediaRatio, parseAspectRatio } from "@/lib/media-size";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { AiConfig } from "@/stores/use-config-store";
+import { modelImageTypeOf, type AiConfig } from "@/stores/use-config-store";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -27,9 +29,14 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const quality = config.quality || "auto";
+    const model = config.model || config.imageModel;
+    const imageType = modelImageTypeOf(config, model);
+    const profile = imageType ? imageModelProfile(model, imageType) : undefined;
+    const quality = profile?.qualities.includes(config.quality) ? config.quality : "auto";
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
+    const ratio = parseAspectRatio(activeSize) ? activeSize : inferMediaRatio(activeSize);
+    const sizeLabel = profile ? `${profile.fixedResolution ? `${profile.fixedResolution.toUpperCase()} · ` : ""}${imageSizeLabel(profile.resolutions.length === 1 ? ratio : activeSize)}` : "未配置图片类型";
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -65,7 +72,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
                     <span className="truncate">
-                        {imageQualityLabel(quality)} · {imageSizeLabel(activeSize)} · {t("canvas.controls.images", { count })}
+                        {profile?.qualities.length ? `${imageQualityLabel(quality)} · ` : ""}{sizeLabel} · {t("canvas.controls.images", { count })}
                     </span>
                 </Button>
             </span>
