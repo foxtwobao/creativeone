@@ -10,6 +10,7 @@ beforeAll(async () => {
     globalThis.fetch = (async (input, init) => {
         const path = String(input);
         if (path === "/api/auth/me") return Response.json({ user: { id: "alice" }, csrf: "test" });
+        if (path === "/api/model-authorization") return Response.json(null);
         if (path === "/api/channels") return Response.json({ channels: [] });
         expect(new Headers(init?.headers).get("X-Expected-User")).toBe("alice");
         if (offline) throw new Error("offline");

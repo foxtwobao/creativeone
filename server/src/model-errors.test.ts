@@ -19,6 +19,18 @@ test("unknown 403 is not misreported as insufficient balance", async () => {
     assert.equal(error.code, "TOKENONE_HTTP_403");
     assert.doesNotMatch(modelErrorMessage(error.code)!, /余额不足|sk-private|secret/);
 });
+test("known upstream balance rejection stays distinct from the user's balance", async () => {
+    for (const suffix of ["", " (request id: upstream-123)"]) {
+        const error = await tokenoneError(Response.json({ error: { message: `account balance is negative, please recharge first${suffix}` } }, { status: 403 }));
+        assert.equal(error.code, "UPSTREAM_BALANCE_INSUFFICIENT");
+        assert.match(modelErrorMessage(error.code)!, /上游服务账户余额不足/);
+        assert.doesNotMatch(modelErrorMessage(error.code)!, /upstream-123|前往 TokenONE 充值/);
+    }
+    const unknown = await tokenoneError(Response.json({ error: { message: "private account balance is negative, please recharge first" } }, { status: 403 }));
+    assert.equal(unknown.code, "TOKENONE_HTTP_403");
+    const explicit = await tokenoneError(Response.json({ code: "INSUFFICIENT_BALANCE", error: { message: "account balance is negative, please recharge first" } }, { status: 403 }));
+    assert.equal(explicit.code, "INSUFFICIENT_BALANCE");
+});
 test("HTML, malformed JSON and missing bodies use safe status messages", async () => {
     for (const body of ["<html>internal secret</html>", "{", ""]) {
         const error = await tokenoneError(new Response(body, { status: 503 }));

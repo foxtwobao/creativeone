@@ -61,3 +61,12 @@ BEGIN
 END $$;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'legacy-enhance';
 ALTER TABLE generation_tasks ALTER COLUMN provider DROP DEFAULT;
+
+-- Authorization secrets and editor recovery stay bound to the original login session.
+CREATE TABLE IF NOT EXISTS reseller_authorizations (
+    session_hash text PRIMARY KEY REFERENCES sessions(id_hash) ON DELETE CASCADE,
+    state_hash text NOT NULL, verifier text, issuer text NOT NULL, subject text NOT NULL,
+    provider text NOT NULL, credential_hash text NOT NULL, authorization_url text,
+    return_to text NOT NULL, draft jsonb, expires_at timestamptz NOT NULL,
+    consumed boolean NOT NULL DEFAULT false, result text
+);

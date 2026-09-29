@@ -42,7 +42,7 @@ test("v2 ensure sends only verified identity and preserves decimal IDs and the c
 
 test("Enhance failures retain safe v2 codes without retries or replacement accounts", () => run(`
     const { modelErrorMessage } = await import('./src/model-errors.ts');
-    for (const [status, code] of [[403, 'APP_USER_LOGIN_REQUIRED'], [409, 'APP_KEY_RESULT_AMBIGUOUS'], [503, 'TOKENONE_USER_NOT_FOUND'], [409, 'APP_KEY_UNAVAILABLE'], [409, 'IDENTITY_CONFLICT'], [403, 'SCOPE_FORBIDDEN'], [401, 'UNAUTHORIZED'], [503, 'APP_KEY_RECOVERY_UNAVAILABLE']]) {
+    for (const [status, code] of [[403, 'APP_USER_AUTHORIZATION_REQUIRED'], [409, 'IDENTITY_BINDING_CONFLICT'], [403, 'TOKENONE_USER_DISABLED'], [403, 'REDIRECT_URI_FORBIDDEN'], [400, 'AUTHORIZATION_FLOW_INVALID'], [403, 'APP_USER_LOGIN_REQUIRED'], [409, 'APP_KEY_RESULT_AMBIGUOUS'], [503, 'TOKENONE_USER_NOT_FOUND'], [409, 'APP_KEY_UNAVAILABLE'], [409, 'IDENTITY_CONFLICT'], [403, 'SCOPE_FORBIDDEN'], [401, 'UNAUTHORIZED'], [503, 'APP_KEY_RECOVERY_UNAVAILABLE']]) {
         let calls = 0;
         globalThis.fetch = async () => { calls++; return Response.json({ error: code, retryable: true, detail: 'sk-private' }, { status }); };
         await assert.rejects(ensureKey(user, 'trace'), { code, status: status === 401 ? 502 : status });
