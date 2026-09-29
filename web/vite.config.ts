@@ -42,6 +42,7 @@ function localPluginsManifest(): Plugin {
         const env = loadEnv(mode, webDir, "");
         return {
         server: {
+            allowedHosts: ["creative.lab.home.arpa"],
             proxy: { "/api": { target: env.VITE_API_PROXY_TARGET || "http://127.0.0.1:4011", changeOrigin: false } },
         },
         base: process.env.VITE_BASE || "/",

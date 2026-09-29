@@ -5,6 +5,22 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 授权返回状态：图片、视频页使用服务端回调完成后 ensure 校验的结果；成功时将恢复的授权失败卡片显示为“模型服务授权已完成／继续生成”，消费草稿后保留该页面会话的已授权状态；授权未完成时保留授权入口，主动撤销或新请求返回 APP_USER_AUTHORIZATION_REQUIRED 时清除成功状态。发起授权时若服务端确认已有授权，也即时更新结果卡片；只有明确 authorized 响应才视为成功。独立浏览器模拟通过两页成功恢复、失败回调、原页确认已有授权、新授权拒绝及手动继续生成；返回本身不调用模型，手动点击各提交一次模拟请求。7 项前端错误状态测试、8 项后端错误与授权测试通过；未运行语法检查或构建，真实返回及实际生成仍待用户验收。
+- gpt-image-2 的 403：CreativeOne 请求 `00442712-5fbb-4a1f-8c9b-07f5f4a401c9` 对应本地 New API 请求 `202609291355436424612618268d9d6zxI8S1UI`；任务时间与模型匹配，TokenONE 用户 landingnext（ID 6）通过账户额度检查后，渠道 23「krill-GPT」（上游 `https://api.krill-ai.net`）返回 account balance is negative, please recharge first。已将这一明确响应映射为 UPSTREAM_BALANCE_INSUFFICIENT，提示联系管理员处理上游模型渠道、无需重新授权；其他未知 403 保持原映射，不透传上游原文。渠道余额由用户在对应平台核查，未修改关联项目、充值或重试真实计费请求。
+
+- 图片/视频卡片识别 APP_USER_AUTHORIZATION_REQUIRED，改为中性“需要授权模型服务”提示，隐藏该情形的技术错误详情及失败通知，提供明确授权按钮，可手动重新打开全局授权弹窗。授权弹窗补充 TokenONE 模型调用、账户余额扣费说明，以及模型广场 `/pricing` 和 TokenONE 站点链接，地址由服务端模型配置提供；按钮为“同意并前往授权”。独立浏览器模拟验证图片、视频恢复记录的授权入口、关闭后重新打开、新授权错误自动弹窗、提示词保留、两个链接地址及完整说明；模拟点击同意后仅提交一次授权请求，草稿包含原提示词，模型请求数为零，并已检查弹窗截图。5 项错误状态测试再次通过。用户设备此前未弹窗的直接原因尚未复现，真实 IDONE / TokenONE 授权往返、参考图恢复及计费生成仍待用户验收；本次未运行语法检查或构建，TODO 已核对，无新增未实现事项。
+
+- 经用户确认，本地 New API 全局 API 限流已从默认每 IP 360 次／180 秒调整为 3600 次／180 秒，保持限流启用；备份私密配置后重启 `tokenone-newapi-local.service`，运行环境值已确认，健康接口 200，Reseller 管理身份查询由 429 恢复为 200/success。待用户重新验收模型授权与生成；未发起付费模型请求。
+
+- 本地 lab 生图受阻：请求 `f8263585-0794-4f48-a71e-e2bd00eb65cf` 在 CreativeOne 日志中为 503 / APP_SERVICE_UNAVAILABLE；只读诊断确认 Reseller 实际连接 `http://127.0.0.1:55200`，其管理凭据请求 `/api/user/?p=1&page_size=100` 返回 HTTP 429。此时 creativeone 无授权事务和 grant，失败位于原生身份查询、尚未发起模型生成。具体限流请求来源仍需在 Reseller / New API 项目核验；未改动关联项目、限流值或重试付费生成。
+
+- 已提供本机 lab CA 公共证书下载（`http://192.168.10.38:3002/lab-root.crt`，HTTP 200）；待另一台局域网设备安装信任后验证 CreativeOne、IDONE 和 Reseller 的 HTTPS 访问。只导出公开证书，未导出私钥。
+
+- CreativeOne lab HTTPS 单入口已配置：`https://creative.lab.home.arpa` 经 Caddy 转发至 3002，Vite 将 `/api` 转至 4013；更新 APP_ORIGIN 和 Vite 域名白名单，追加 lab IDONE 登录回调及 Reseller 授权返回地址，保留原有回调。页面 200、未登录接口 401、登录跳转 302 且回调为新 HTTPS 地址、PKCE 为 S256。待用户从新域名重新登录，验收真实授权往返、编辑内容恢复与模型权限；未自动登录或调用计费模型。配置备份位于 `server/data/backups/creativeone-https/`，Caddy 主配置备份为 `/etc/caddy/Caddyfile.before-creativeone`。
+
+- Reseller 方案 A 应用内授权：新增绑定登录会话的 PostgreSQL 授权事务（32 字节随机 state/verifier、S256、5 分钟有效期），启动时重查 ensure，只在 403 APP_USER_AUTHORIZATION_REQUIRED 时跳转；重复启动合并，回调先校验身份/state 并原子消费，兑换响应丢失时检查 ensure，不重兑 code。图片/视频保存提示词、参考图及结果到服务端并返回恢复，画布与配置先等待云端保存；返回后手动重试，不自动重放付费请求。增加主动撤销、错误白名单及明确账号不存在提示，旧 APP_USER_LOGIN_REQUIRED 改为升级提示；替代下方历史门户登录入口。
+- 授权验收：14 项后端模拟测试、8 项前端错误状态与云端保存测试通过；尚未真实数据库/浏览器联调、未运行语法检查或构建。待测真实 SSO 往返、页面恢复、多标签合并、过期/回放/换号、权限撤销后 ensure 和实际 Key 调用、各模型能力，以及反向代理/APM 不采集认证 query/body。HTTPS 与 lab 回调配置现已补齐（见上条）；未改动凭证、关联项目源码或自动登录 IDONE。
+
 - 图片模型类型回显：移除类型字段的 `preserve={false}`，避免弹窗销毁后重建时清掉提前回填的值；每次编辑先重置表单，再载入服务端已保存配置。待验收保存后重开、取消未保存修改后重开、切换功能及删除模型后保存；未运行构建或语法检查。TODO 已检查，无新增未实现事项。
 
 - Grok 图片读取修复：真实生成任务已返回成功，但同时含 URL 和空 `b64_json` 的响应会被保存为零字节 PNG；服务端现仅在 Base64 非空时使用内联数据，否则下载 URL。补充 Grok 编辑响应的空 Base64 + URL 回归，校验下载文件 MIME 与字节，15 项隔离数据库集成测试通过，临时库已清理，本机热更新后健康检查正常；未构建或调用真实模型。待用户验收新生成结果；已有零字节结果不会自动恢复，未自动重新生成。

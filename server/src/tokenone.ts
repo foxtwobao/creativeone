@@ -30,6 +30,7 @@ const enhanceErrors = new Set([
     "APP_KEY_UNAVAILABLE", "TOKENONE_KEY_QUOTA_EXHAUSTED", "APP_KEY_RESULT_AMBIGUOUS", "TOKENONE_USER_NOT_FOUND", "APP_SERVICE_NOT_CONFIGURED",
     "APP_WRITES_DISABLED", "TOKENONE_DATABASE_NOT_CONFIGURED", "APP_KEY_ENCRYPTION_NOT_CONFIGURED", "APP_KEY_RECOVERY_UNAVAILABLE",
     "APP_DATABASE_UNAVAILABLE", "APP_SERVICE_UNAVAILABLE", "APP_USER_LOGIN_REQUIRED",
+    "APP_USER_AUTHORIZATION_REQUIRED", "IDENTITY_BINDING_CONFLICT", "TOKENONE_USER_DISABLED", "REDIRECT_URI_FORBIDDEN", "AUTHORIZATION_FLOW_INVALID",
 ]);
 export async function enhancer(path: string, requestId: string, body?: unknown) {
     if (!env.ENHANCER_BASE_URL || !env.ENHANCER_APP_CREDENTIAL) throw new HttpError(503, "ENHANCER_NOT_CONFIGURED");
@@ -41,7 +42,7 @@ export async function enhancer(path: string, requestId: string, body?: unknown) 
     const result = await response.json().catch(() => null);
     if (!response.ok) {
         const code = enhanceErrors.has(result?.error) ? result.error : "ENHANCER_FAILED";
-        throw new HttpError(response.status === 401 ? 502 : response.status, code);
+        throw new HttpError(response.status === 401 ? 502 : response.status, code, result?.retryable === true);
     }
     if (!result || typeof result !== "object") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
     return result;

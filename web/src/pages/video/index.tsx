@@ -1,3 +1,5 @@
+import { useCloudStore } from "@/stores/use-cloud-store";
+import { useAuthorizationDraft } from "@/hooks/use-authorization-draft";
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, ChevronDown, PenLine, Search, Send, X, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Input, InputNumber, Modal, Popover, Select, Switch, Tag, Typography } from "antd";
@@ -20,7 +22,7 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
-import { splitErrorMessage } from "@/services/api/error-message";
+import { needsModelAuthorization, splitErrorMessage } from "@/services/api/error-message";
 
 type GeneratedVideo = {
     id: string;
@@ -93,6 +95,11 @@ export default function VideoPage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [referenceDragTarget, setReferenceDragTarget] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    useAuthorizationDraft({ prompt, references, results }, (draft) => {
+        setPrompt(draft.prompt);
+        setReferences(draft.references);
+        setResults(draft.results);
+    }, running);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
     const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -190,7 +197,7 @@ export default function VideoPage() {
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: performance.now() - batchStartedAt, status: "failed", error: errorMessage }));
-            message.error(errorMessage);
+            if (!needsModelAuthorization(errorMessage)) message.error(errorMessage);
             setRunning(false);
         }
     };
@@ -341,7 +348,7 @@ export default function VideoPage() {
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
-            message.error(errorMessage);
+            if (!needsModelAuthorization(errorMessage)) message.error(errorMessage);
         } finally {
             activeLogIdsRef.current.delete(log.id);
             if (!activeLogIdsRef.current.size) {
@@ -488,7 +495,15 @@ function PendingVideoCard() {
 
 function FailedVideoCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
+    const authorized = useCloudStore((state) => state.modelAuthorized);
     const { message: errorMessage, details } = splitErrorMessage(error);
+    if (needsModelAuthorization(error)) return (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border bg-background p-6 text-center">
+            <div className="text-sm font-medium text-foreground">{authorized ? "模型服务授权已完成" : "需要授权模型服务"}</div>
+            <p className="text-sm text-muted-foreground">{authorized ? "提示词和参考图已保留。确认创作内容后，点击继续生成；模型调用费用将从 TokenONE 账户余额中扣除。" : "授权后，画布ONE将通过你的 TokenONE 账号调用模型，相关费用从 TokenONE 账户余额中扣除。授权前可查看模型价格。"}</p>
+            <Button onClick={authorized ? onRetry : () => useCloudStore.getState().setModelLoginRequired(true)}>{authorized ? "继续生成" : "授权模型服务"}</Button>
+        </div>
+    );
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-video flex-col items-center justify-center gap-3 p-5 text-center">

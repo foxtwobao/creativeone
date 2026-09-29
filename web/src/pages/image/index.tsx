@@ -1,3 +1,5 @@
+import { useCloudStore } from "@/stores/use-cloud-store";
+import { useAuthorizationDraft } from "@/hooks/use-authorization-draft";
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Popover, Tag, Tooltip, Typography } from "antd";
@@ -7,7 +9,7 @@ import { useInterfaceStore } from "@/stores/use-interface-store";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { features } from "@/constant/features";
 import { StudioSettings } from "./studio-settings";
-import { splitErrorMessage } from "@/services/api/error-message";
+import { needsModelAuthorization, splitErrorMessage } from "@/services/api/error-message";
 import { StudioInspiration } from "./studio-inspiration";
 import { createUserStore } from "@/services/cloud-storage";
 import { saveAs } from "file-saver";
@@ -107,6 +109,11 @@ export default function ImagePage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    useAuthorizationDraft({ prompt, references, results }, (draft) => {
+        setPrompt(draft.prompt);
+        setReferences(draft.references);
+        setResults(draft.results);
+    }, running);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -213,7 +220,8 @@ export default function ImagePage() {
                     images: successImages,
                 }),
             );
-            successCount ? message.success(t("imageWorkbench.generated")) : message.error(failed?.reason instanceof Error ? failed.reason.message : t("workbench.generationFailed"));
+            if (successCount) message.success(t("imageWorkbench.generated"));
+            else if (!needsModelAuthorization(error || "")) message.error(error || t("workbench.generationFailed"));
         } finally {
             setRunning(false);
         }
@@ -676,7 +684,15 @@ function PendingImageCard() {
 
 function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
     const { t } = useTranslation();
+    const authorized = useCloudStore((state) => state.modelAuthorized);
     const { message: errorMessage, details } = splitErrorMessage(error);
+    if (needsModelAuthorization(error)) return (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border bg-background p-6 text-center">
+            <div className="text-sm font-medium text-foreground">{authorized ? "模型服务授权已完成" : "需要授权模型服务"}</div>
+            <p className="text-sm text-muted-foreground">{authorized ? "提示词和参考图已保留。确认创作内容后，点击继续生成；模型调用费用将从 TokenONE 账户余额中扣除。" : "授权后，画布ONE将通过你的 TokenONE 账号调用模型，相关费用从 TokenONE 账户余额中扣除。授权前可查看模型价格。"}</p>
+            <Button onClick={authorized ? onRetry : () => useCloudStore.getState().setModelLoginRequired(true)}>{authorized ? "继续生成" : "授权模型服务"}</Button>
+        </div>
+    );
     return (
         <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">

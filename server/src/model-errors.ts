@@ -9,7 +9,12 @@ const messages: Record<string, string> = {
     ENHANCER_FAILED: "Reseller 查询失败，请联系管理员并提供请求 ID。",
     ENHANCER_INVALID_RESPONSE: "Reseller 返回了无效响应，请联系管理员检查接口版本。",
     UNAUTHORIZED: "Reseller 应用凭证无效、过期或已撤销，请联系管理员更新。",
-    APP_USER_LOGIN_REQUIRED: "请先登录模型服务完成账户关联，完成后回到此页重试。",
+    APP_USER_LOGIN_REQUIRED: "模型服务版本较旧，请管理员升级 Reseller 后再从本应用授权。",
+    APP_USER_AUTHORIZATION_REQUIRED: "请先完成模型服务授权，编辑内容将保存后带回。",
+    IDENTITY_BINDING_CONFLICT: "模型服务账号与当前登录身份不一致，请停止操作并联系管理员核验。",
+    TOKENONE_USER_DISABLED: "当前模型服务账号已停用，请联系管理员。",
+    REDIRECT_URI_FORBIDDEN: "模型服务授权回调未获允许，请管理员核对 HTTPS 地址及 Reseller 回调白名单。",
+    AUTHORIZATION_FLOW_INVALID: "授权流程已失效，请重新发起授权。",
     TOKENONE_ACCOUNT_USAGE_UNAVAILABLE: "账户余额、用量明细和统计暂不可用，不影响模型生成。",
     TASK_PROVIDER_CHANGED: "模型服务已切换，不能使用当前服务查询历史视频任务，请联系管理员核验原服务。",
     APP_DISABLED: "当前应用已停用，请联系管理员。",
@@ -31,8 +36,9 @@ const messages: Record<string, string> = {
     APP_DATABASE_UNAVAILABLE: "Reseller 数据库暂时不可用，请稍后手动重试或联系管理员。",
     APP_SERVICE_UNAVAILABLE: "Reseller 服务暂时不可用，请稍后手动重试或联系管理员。",
     TASK_GROUP_CHANGED: "应用默认分组已变更，暂不能查询原分组的视频任务，请联系管理员处理。",
-    TOKENONE_USER_NOT_FOUND: "你的模型服务账号尚未同步，请稍后手动重试；若持续出现，请联系管理员检查 IDONE 同步状态。",
+    TOKENONE_USER_NOT_FOUND: "原生模型服务账号不存在，请联系管理员核验账号及身份绑定。",
     INSUFFICIENT_BALANCE: "账户余额不足，暂时无法使用模型。请前往 TokenONE 充值，完成后手动重试。",
+    UPSTREAM_BALANCE_INSUFFICIENT: "该模型的上游服务账户余额不足，请联系管理员处理模型渠道，或切换其他模型后重试。无需重新授权。",
     API_KEY_DISABLED: "当前模型 Key 已停用，请联系管理员处理后重试。",
     API_KEY_EXPIRED: "当前模型 Key 已过期，请联系管理员处理后重试。",
     INVALID_API_KEY: "模型 Key 无效，请联系管理员检查渠道配置。",
@@ -76,5 +82,8 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
     }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
+    if (!code && response.status === 403 && typeof body?.error?.message === "string" && /^account balance is negative, please recharge first(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
+        return new HttpError(403, "UPSTREAM_BALANCE_INSUFFICIENT");
+    }
     return new HttpError(response.status === 401 ? 502 : response.status, code || `TOKENONE_HTTP_${response.status}`);
 }

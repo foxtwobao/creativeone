@@ -12,7 +12,17 @@ description: Reseller / New API 迁移配置与验收
 | `ENHANCER_BASE_URL` | `https://tokenonereseller.lab.home.arpa`（门户根地址，不带 `/api/apps`） |
 | `TOKENONE_BASE_URL` | `https://tokenone.lab.home.arpa`（New API 模型服务） |
 | `IDONE_ISSUER` | 已按用户选择配置 `https://idone.lab.home.arpa`，使用 `creativeone` 应用，已重启生效 |
-| 用户账户关联入口 | `https://tokenonereseller.lab.home.arpa/auth/login` |
+| 应用内授权回调 | `APP_ORIGIN/api/auth/reseller/callback`（必须 HTTPS；在 Reseller 登记） |
+
+## 应用内授权（方案 A）
+
+CreativeOne 提供 `/api/model-authorization` 启动接口和 `/api/auth/reseller/callback` 服务端回调，不再打开门户登录页。Reseller 需先运行 migration 016，并将实际 HTTPS 回调登记到应用的授权返回地址白名单；这不是 IDONE 回调，无需给 IDONE 新增注册。本机现已配置 `APP_ORIGIN=https://creative.lab.home.arpa`：Caddy 单入口转发到 3002，Vite 再将 `/api` 转到 4013，模板见 `deploy/creativeone.lab.caddy`。lab IDONE 已追加 `/api/auth/callback`，Reseller 已追加 `/api/auth/reseller/callback`；保留原有回调。配置已重新加载，页面、登录跳转及未登录权限检查通过；用户需从新域名重新登录并完成真实授权验收。
+
+授权事务保存在 PostgreSQL，绑定原登录会话和 issuer/sub、提供方及应用凭证摘要，使用 32 字节随机 state/verifier、S256，按契约 5 分钟有效。同一会话只允许一个进行中的流程，重复启动提示回原页面完成；过期后可重新发起。回调先校验并原子消费，再兑换 code；兑换响应丢失仅重查 ensure，不重兑 code。凭证轮换中的旧流程失效，需重新发起。
+
+跳转前保存图片/视频提示词、参考图和当前结果到服务端，并刷新画布/配置云端保存；有保存冲突或生成尚未结束时不离开页面。返回恢复编辑内容及失败状态，**不自动提交生成**，请先检查云端任务，再手动重试未完成操作。普通退出仅清理本站会话；设置页“断开模型服务授权”才调用 revoke，不停用原生 Key，也不取消在途任务。服务端没有 Key 缓存，后续调用必须再次通过 ensure。
+
+回调响应设置 no-store/no-referrer，镜像 Nginx 关闭两类认证路径访问及错误日志；外部反向代理、网关 `/_channel/start` 和 APM 同样需要禁用 query/body 采集，不能仅依靠应用脱敏。服务错误保留上游 retryable 标志，沿用手动重试，不引入新的自动重试次数或退避边界。
 
 ## 配置准备
 
@@ -22,6 +32,8 @@ description: Reseller / New API 迁移配置与验收
 - 已安全备份并更新本机 `server/.env` 的三个模型连接参数，文件权限保持 600；IDONE 配置完全保留。未启动/重建容器或重启后端，运行进程仍使用旧配置。旧 `deploy/tokenone-local.yml`、Enhance 联调配置和历史数据保留，不作为新服务的部署入口。
 
 ## HTTPS 与容器
+
+本机开发服务提供公开 lab CA 下载：`http://192.168.10.38:3002/lab-root.crt`。文件仅含 Caddy 根证书、不含私钥，保存在本机 `web/public/lab-root.crt` 并通过 Git 本地 exclude 排除，不随仓库分发。其他设备需将其导入系统受信任根证书库；CA 更换后需重新导出并安装。
 
 从 CreativeOne 实际运行环境检查三个 lab 域名的 DNS、HTTPS 和 Caddy 根证书信任；宿主机连通不能代替容器内连通。禁止关闭 TLS 校验。
 
@@ -44,12 +56,12 @@ docker compose -f docker-compose.yml -f docker-compose.lab.yml up -d --no-deps -
 ## 行为与验收
 
 - 服务端只向 `/api/apps/keys/ensure` 发送已验证身份的 issuer/subject，保留邮箱验证；个人 Key 不下发浏览器。`/api/admin/groups` 仍为管理员代理。
-- `APP_USER_LOGIN_REQUIRED` 显示“请先登录模型服务完成账户关联，完成后回到此页重试。”并提供固定门户登录链接，新标签页打开，保留当前编辑内容。没有 return_to 或自动重试；真实 IDONE 登录由用户手动完成。
+- `APP_USER_AUTHORIZATION_REQUIRED` 打开应用内授权提示；`APP_USER_LOGIN_REQUIRED` 表示旧服务需要管理员升级，不能调用新版流程。账号不存在、身份冲突、停用、无分组权益、回调不在白名单和事务失效分别显示处理建议，不提示等待同步；真实 IDONE 登录由用户手动完成。
 - `/api/tokenone/account/summary`、`/api/tokenone/usage/query`、`/api/tokenone/usage/stats` 对已认证请求返回 HTTP 501 / `TOKENONE_ACCOUNT_USAGE_UNAVAILABLE`，不访问上游、不返回伪造零余额。当前前端没有对应查询页面或自动请求，不作为生成前置条件。
-- 配置生效后验证 groups、未关联身份的登录提示、门户登录后 ensure 与重复 Key 复用、未登录/普通用户/管理员权限、凭证撤销/应用停用/无分组权益，以及凭证不泄露。
+- 配置生效后验证 groups、未关联身份的登录提示、应用内授权返回后 ensure 与重复 Key 复用、未登录/普通用户/管理员权限、凭证撤销/应用停用/无分组权益，以及凭证不泄露。
 - 图片、文本、视频、音频按实际启用的模型逐项验收；视频创建与查询已适配 New API 豆包兼容入口 `/doubao/api/v3/contents/generations/tasks`（查询追加任务 ID）。根据线上诊断，原 `/api/v3/contents/generations/tasks` 返回 404；新路径尚待部署后真实联调，不能以取 Key 成功替代模型验收。真实计费调用需相应授权。
 
-本次 13 项后端模拟测试和 3 项前端错误状态测试通过；未运行构建、类型检查、数据库迁移、真实身份登录、模型调用或容器验收。Docker 静态资源与持久化部署仍需实际验证。完整待测项见[待验收清单](/docs/progress/pending-test)。
+本次 14 项后端模拟测试和 8 项前端错误状态与云端保存测试通过；未运行构建、类型检查、数据库迁移、真实身份登录、模型调用或容器验收。Docker 静态资源与持久化部署仍需实际验证。完整待测项见[待验收清单](/docs/progress/pending-test)。
 
 ## 本机配置验证进展
 
