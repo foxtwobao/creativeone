@@ -1,6 +1,7 @@
 import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Alert, App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tabs, Tag, Typography } from "antd";
+import { useSearchParams } from "react-router-dom";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -11,6 +12,12 @@ import { getImageBlob, getImagePreviewRevision, subscribeImagePreviews, uploadIm
 import { cn } from "@/lib/utils";
 import { assetCoverUrl, useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
+import { workKinds, type Work, type WorkKind } from "./works";
+import { TaskCard } from "./task-card";
+import { useWorkTasks } from "./use-work-tasks";
+import { removeTaskFromWorks } from "@/services/api/tasks";
+import { WorkCanvasModal } from "./work-canvas-modal";
+import { features } from "@/constant/features";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -24,22 +31,26 @@ type AssetFormValues = {
 
 type ImageDraft = ImageAsset["data"] | null;
 
-const kindOptions = ["all", "text", "image", "video"] as const;
+const kindOptions = ["all", "image", "video", "audio", "text"] as const;
 
 export default function AssetsPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const { t } = useTranslation();
     const copyText = useCopyText();
     const [form] = Form.useForm<AssetFormValues>();
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
-    const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
+    const [kindFilter, setKindFilter] = useState<WorkKind | "all">("all");
+    const [searchParams, setSearchParams] = useSearchParams();
+    const taskView = searchParams.get("view") === "tasks";
+    const [statusFilter, setStatusFilter] = useState("all");
+    const [sourceFilter, setSourceFilter] = useState<Work["source"] | "all">("all");
+    const [canvasWork, setCanvasWork] = useState<Work | null>(null);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
     const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
@@ -52,26 +63,11 @@ export default function AssetsPage() {
     const title = Form.useWatch("title", form) || "";
     const tags = Form.useWatch("tags", form) || [];
     const content = Form.useWatch("content", form) || "";
-    const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video"), [assets]);
 
-    const filteredAssets = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return validAssets.filter((asset) => {
-            if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
-            if (!query) return true;
-            return assetSearchText(asset).includes(query);
-        });
-    }, [validAssets, keyword, kindFilter]);
-
-    const visibleAssets = useMemo(() => {
-        const start = (page - 1) * pageSize;
-        return filteredAssets.slice(start, start + pageSize);
-    }, [filteredAssets, page, pageSize]);
-
-    useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
-        setPage((value) => Math.min(value, maxPage));
-    }, [filteredAssets.length, pageSize]);
+    const worksQuery = new URLSearchParams({ page: String(page), pageSize: String(pageSize), view: taskView ? "tasks" : "works", kind: kindFilter, status: statusFilter, source: sourceFilter, keyword }).toString();
+    const { works: visibleAssets, total: totalWorks, activeTasks, error: taskError, loading: tasksLoading, load: loadTasks } = useWorkTasks(worksQuery);
+    const processingCount = activeTasks.length;
+    useEffect(() => { if (!tasksLoading && !taskError) setPage((value) => Math.min(value, Math.max(1, Math.ceil(totalWorks/pageSize)))); }, [totalWorks, pageSize, tasksLoading, taskError]);
 
     const openCreate = () => {
         setEditingAsset(null);
@@ -79,6 +75,12 @@ export default function AssetsPage() {
         setFormKind("text");
         form.setFieldsValue({ kind: "text", title: "", coverUrl: "", tags: [], source: t("assets.manual"), note: "", content: "" });
         setIsAssetOpen(true);
+    };
+
+    const refreshWorks = async () => {
+        try {
+            await loadTasks();
+        } catch (error) { message.error(error instanceof Error ? error.message : "作品刷新失败"); }
     };
 
     const openEdit = (asset: Asset) => {
@@ -97,6 +99,12 @@ export default function AssetsPage() {
         setIsAssetOpen(true);
     };
 
+    const saveAssetChanges = async (asset: Parameters<typeof addAsset>[0]) => {
+        if (!editingAsset) return addAsset(asset);
+        const patch = Object.fromEntries(Object.entries(asset).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(editingAsset[key as keyof Asset])));
+        if (Object.keys(patch).length) await updateAsset(editingAsset.id, patch);
+    };
+
     const saveAsset = async () => {
         const values = await form.validateFields();
         const base = {
@@ -110,18 +118,19 @@ export default function AssetsPage() {
 
         if (values.kind === "text") {
             const asset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            await saveAssetChanges(asset);
         } else {
             if (!imageDraft) {
                 message.error(t("assets.selectImage"));
                 return;
             }
             const asset = { ...base, kind: "image" as const, data: imageDraft };
-            editingAsset ? updateAsset(editingAsset.id, asset) : addAsset(asset);
+            await saveAssetChanges(asset);
         }
 
         message.success(editingAsset ? t("assets.updated") : t("assets.saved"));
         setIsAssetOpen(false);
+        await loadTasks();
     };
 
     const readCoverFile = async (file?: File) => {
@@ -160,25 +169,22 @@ export default function AssetsPage() {
     };
 
     const exportAllAssets = async () => {
-        if (!validAssets.length) {
-            message.warning(t("assets.noneToExport"));
-            return;
-        }
-        await exportAssets(validAssets, t("assets.packageName"));
+        exportAssets();
     };
 
     const importAssetZip = async (file?: File) => {
         if (!file) return;
         try {
             const importedAssets = await readAssetPackage(file);
-            importedAssets.forEach((asset) => {
+            for (const asset of importedAssets) {
                 const payload = { ...asset } as Record<string, unknown>;
                 delete payload.id;
                 delete payload.createdAt;
                 delete payload.updatedAt;
-                addAsset(payload as Parameters<typeof addAsset>[0]);
-            });
+                await addAsset(payload as Parameters<typeof addAsset>[0]);
+            }
             message.success(t("assets.imported", { count: importedAssets.length }));
+            await loadTasks();
         } catch {
             message.error(t("assets.importFailed"));
         } finally {
@@ -186,20 +192,37 @@ export default function AssetsPage() {
         }
     };
 
-    const confirmDelete = () => {
+    const removeWork = (work: Work) => modal.confirm({
+        title: taskView ? "移除此任务记录？" : "从我的作品移除？",
+        content: "将移除此作品及关联的素材收藏。生成记录、历史记录和画布中已使用的文件会保留。",
+        okText: "移除", cancelText: "取消",
+        onOk: async () => {
+            if (work.task) await removeTaskFromWorks(work.task.id);
+            await Promise.all(work.assets.map((asset) => removeAsset(asset.id)));
+            await loadTasks();
+            message.success("已从我的作品移除");
+        },
+    });
+
+    const confirmDelete = async () => {
         if (!deletingAsset) return;
-        removeAsset(deletingAsset.id);
+        await removeAsset(deletingAsset.id);
         message.success(t("assets.deleted"));
+        await loadTasks();
         setDeletingAsset(null);
     };
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-8 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]">
+            <main className="min-h-0 flex-1 overflow-y-auto px-4 py-8 sm:px-6">
                 <div className="pb-8">
                     <div className="mx-auto max-w-5xl text-center">
-                        <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">{t("assets.title")}</h1>
-                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">{t("assets.description")}</p>
+                        <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">我的作品</h1>
+                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">收藏与生成结果随时取用，生成进度在任务中查看。</p>
+                    </div>
+
+                    <div className="mx-auto mt-6 max-w-6xl">
+                        <Tabs activeKey={taskView ? "tasks" : "works"} onChange={(key) => { setPage(1); setSearchParams(key === "tasks" ? { view: "tasks" } : {}); }} items={[{ key: "works", label: "我的作品" }, { key: "tasks", label: `生成任务${processingCount ? ` · ${processingCount} 进行中` : ""}` }]} />
                     </div>
 
                     <div className="mx-auto mt-8 w-full max-w-2xl">
@@ -209,7 +232,7 @@ export default function AssetsPage() {
                             allowClear
                             prefix={<Search className="size-4 text-stone-400" />}
                             value={keyword}
-                            placeholder={t("assets.search")}
+                            placeholder={taskView ? "搜索模型、任务 ID 或失败原因" : "搜索作品名称、模型、标签或内容"}
                             onChange={(event) => {
                                 setPage(1);
                                 setKeyword(event.target.value);
@@ -236,20 +259,23 @@ export default function AssetsPage() {
                                                 setKindFilter(option);
                                             }}
                                         >
-                                            {option === "all" ? t("common.all") : t(`assets.kinds.${option}`)}
+                                            {option === "all" ? t("common.all") : workKinds[option]}
                                         </Tag.CheckableTag>
                                     ))}
                                 </div>
                             </div>
-                            <div className="flex flex-wrap gap-4">
+                            <div className="flex flex-wrap items-center gap-4">
+                                <Button type="text" loading={tasksLoading} onClick={() => void refreshWorks()}>刷新</Button>
                                 <button
+                                    hidden={taskView}
                                     type="button"
                                     className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
                                     onClick={() => void exportAllAssets()}
                                 >
-                                    {t("assets.export")}
+                                    导出收藏素材
                                 </button>
                                 <button
+                                    hidden={taskView}
                                     type="button"
                                     className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
                                     onClick={() => assetInputRef.current?.click()}
@@ -257,6 +283,7 @@ export default function AssetsPage() {
                                     {t("assets.import")}
                                 </button>
                                 <button
+                                    hidden={taskView}
                                     type="button"
                                     className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
                                     onClick={openCreate}
@@ -265,23 +292,30 @@ export default function AssetsPage() {
                                 </button>
                             </div>
                         </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                            {taskView ? <Select aria-label="任务状态" value={statusFilter} className="min-w-36" onChange={(value) => { setStatusFilter(value); setPage(1); }} options={[{ value: "all", label: "全部状态" }, { value: "processing", label: "生成中" }, { value: "unknown", label: "需处理" }, { value: "failed", label: "生成失败" }, { value: "succeeded", label: "已完成" }, { value: "cancelled", label: "已取消" }, { value: "expired", label: "已过期" }]} /> : <Select aria-label="作品来源" value={sourceFilter} className="min-w-36" onChange={(value) => { setSourceFilter(value); setPage(1); }} options={[{ value: "all", label: "全部来源" }, { value: "generated", label: "AI 生成" }, { value: "uploaded", label: "上传 / 手动添加" }]} />}
+                            <span className="text-xs text-muted-foreground">共 {totalWorks} {taskView ? "个任务" : "件作品"}</span>
+                        </div>
                     </div>
                 </div>
 
                 <div className="mx-auto flex max-w-7xl flex-col gap-5">
-                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
-                        ))}
+                    {taskError ? <Alert type="warning" title="生成任务暂时无法更新" description={taskError} /> : null}
+                    <div className={taskView ? "flex flex-col gap-3" : "grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}>
+                        {visibleAssets.map((work) => work.task ? (
+                            <TaskCard key={`${taskView}:${work.id}`} compact={taskView} work={work} onRefresh={loadTasks} onRemove={() => removeWork(work)} onEdit={openEdit} onCanvas={() => setCanvasWork(work)} />
+                        ) : work.asset ? (
+                            <AssetCard key={work.id} asset={work.asset} onOpen={() => setPreviewAsset(work.asset!)} onEdit={() => openEdit(work.asset!)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(work.asset!)} onCanvas={() => setCanvasWork(work)} />
+                        ) : null)}
                     </div>
 
-                    {!visibleAssets.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("assets.empty")} className="py-20" /> : null}
+                    {!visibleAssets.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={tasksLoading ? "正在加载…" : taskView ? "暂无符合条件的任务" : "暂无符合条件的作品"} className="py-20" /> : null}
 
                     <div className="flex justify-center">
                         <Pagination
                             current={page}
                             pageSize={pageSize}
-                            total={filteredAssets.length}
+                            total={totalWorks}
                             showSizeChanger
                             pageSizeOptions={[10, 20, 50, 100]}
                             onChange={(nextPage, nextPageSize) => {
@@ -293,7 +327,8 @@ export default function AssetsPage() {
                 </div>
             </main>
 
-            <Modal title={editingAsset ? t("assets.edit") : t("assets.add")} open={isAssetOpen} width={980} onCancel={() => setIsAssetOpen(false)} onOk={() => void saveAsset()} okText={t("common.save")} cancelText={t("common.cancel")} destroyOnHidden>
+            <WorkCanvasModal work={canvasWork} onClose={() => setCanvasWork(null)} />
+            <Modal title={editingAsset ? t("assets.edit") : t("assets.add")} open={isAssetOpen} width={980} onCancel={() => setIsAssetOpen(false)} onOk={() => saveAsset().catch((error) => message.error(error.message))} okText={t("common.save")} cancelText={t("common.cancel")} destroyOnHidden>
                 <div className="grid gap-6 pt-1 lg:grid-cols-[minmax(0,1fr)_320px]">
                     <Form form={form} layout="vertical" requiredMark={false} initialValues={{ kind: "text", tags: [] }}>
                         <Form.Item name="kind" label={t("assets.type")}>
@@ -403,14 +438,14 @@ export default function AssetsPage() {
 
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
 
-            <Modal title={t("assets.deleteTitle")} open={Boolean(deletingAsset)} onCancel={() => setDeletingAsset(null)} onOk={confirmDelete} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
+            <Modal title={t("assets.deleteTitle")} open={Boolean(deletingAsset)} onCancel={() => setDeletingAsset(null)} onOk={() => confirmDelete().catch((error) => message.error(error.message))} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("assets.deleteConfirm", { name: deletingAsset?.title })}
             </Modal>
         </div>
     );
 }
 
-function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete, onCanvas }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void; onCanvas: () => void }) {
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const cover = assetCoverUrl(asset);
@@ -423,7 +458,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
+                        <img src={cover} loading="lazy" alt={asset.title} className="aspect-[4/3] w-full object-cover" />
                     ) : (
                         <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>
                     )}
@@ -454,7 +489,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
                     </div>
                 </div>
             </button>
-            <div className="flex items-center gap-2 px-4 pb-4">
+            <div className="flex flex-wrap items-center gap-2 px-4 pb-4">
                 <Button size="small" onClick={onOpen}>
                     {t("common.view")}
                 </Button>
@@ -473,6 +508,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
                         {t("common.download")}
                     </Button>
                 ) : null}
+                {features.canvas ? <Button size="small" onClick={onCanvas}>添加到画布</Button> : null}
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
                     {t("common.delete")}
                 </Button>
@@ -512,7 +548,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
                         {asset.kind === "text" ? (
                             <Typography.Paragraph className="mt-2 whitespace-pre-wrap">{asset.data.content}</Typography.Paragraph>
                         ) : asset.kind === "video" ? (
-                            <video src={asset.data.url} controls className="mt-2 aspect-video w-full rounded-lg bg-black" />
+                            <video src={asset.data.url} controls preload="none" className="mt-2 aspect-video w-full rounded-lg bg-black" />
                         ) : (
                             <Typography.Text className="mt-2 block">
                                 {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}
@@ -558,8 +594,4 @@ async function readAssetMediaBlob(asset: Extract<Asset, { kind: "image" | "video
 function assetSummary(asset: Asset) {
     if (asset.kind === "text") return asset.data.content;
     return `${asset.data.width}x${asset.data.height} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
-}
-
-function assetSearchText(asset: Asset) {
-    return [asset.title, asset.source || "", asset.note || "", (asset.tags || []).join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
 }

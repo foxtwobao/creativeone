@@ -5,7 +5,7 @@ import "streamdown/styles.css";
 import "./styles/globals.css";
 import { RouterProvider } from "react-router-dom";
 
-import "@/i18n";
+import { appLocaleReady } from "@/i18n";
 import { initAnalytics } from "@/lib/analytics";
 import { initializeCloud, CloudError } from "@/services/api/cloud";
 import LoginPage from "@/pages/login";
@@ -17,9 +17,7 @@ document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","
 const root = createRoot(document.getElementById("root")!);
 async function start() {
     try {
-        await initializeCloud();
-        const { initializeCloudStorage } = await import("@/services/cloud-storage");
-        await initializeCloudStorage();
+        await Promise.all([initializeCloud(), appLocaleReady]);
         const [{ AppProviders }, { router }] = await Promise.all([import("@/components/layout/app-providers"), import("@/router")]);
         root.render(
             <React.StrictMode>

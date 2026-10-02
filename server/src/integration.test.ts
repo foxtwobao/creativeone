@@ -1,10 +1,12 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
+import { unzipSync } from "fflate";
+import { createFile } from "mp4box";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error("Provide TEST_DATABASE_URL pointing at an isolated *_test database");
@@ -12,11 +14,14 @@ const media = await mkdtemp(join(tmpdir(), "creativeone-api-test-"));
 const adminSubject = randomUUID();
 Object.assign(process.env, {
     DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
+    IDONE_DISCOVERY_URL: "", IDONE_ALLOW_HTTP: "false", MEDIA_DOWNLOAD_HOSTS: "",
     ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "http://enhancer.test", ENHANCER_APP_CREDENTIAL: "app-test-credential", TOKENONE_BASE_URL: "https://tokenone.test",
     SESSION_SECONDS: "604800", LOGIN_SECONDS: "600", MAX_MEDIA_BYTES: "104857600", MAX_JSON_BYTES: "20971520", MEDIA_DIR: media,
 });
 const { app } = await import("./index.js");
 const { db } = await import("./db.js");
+const { env } = await import("./config.js");
+const { processVideoTask, startVideoWorker } = await import("./video-tasks.js");
 let server: Server, base: string;
 const admin = randomUUID(), alice = randomUUID(), bob = randomUUID(), unverified = randomUUID();
 let imageChannel: string, textChannel: string;
@@ -26,8 +31,23 @@ const forwardedKeys: string[] = [];
 const forwardedRequests: Array<{ url: string; body: any }> = [];
 let denyGroup = false;
 let modelFailure: { status: number; code: string } | undefined;
+let videoChannel: string;
+let videoCreateResponse: any = { id: "task-video", status: "queued" };
+let videoQueryResponse: any = { status: "queued" };
+let videoDownloadFails = false;
+let videoDownloads = 0;
+const fixture = createFile();
+fixture.addTrack({ type: "avc1", width: 960, height: 960, timescale: 1000, media_duration: 4000, duration: 4000 });
+const videoBytes = new Uint8Array(fixture.getBuffer().buffer);
+let promptFetches = 0;
+let promptFails = false;
+let videoQueryHandler: (() => Promise<Response>) | undefined;
 globalThis.fetch = async (input, init) => {
     const url = String(input);
+    if (url === "https://raw.githubusercontent.com/test/prompts.json") {
+        promptFetches++;
+        return promptFails ? new Response("offline", { status: 503 }) : Response.json(Array.from({length: 25}, (_, i) => ({id: String(i), title: `test prompt ${i}`, prompt: `draw ${i}`, tags: ["test"]})));
+    }
     if (url.startsWith("http://enhancer.test")) {
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer app-test-credential");
         if (url.endsWith("/groups")) return Response.json({ app_id: "creativeone", groups: [{ id: "8", name: "应用默认组", status: "active", is_default: true }] });
@@ -40,10 +60,17 @@ globalThis.fetch = async (input, init) => {
         assert.equal(new Headers(init?.headers).get("Authorization"), null);
         return new Response(new Uint8Array([255, 216, 255, 217]), { headers: { "Content-Type": "image/jpeg" } });
     }
+    if (url === "https://tokenone.test/video-result.mp4") {
+        videoDownloads++;
+        assert.equal(new Headers(init?.headers).get("Authorization"), null);
+        return new Response(videoBytes, { status: videoDownloadFails ? 503 : 200, headers: { "Content-Type": "video/mp4" } });
+    }
     if (url.startsWith("https://tokenone.test")) {
         forwardedKeys.push(new Headers(init?.headers).get("Authorization") || "");
         forwardedRequests.push({ url, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
         if (modelFailure) return Response.json({ code: modelFailure.code, message: "private upstream details" }, { status: modelFailure.status });
+        if (url.endsWith("/v1/videos") || url.endsWith("/doubao/api/v3/contents/generations/tasks")) return Response.json(videoCreateResponse);
+        if (/\/(?:videos|contents\/generations\/tasks)\/task-[\w-]+$/.test(url)) return videoQueryHandler ? videoQueryHandler() : Response.json({ id: url.split("/").pop(), ...videoQueryResponse });
         if (forwardedRequests.at(-1)?.body?.model === "banana2-2k") return Response.json({ data: [{ url: "https://tokenone.test/banana-result.jpg" }] });
         if (forwardedRequests.at(-1)?.body?.model === "grok-imagine-image") return Response.json({ data: [{ url: "https://tokenone.test/banana-result.jpg", b64_json: "" }] });
         if (url.endsWith("/responses")) return new Response('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"你好"}\n\nevent: response.completed\ndata: {"type":"response.completed"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
@@ -51,8 +78,13 @@ globalThis.fetch = async (input, init) => {
     }
     return realFetch(input, init);
 };
-const headers = (id: string) => ({ Cookie: `creativeone=${id}`, Origin: "http://localhost:3001", "X-CSRF-Token": `csrf-${id}`, "Content-Type": "application/json" });
+const headers = (id: string) => ({ Cookie: `creativeone=${id}`, Origin: env.APP_ORIGIN, "X-CSRF-Token": `csrf-${id}`, "Content-Type": "application/json" });
 const call = (path: string, id = alice, method = "GET", body?: unknown) => realFetch(`${base}/api${path}`, { method, headers: headers(id), body: body === undefined ? undefined : JSON.stringify(body) });
+function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+}
 before(async () => {
     for (const id of [admin, alice, bob, unverified]) {
         await db.query("INSERT INTO users VALUES ($1,'https://idone.test',$2,$3,$4,$2,$2,'')", [id, id === admin ? adminSubject : id, `${id}@example.test`, id !== unverified]);
@@ -155,20 +187,20 @@ test("streamed text shares the application group and is saved for its owner", as
     const bobTasks = await (await call("/tasks", bob)).json() as any;
     assert.ok(!bobTasks.tasks.some((task: any) => task.result?.text === "你好"));
 });
-test("cloud records are isolated, optimistic versions reject stale edits and tombstones reject resurrection", async () => {
+test("plugin key-value records are owner scoped and server serializes writes without client versions", async () => {
     const path = "/storage/app_state/shared-key";
-    assert.equal((await call(path, alice, "PUT", { revision: 0, value: { title: "A" }, deleted: false })).status, 200);
-    const conflict = await call(path, alice, "PUT", { revision: 0, value: { title: "stale" }, deleted: false });
-    assert.equal(conflict.status, 409);
-    assert.equal((await call(path, bob, "PUT", { revision: 0, value: { title: "B" }, deleted: false })).status, 200);
+    assert.equal((await call(path, alice, "PUT", { value: { title: "A" }, deleted: false })).status, 200);
+    const conflict = await call(path, alice, "PUT", { value: { title: "stale" }, deleted: false });
+    assert.equal(conflict.status, 200);
+    assert.equal((await call(path, bob, "PUT", { value: { title: "B" }, deleted: false })).status, 200);
     const own = await (await call("/storage/app_state")).json() as any;
-    assert.equal(own.entries.find((entry: any) => entry.key === "shared-key").value.title, "A");
-    assert.equal((await call(path, alice, "PUT", { revision: 1, value: null, deleted: true })).status, 200);
-    assert.equal((await call(path, alice, "PUT", { revision: 1, value: { title: "resurrect" }, deleted: false })).status, 409);
+    assert.equal(own.entries.find((entry: any) => entry.key === "shared-key").value.title, "stale");
+    assert.equal((await call(path, alice, "PUT", { value: null, deleted: true })).status, 200);
+    assert.equal((await call(path, alice, "PUT", { value: { title: "resurrect" }, deleted: false })).status, 200);
 });
 test("documents cannot claim other users' media or browser-only object URLs", async () => {
-    assert.equal((await call("/storage/app_state/foreign-file", bob, "PUT", { revision: 0, value: { url: savedUrl }, deleted: false })).status, 409);
-    assert.equal((await call("/storage/app_state/blob", alice, "PUT", { revision: 0, value: JSON.stringify({ url: "blob:local-only" }), deleted: false })).status, 400);
+    assert.equal((await call("/storage/app_state/foreign-file", bob, "PUT", { value: { url: savedUrl }, deleted: false })).status, 409);
+    assert.equal((await call("/storage/app_state/blob", alice, "PUT", { value: JSON.stringify({ url: "blob:local-only" }), deleted: false })).status, 400);
 });
 test("encoded media references survive deletion requests and immutable file keys cannot be overwritten", async () => {
     const key = `image:${randomUUID()}`, path = `/files/image_files/${encodeURIComponent(key)}`;
@@ -177,11 +209,11 @@ test("encoded media references survive deletion requests and immutable file keys
     assert.equal((await upload("replacement")).status, 409);
     assert.ok(((await (await call("/files/image_files", alice)).json()) as any).keys.includes(key));
     assert.ok(!((await (await call("/files/image_files", bob)).json()) as any).keys.includes(key));
-    assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { revision: 0, value: { url: `/api${path}` }, deleted: false })).status, 200);
+    assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { value: { url: `/api${path}` }, deleted: false })).status, 200);
     assert.equal((await call(path, alice, "DELETE")).status, 200);
     assert.ok(!((await (await call("/files/image_files", alice)).json()) as any).keys.includes(key));
     assert.equal((await call(path)).status, 200);
-    assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { revision: 1, value: null, deleted: true })).status, 200);
+    assert.equal((await call("/storage/app_state/encoded-media", alice, "PUT", { value: null, deleted: true })).status, 200);
     await call(path, alice, "DELETE");
     assert.equal((await call(path)).status, 404);
 });
@@ -243,6 +275,445 @@ test("Grok edits preserve JSON references and model-specific parameters", async 
     assert.equal(file.status, 200);
     assert.match(file.headers.get("Content-Type") || "", /^image\/jpeg/);
     assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array([255, 216, 255, 217]));
+});
+
+test("video model configuration exposes types and rejects mismatched protocols before upstream calls", async () => {
+    const config = { models: ["seedance-test", "wan3.0-video-720p", "wan3.0-image-prime-480p"], default_model: "seedance-test", enabled: true,
+        video_types: { "seedance-test": "seedance", "wan3.0-video-720p": "wan", "wan3.0-image-prime-480p": "wan" } };
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: {} })).status, 400);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: { ...config.video_types, extra: "wan" } })).status, 400);
+    const response = await call("/admin/channels/video", admin, "PUT", config);
+    assert.equal(response.status, 200);
+    videoChannel = (await response.json() as any).channel.id;
+    const { channels } = await (await call("/channels")).json() as any;
+    assert.deepEqual(channels.find((item: any) => item.id === videoChannel).video_types, config.video_types);
+    const before = forwardedRequests.length;
+    assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "seedance-test" })).status, 403);
+    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "wan3.0-video-720p" })).status, 403);
+    const wan = { model: "wan3.0-image-prime-480p", prompt: "图1", seconds: "5", aspect_ratio: "1:1", reference_images: [{ url: "https://example.test/image.jpg" }] };
+    for (const body of [
+        { ...wan, reference_videos: [{ url: "https://example.test/video.mp4" }] },
+        { ...wan, input: { media: [{ type: "video", url: "https://example.test/video.mp4" }] } },
+        { ...wan, reference_images: [{ url: "data:image/png;base64,YQ==" }] },
+        { ...wan, reference_images: Array(11).fill(wan.reference_images[0]) },
+    ]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body)).status, 400);
+    assert.equal(forwardedRequests.length, before);
+});
+
+test("media signing enforces ownership, expiry, signatures and supports unauthenticated HEAD/Range", async () => {
+    const previousOrigin = env.APP_ORIGIN;
+    const realNow = Date.now;
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const key = `video:${randomUUID()}`;
+        const path = `/files/media_files/${key}`;
+        assert.equal((await realFetch(`${base}/api${path}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "video/mp4" }, body: "abcdefgh" })).status, 200);
+        assert.equal((await call("/files/sign", bob, "POST", { namespace: "media_files", key })).status, 404);
+        assert.equal((await realFetch(`${base}/api/files/sign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ namespace: "media_files", key }) })).status, 401);
+        const signed = await call("/files/sign", alice, "POST", { namespace: "media_files", key });
+        assert.equal(signed.status, 200);
+        const url = new URL((await signed.json() as any).url);
+        assert.equal(url.origin, env.APP_ORIGIN);
+        const ttl = Number(url.searchParams.get("expires")) - realNow();
+        assert.ok(ttl > 29 * 60_000 && ttl <= 30 * 60_000);
+        const local = `${base}${url.pathname}${url.search}`;
+        assert.equal((await realFetch(local, { method: "HEAD" })).status, 200);
+        const range = await realFetch(local, { headers: { Range: "bytes=2-4" } });
+        assert.equal(range.status, 206);
+        assert.equal(await range.text(), "cde");
+        const forged = new URL(local);
+        forged.searchParams.set("expires", String(Number(url.searchParams.get("expires")) + 1));
+        assert.equal((await realFetch(forged)).status, 403);
+        Date.now = () => realNow() + 31 * 60_000;
+        assert.equal((await realFetch(local)).status, 403);
+        Date.now = realNow;
+        assert.equal((await call(path, alice, "DELETE")).status, 200);
+        assert.equal((await realFetch(local)).status, 404);
+    } finally { env.APP_ORIGIN = previousOrigin; Date.now = realNow; }
+});
+
+test("WAN and Seedance task IDs remain isolated by protocol and user, with locally persisted results", async () => {
+    videoCreateResponse = { id: "task-shared", status: "queued" };
+    const body = { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "16:9" };
+    const wan = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body);
+    assert.equal(wan.status, 200);
+    assert.equal(forwardedRequests.at(-1)?.url, "https://tokenone.test/v1/videos");
+    assert.equal(forwardedKeys.at(-1), `Bearer sk-${alice}-8`);
+    const seedance = await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "seedance-test", content: [{ type: "text", text: "猫" }] });
+    assert.equal(seedance.status, 200);
+    assert.equal(forwardedRequests.at(-1)?.url, "https://tokenone.test/doubao/api/v3/contents/generations/tasks");
+    const wanPath = `/ai/${videoChannel}/v1/videos/task-shared`;
+    assert.equal((await call(wanPath, bob)).status, 404);
+    videoQueryResponse = { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
+    await processVideoTask(wan.headers.get("X-Generation-Task-Id")!);
+    const completed = await (await call(wanPath)).json() as any;
+    assert.match(completed.metadata.url, /^\/api\/files\/media_files\//);
+    assert.equal(completed.file.url, completed.metadata.url);
+    assert.equal(completed.file.bytes, videoBytes.byteLength);
+    assert.equal(completed.file.width, 960);
+    assert.equal(completed.file.height, 960);
+    assert.equal(completed.file.durationMs, 4000);
+    assert.equal((await realFetch(`${base}${completed.metadata.url}`, { headers: headers(bob) })).status, 404);
+    const count = forwardedRequests.length;
+    assert.deepEqual(await (await call(wanPath)).json(), completed);
+    assert.equal(forwardedRequests.length, count);
+    videoQueryResponse = { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } };
+    await processVideoTask(seedance.headers.get("X-Generation-Task-Id")!);
+    const ark = await (await call(`/ai/${videoChannel}/v1/contents/generations/tasks/task-shared`)).json() as any;
+    assert.match(ark.content.video_url, /^\/api\/files\/media_files\//);
+    const { tasks } = await (await call("/tasks")).json() as any;
+    assert.ok(tasks.some((task: any) => task.path === "videos" && task.upstream_id === "task-shared" && task.status === "succeeded"));
+});
+
+test("instant completion and temporary query/download failures retain the same WAN task without resubmission", async () => {
+    videoCreateResponse = { id: "task-instant", status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
+    videoQueryResponse = { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
+    const downloads = videoDownloads;
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+    assert.equal(created.status, 200);
+    assert.deepEqual(await created.json(), { id: "task-instant", status: "queued" });
+    assert.equal(videoDownloads, downloads);
+    const taskId = created.headers.get("X-Generation-Task-Id");
+    const task = () => db.query("SELECT status,upstream_id,error FROM generation_tasks WHERE id=$1", [taskId]).then((result) => result.rows[0]);
+    const path = `/ai/${videoChannel}/v1/videos/task-instant`;
+    const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
+    try {
+        modelFailure = { status: 503, code: "UNAVAILABLE" };
+        await processVideoTask(taskId!);
+        assert.equal((await (await call(path)).json() as any).status, "paused");
+        assert.equal((await task()).status, "unknown");
+        modelFailure = undefined;
+        videoDownloadFails = true;
+        assert.equal((await call(`${path}/resume`, bob, "POST", {})).status, 404);
+        await call(`${path}/resume`, alice, "POST", {});
+        await processVideoTask(taskId!);
+        assert.equal((await (await call(path)).json() as any).status, "paused");
+        assert.equal((await task()).upstream_id, "task-instant");
+        videoDownloadFails = false;
+        await call(`${path}/resume`, alice, "POST", {});
+        await processVideoTask(taskId!);
+        assert.equal((await call(path)).status, 200);
+        assert.deepEqual(await task(), { status: "succeeded", upstream_id: "task-instant", error: null });
+        assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
+    } finally { modelFailure = undefined; videoDownloadFails = false; }
+});
+
+test("browser reads never trigger upstream queries and concurrent worker calls save one file", async () => {
+    for (const wan of [true, false]) {
+        const endpoint = wan ? "videos" : "contents/generations/tasks";
+        videoCreateResponse = { id: `task-concurrent-${wan}`, status: "queued" };
+        const created = await call(`/ai/${videoChannel}/v1/${endpoint}`, alice, "POST", wan
+            ? { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" }
+            : { model: "seedance-test", content: [{ type: "text", text: "猫" }] });
+        const id = created.headers.get("X-Generation-Task-Id")!;
+        const arrived = deferred(), gate = deferred();
+        let queries = 0;
+        const downloads = videoDownloads;
+        const files = Number((await db.query("SELECT count(*) FROM files")).rows[0].count);
+        videoQueryHandler = async () => {
+            queries++; arrived.resolve(); await gate.promise;
+            return Response.json(wan ? { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } } : { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } });
+        };
+        try {
+            const path = `/ai/${videoChannel}/v1/${endpoint}/${videoCreateResponse.id}`;
+            await Promise.all([call(path), call(path)]);
+            assert.equal(queries, 0);
+            const worker = processVideoTask(id);
+            await arrived.promise;
+            assert.equal(processVideoTask(id), worker);
+            const waiting = await Promise.all([call(path), call(path)]);
+            assert.ok((await Promise.all(waiting.map((response) => response.json()))).every((result: any) => result.status === "queued"));
+            assert.equal(queries, 1);
+            gate.resolve(); await worker;
+            const responses = await Promise.all([call(path), call(path)]);
+            const [first, second] = await Promise.all(responses.map((response) => response.json()));
+            assert.deepEqual(first, second);
+            assert.equal(queries, 1);
+            assert.equal(videoDownloads - downloads, 1);
+            assert.equal(Number((await db.query("SELECT count(*) FROM files")).rows[0].count) - files, 1);
+        } finally { videoQueryHandler = undefined; gate.resolve(); }
+    }
+});
+
+test("late worker responses and errors cannot overwrite an already completed task", async () => {
+    for (const late of ["pending", "http-error", "transport-error"]) {
+        videoCreateResponse = { id: `task-late-${late}`, status: "queued" };
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+        const id = created.headers.get("X-Generation-Task-Id")!;
+        const arrived = deferred(), release = deferred();
+        videoQueryHandler = async () => {
+            arrived.resolve(); await release.promise;
+            if (late === "transport-error") throw new Error("connection lost");
+            return late === "pending" ? Response.json({ status: "queued" }) : Response.json({ error: "unavailable" }, { status: 503 });
+        };
+        try {
+            const work = processVideoTask(id); await arrived.promise;
+            const completed = { id: videoCreateResponse.id, status: "completed", file: { url: "/api/files/media_files/file:completed" } };
+            await db.query("UPDATE generation_tasks SET status='succeeded',result=$2,error=NULL WHERE id=$1", [id, JSON.stringify(completed)]);
+            release.resolve(); await work;
+            const task = (await db.query("SELECT status,error,result FROM generation_tasks WHERE id=$1", [id])).rows[0];
+            assert.equal(task.status, "succeeded"); assert.equal(task.error, null); assert.deepEqual(task.result, completed);
+        } finally { videoQueryHandler = undefined; release.resolve(); }
+    }
+});
+
+test("the 5-second worker resumes pending tasks on startup without a browser and skips paused tasks", async (t) => {
+    const originalInterval = globalThis.setInterval;
+    t.mock.method(globalThis, "setInterval", (callback: () => void, ms: number) => { assert.equal(ms, 5000); return originalInterval(callback, ms); });
+    videoCreateResponse = { id: "task-background", status: "queued" };
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+    const id = created.headers.get("X-Generation-Task-Id")!;
+    const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
+    let stop = async () => {};
+    try {
+        let arrived = deferred();
+        videoQueryHandler = async () => { arrived.resolve(); return Response.json({ status: "queued" }); };
+        stop = startVideoWorker(); await arrived.promise; await processVideoTask(id); await stop();
+        assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "pending");
+        arrived = deferred();
+        videoQueryHandler = async () => { arrived.resolve(); return Response.json({ status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } }); };
+        stop = startVideoWorker(); await arrived.promise; await processVideoTask(id); await stop();
+        const task = (await db.query("SELECT status,result FROM generation_tasks WHERE id=$1", [id])).rows[0];
+        assert.equal(task.status, "succeeded"); assert.equal(task.result.file.width, 960);
+        assert.ok((await db.query("SELECT 1 FROM files WHERE user_id=$1 AND key=$2", [alice, task.result.file.storageKey])).rowCount);
+        assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
+        await db.query("UPDATE generation_tasks SET status='unknown' WHERE id=$1", [id]);
+        const queries = forwardedRequests.length;
+        await processVideoTask(id);
+        assert.equal(forwardedRequests.length, queries);
+    } finally { await stop(); videoQueryHandler = undefined; }
+});
+
+test("model descriptions are admin-managed, preserved verbatim and never change upstream model IDs", async () => {
+    const model = "wan3.0-video-720p";
+    const description = "团队常用型号\n请先确认参考素材";
+    const body = { models: [model], video_types: { [model]: "wan" }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
+    assert.equal((await call("/admin/channels/video", alice, "PUT", body)).status, 403);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...body, model_descriptions: { unconfigured: description } })).status, 400);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", body)).status, 200);
+    const configured = (await (await call("/admin/channels", admin)).json() as any).channels.find((item: any) => item.capability === "video");
+    assert.deepEqual(configured.model_descriptions, { [model]: description });
+    const visible = (await (await call("/channels", alice)).json() as any).channels.find((item: any) => item.capability === "video");
+    assert.equal(visible.model_display, undefined);
+    assert.deepEqual(visible.model_descriptions, { [model]: description });
+    assert.deepEqual(visible.models, [model]);
+    videoCreateResponse = { id: "display-task", status: "queued" };
+    assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model, prompt: "猫", seconds: "5", aspect_ratio: "adaptive" })).status, 200);
+    assert.equal((forwardedRequests.at(-1)?.body as any).model, model);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...body, model_descriptions: {} })).status, 200);
+    const cleared = (await (await call("/channels", alice)).json() as any).channels.find((item: any) => item.capability === "video");
+    assert.deepEqual(cleared.model_descriptions, {});
+});
+
+test("removing a finished work is owner-scoped and never cancels a live task", async () => {
+    const finished = randomUUID(), pending = randomUUID();
+    const provider = (await import("./tokenone.js")).modelProvider;
+    for (const [id, status] of [[finished, "succeeded"], [pending, "pending"]]) {
+        await db.query("INSERT INTO generation_tasks(id,user_id,channel_id,group_id,model,capability,path,status,provider,result) VALUES($1,$2,$3,'1','fixture','video','videos',$4,$5,$6)", [id, alice, videoChannel, status, provider, JSON.stringify({ metadata: { url: "/saved-video" } })]);
+    }
+    assert.equal((await call(`/tasks/${finished}`, bob, "DELETE")).status, 409);
+    assert.equal((await call(`/tasks/${pending}`, alice, "DELETE")).status, 409);
+    assert.equal((await call(`/tasks/${finished}`, alice, "DELETE")).status, 200);
+    assert.equal((await call(`/tasks/${finished}`, alice, "DELETE")).status, 200);
+    const tasks = (await (await call("/tasks", alice)).json()).tasks;
+    assert.ok(!tasks.some((task: any) => task.id === finished));
+    assert.ok(tasks.some((task: any) => task.id === pending));
+    const saved = (await db.query("SELECT status,result,hidden_from_works FROM generation_tasks WHERE id=$1", [finished])).rows[0];
+    assert.equal(saved.status, "succeeded");
+    assert.equal(saved.result.metadata.url, "/saved-video");
+    assert.equal(saved.hidden_from_works, true);
+});
+
+test("image previews are small, cached, owner-scoped and cleaned up with the original", async () => {
+    const sharp = (await import("sharp")).default;
+    const { stat } = await import("node:fs/promises");
+    const bytes = await sharp(randomBytes(2048 * 1024 * 3), { raw: { width: 2048, height: 1024, channels: 3 } }).png().toBuffer();
+    const path = "/files/image_files/image:preview-test";
+    const uploaded = await realFetch(`${base}/api${path}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "image/png" }, body: bytes });
+    assert.equal(uploaded.status, 200);
+    const preview = await call(`${path}?preview=1`, alice);
+    assert.equal(preview.status, 200);
+    assert.match(preview.headers.get("content-type")!, /image\/webp/);
+    assert.equal(preview.headers.get("cache-control"), "private, no-cache");
+    const thumbnail = Buffer.from(await preview.arrayBuffer());
+    const info = await sharp(thumbnail).metadata();
+    assert.equal(info.width, 768); assert.equal(info.height, 384);
+    assert.ok(thumbnail.length < bytes.length);
+    const cached = await realFetch(`${base}/api${path}?preview=1`, { headers: { ...headers(alice), "If-None-Match": preview.headers.get("etag")!, "Cache-Control": "max-age=0" } });
+    assert.equal(cached.status, 304);
+    assert.equal((await call(`${path}?preview=1`, bob)).status, 404);
+    assert.equal((await realFetch(`${base}/api${path}?preview=1`)).status, 401);
+    assert.deepEqual(Buffer.from(await (await call(path, alice)).arrayBuffer()), bytes);
+    const disk = (await db.query("SELECT disk_id FROM files WHERE user_id=$1 AND key='image:preview-test'", [alice])).rows[0].disk_id;
+    assert.equal((await call(path, alice, "DELETE")).status, 200);
+    await assert.rejects(stat(join(media, `${disk}.preview.webp`)), { code: "ENOENT" });
+});
+
+test("status polling returns only owned visible task IDs and statuses", async () => {
+    const id = randomUUID();
+    const provider = (await import("./tokenone.js")).modelProvider;
+    await db.query("INSERT INTO generation_tasks(id,user_id,channel_id,group_id,model,capability,path,status,provider,result) VALUES($1,$2,$3,'1','fixture','video','videos','pending',$4,$5)", [id, alice, videoChannel, provider, JSON.stringify({ large: "x".repeat(20000) })]);
+    const upstreamCount = forwardedRequests.length;
+    const response = await call("/tasks/status", alice, "POST", { ids: [id] });
+    const body = await response.text();
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(body), { tasks: [{ id, status: "pending" }] });
+    assert.ok(Buffer.byteLength(body) < 100);
+    assert.deepEqual(await (await call("/tasks/status", bob, "POST", { ids: [id] })).json(), { tasks: [] });
+    await db.query("UPDATE generation_tasks SET status='succeeded' WHERE id=$1", [id]);
+    assert.deepEqual(await (await call("/tasks/status", alice, "POST", { ids: [id] })).json(), { tasks: [{ id, status: "succeeded" }] });
+    await db.query("UPDATE generation_tasks SET hidden_from_works=true WHERE id=$1", [id]);
+    assert.deepEqual(await (await call("/tasks/status", alice, "POST", { ids: [id] })).json(), { tasks: [] });
+    assert.equal(forwardedRequests.length, upstreamCount);
+});
+
+test("asset operations are owner-scoped and concurrent changes preserve other assets and fields", async () => {
+    const input = { kind: "text", title: "one", coverUrl: "", tags: [], data: { content: "original" } };
+    const created = await Promise.all([call("/assets", alice, "POST", input), call("/assets", alice, "POST", { ...input, title: "two" })]);
+    assert.ok(created.every((response) => response.status === 201));
+    const [one, two] = await Promise.all(created.map(async (response) => (await response.json()).asset));
+    assert.notEqual(one.id, two.id); assert.ok(one.createdAt);
+    const updates = await Promise.all([call(`/assets/${one.id}`, alice, "PATCH", { title: "updated" }), call(`/assets/${one.id}`, alice, "PATCH", { note: "parallel" })]);
+    assert.ok(updates.every((response) => response.status === 200));
+    const list = (await (await call("/assets", alice)).json()).assets;
+    assert.equal(list.find((asset: any) => asset.id === one.id).title, "updated");
+    assert.equal(list.find((asset: any) => asset.id === one.id).note, "parallel");
+    assert.ok(list.some((asset: any) => asset.id === two.id));
+    assert.deepEqual((await (await call("/assets", bob)).json()).assets, []);
+    assert.equal((await call(`/assets/${one.id}`, bob, "PATCH", { title: "stolen" })).status, 404);
+    assert.equal((await call(`/assets/${one.id}`, bob, "DELETE")).status, 404);
+    assert.equal((await call(`/assets/${one.id}`, alice, "PATCH", { id: two.id })).status, 400);
+    assert.equal((await call("/assets", alice, "POST", { ...input, coverUrl: "blob:local" })).status, 400);
+    assert.equal((await call("/storage/app_state/infinite-canvas:asset_store", alice, "PUT", { value: "{}", deleted: false })).status, 410);
+    assert.ok(!(await (await call("/storage/app_state", alice)).json()).entries.some((entry: any) => entry.key === "infinite-canvas:asset_store"));
+    assert.equal((await call(`/assets/${one.id}`, alice, "DELETE")).status, 204);
+    const remaining = (await (await call("/assets", alice)).json()).assets;
+    assert.ok(!remaining.some((asset: any) => asset.id === one.id));
+    assert.ok(remaining.some((asset: any) => asset.id === two.id));
+});
+
+test("project and settings mutations preserve concurrent server fields without client revisions", async () => {
+    const responses = await Promise.all([call("/projects", alice, "POST", { title: "first" }), call("/projects", alice, "POST", { title: "second" })]);
+    assert.ok(responses.every((r) => r.status === 201));
+    const projects = await Promise.all(responses.map(async (r) => (await r.json()).project));
+    await Promise.all([call(`/projects/${projects[0].id}`, alice, "PATCH", { title: "renamed" }), call(`/projects/${projects[0].id}`, alice, "PATCH", { viewport: {x: 5, y: 7, k: 2} })]);
+    const list = (await (await call("/projects")).json()).projects;
+    assert.equal(list.find((p: any) => p.id === projects[0].id).title, "renamed");
+    assert.equal(list.find((p: any) => p.id === projects[0].id).viewport.k, 2);
+    assert.ok(list.some((p: any) => p.id === projects[1].id));
+    assert.equal((await call(`/projects/${projects[0].id}`, bob, "PATCH", {title: "stolen"})).status, 404);
+    await Promise.all([call("/settings", alice, "PATCH", { quality: "high" }), call("/settings", alice, "PATCH", {size: "1:1"})]);
+    assert.deepEqual(await (await call("/settings")).json(), {quality: "high", size: "1:1"});
+    assert.equal((await call("/settings", alice, "PATCH", {apiKey: "secret"})).status, 400);
+    await db.query("UPDATE documents SET value=$2 WHERE user_id=$1 AND namespace='preferences' AND key='infinite-canvas:ai_config_store'", [alice, JSON.stringify(JSON.stringify({state:{config:{quality:"high",size:"1:1",apiKey:"must-not-leak",channels:[{apiKey:"must-not-leak"}]}},version:0}))]);
+    assert.deepEqual(await (await call("/settings")).json(), {quality:"high",size:"1:1"});
+    for (const [ns, key] of [["app_state", "canvas_store"], ["app_state", "plugin_store"], ["app_state", "prompt_source_store_v2"], ["preferences", "ai_config_store"]]) {
+        assert.equal((await call(`/storage/${ns}/infinite-canvas:${key}`, alice, "PUT", {value: "{}", deleted: false})).status, 410);
+    }
+    assert.equal((await call(`/projects/${projects[0].id}`, alice, "DELETE")).status, 204);
+    assert.ok((await (await call("/projects")).json()).projects.some((p: any) => p.id === projects[1].id));
+});
+test("file references are read on the server and original generation settings survive page changes", async () => {
+    const key = `image:${randomUUID()}`, url = `/api/files/image_files/${key}`;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6swAAAABJRU5ErkJggg==", "base64");
+    assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: {...headers(alice), "Content-Type": "image/png"}, body: png })).status, 200);
+    assert.equal((await call("/files/info", bob, "POST", {url})).status, 404);
+    const filesBefore = (await db.query("SELECT count(*) FROM files WHERE user_id=$1", [alice])).rows[0].count;
+    const response = await call(`/ai/${imageChannel}/v1/images/edits`, alice, "POST", {model: "gpt-image-2", prompt: "reuse on server with reference instruction", user_prompt: "reuse on server", n: 1, quality: "high", image_references: [url]});
+    assert.equal(response.status, 200);
+    const forwarded = forwardedRequests.at(-1)!.body as FormData;
+    assert.ok(forwarded instanceof FormData); assert.equal((forwarded.get("image") as Blob).size, png.length);
+    assert.equal(forwarded.get("user_prompt"), null);
+    assert.equal(forwarded.get("prompt"), "reuse on server with reference instruction");
+    assert.equal((await db.query("SELECT count(*) FROM files WHERE user_id=$1", [alice])).rows[0].count, String(Number(filesBefore)+1));
+    const history = await (await call("/history/image?keyword=reuse%20on%20server")).json();
+    assert.equal(history.total, 1); assert.equal(history.logs[0].config.quality, "high"); assert.equal(history.logs[0].references[0].dataUrl, url);
+    assert.equal(history.logs[0].prompt, "reuse on server");
+    const taskRequest = (await db.query("SELECT request FROM generation_tasks WHERE id=$1", [history.logs[0].id])).rows[0].request;
+    assert.equal(taskRequest.prompt, "reuse on server with reference instruction");
+    assert.equal(taskRequest.user_prompt, "reuse on server");
+    assert.ok(history.logs[0].images[0].storageKey);
+    assert.equal((await call(`/ai/${imageChannel}/v1/images/edits`, bob, "POST", {model: "gpt-image-2", prompt: "foreign", image_references: [url]})).status, 404);
+    await call(`/history/${history.logs[0].id}`, alice, "DELETE");
+    assert.equal((await (await call("/history/image?keyword=reuse%20on%20server")).json()).total, 0);
+    assert.equal((await call("/storage/image_generation_logs/old", alice, "PUT", {value: {}, deleted: false})).status, 410);
+});
+test("original prompt metadata stays local for JSON generation and appears in task search", async () => {
+    const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", {model: "gpt-image-2", prompt: "system instruction\n\ndraw an otter", user_prompt: "draw an otter", n: 1, size: "1024x1024"});
+    assert.equal(response.status, 200);
+    assert.equal(forwardedRequests.at(-1)!.body.prompt, "system instruction\n\ndraw an otter");
+    assert.equal(forwardedRequests.at(-1)!.body.user_prompt, undefined);
+    const works = await (await call("/works?view=tasks&keyword=draw%20an%20otter")).json();
+    assert.equal(works.total, 1);
+    assert.equal(works.works[0].task.request.user_prompt, "draw an otter");
+    assert.equal((await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", {model: "gpt-image-2", prompt: "x", user_prompt: {apiKey: "invalid"}})).status, 400);
+});
+test("server cleanup preserves another project reference and export streams one owned ZIP", async () => {
+    const key = `image:${randomUUID()}`, url = `/api/files/image_files/${key}`;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6swAAAABJRU5ErkJggg==", "base64");
+    await realFetch(`${base}${url}`, {method: "PUT", headers: {...headers(alice), "Content-Type": "image/png"}, body: png});
+    const info = await (await call("/files/info", alice, "POST", {url})).json();
+    const asset = (await (await call("/assets", alice, "POST", {kind: "image", title: "zip image", coverUrl: url, tags: [], data: {...info, dataUrl: url, url: undefined}})).json()).asset;
+    assert.ok(asset?.id);
+    const project = (await (await call("/projects", alice, "POST", {title: "keep image", nodes: [{image: url}]})).json()).project;
+    const response = await call("/assets/export"); assert.equal(response.status, 200);
+    const archive = unzipSync(new Uint8Array(await response.arrayBuffer()));
+    const manifest = JSON.parse(new TextDecoder().decode(archive["assets.json"]));
+    const file = manifest.files.find((f: any) => f.storageKey === key);
+    assert.deepEqual(Buffer.from(archive[file.path]), png);
+    assert.ok(!JSON.stringify(manifest).includes("diskId"));
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(unzipSync(new Uint8Array(await (await call("/assets/export", bob)).arrayBuffer()))["assets.json"])).assets, []);
+    await call(`/assets/${asset.id}`, alice, "DELETE");
+    const coverAsset = (await (await call("/assets", alice, "POST", {kind: "text", title: "cover only", coverUrl: url, tags: [], data: {content: "text"}})).json()).asset;
+    const coverZip = unzipSync(new Uint8Array(await (await call("/assets/export")).arrayBuffer()));
+    const coverManifest = JSON.parse(new TextDecoder().decode(coverZip["assets.json"]));
+    assert.ok(coverManifest.files.some((f: any) => f.storageKey === key));
+    await call(`/assets/${coverAsset.id}`, alice, "DELETE");
+    await call("/files/cleanup", alice, "POST", {}); assert.equal((await realFetch(`${base}${url}`, {headers: headers(alice)})).status, 200);
+    await call(`/projects/${project.id}`, alice, "DELETE");
+    assert.equal((await realFetch(`${base}${url}`, {headers: headers(alice)})).status, 404);
+});
+test("prompt caching, refresh and pagination run on the server and retain cache after failure", async () => {
+    const state = await (await call("/prompt-sources")).json();
+    for (const source of state.sources) await call(`/prompt-sources/${source.id}`, alice, "PATCH", {enabled: false});
+    const saved = await (await call("/prompt-sources", alice, "POST", {name: "test source", url: "https://raw.githubusercontent.com/test/prompts.json", homepage: "", enabled: true})).json();
+    const source = saved.sources.find((s: any) => s.name === "test source"); assert.ok(source.id);
+    const first = await (await call(`/prompts?sourceId=${source.id}&pageSize=10`)).json();
+    assert.equal(first.total, 25); assert.equal(first.items.length, 10); assert.equal(promptFetches, 1);
+    const second = await (await call(`/prompts?sourceId=${source.id}&pageSize=10&page=2`)).json();
+    assert.notEqual(first.items[0].id, second.items[0].id); assert.equal(promptFetches, 1);
+    assert.equal((await (await call(`/prompts?sourceId=${source.id}&keyword=draw%2024`)).json()).total, 1);
+    promptFails = true;
+    const result = await (await call("/prompt-sources/refresh", alice, "POST", {sourceId: source.id})).json();
+    assert.equal(result.failureCount, 1);
+    assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 25);
+    promptFails = false;
+    const { refreshDuePromptSources } = await import("./prompts.js");
+    await db.query("UPDATE prompt_caches SET last_attempt_at=now()-interval '1 hour' WHERE user_id=$1 AND source_id=$2", [alice, source.id]);
+    const before = promptFetches;
+    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
+    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
+    assert.deepEqual(await (await call("/prompt-source-statuses", bob)).json(), {});
+    await call("/prompt-schedule", alice, "PATCH", {intervalMinutes: 0});
+    assert.equal((await (await call("/prompt-sources")).json()).schedule.intervalMinutes, 0);
+    await db.query("UPDATE prompt_caches SET last_attempt_at=now()-interval '1 hour' WHERE user_id=$1 AND source_id=$2", [alice, source.id]);
+    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
+    await call(`/prompt-sources/${source.id}`, alice, "DELETE");
+    assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 0);
+});
+test("plugin records and works filtering use server mutations and pagination", async () => {
+    const record = {id: "test-plugin", name: "test", version: "1", url: "https://example.test/plugin.js", source: "export default {}", enabled: true};
+    assert.equal((await call("/plugins", alice, "POST", record)).status, 200);
+    await call(`/plugins/${record.id}`, alice, "PATCH", {enabled: false});
+    assert.equal((await (await call("/plugins")).json()).plugins.find((p: any) => p.id === record.id).enabled, false);
+    assert.deepEqual((await (await call("/plugins", bob)).json()).plugins, []);
+    await call(`/plugins/${record.id}`, alice, "DELETE");
+    assert.deepEqual((await (await call("/plugins")).json()).plugins, []);
+    const response = await (await call("/works?view=tasks&status=failed&pageSize=1")).json();
+    assert.ok(response.works.length <= 1); assert.ok(response.works.every((w: any) => w.task.status === "failed"));
+    assert.ok(response.total > 1);
+    const next = await (await call("/works?view=tasks&status=failed&pageSize=1&page=2")).json();
+    assert.notEqual(response.works[0].id, next.works[0].id);
 });
 
 test("account switching and logout invalidate stale clients", async () => {

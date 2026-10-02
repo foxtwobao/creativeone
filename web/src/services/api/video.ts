@@ -2,23 +2,25 @@ import axios from "axios";
 
 import i18n from "@/i18n";
 import { cloudErrorMessage } from "./error-message";
-import { readFileAsDataUrl } from "@/lib/image-utils";
-import { clampVideoSeconds, inferVideoRatio } from "@/lib/media-size";
-import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { imageToDataUrl } from "@/services/image-storage";
-import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { cloudApi, cloudFileUrl } from "./cloud";
+import { videoSettingsForModel } from "@/lib/video-settings";
+import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
+import { imageToDataUrl, uploadImage } from "@/services/image-storage";
+import { buildApiUrl, modelOptionName, modelVideoTypeOf, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { wanModelProfile } from "../../../../shared/video-models";
+import { VIDEO_POLL_INTERVAL_MS } from "../../../../shared/video-tasks";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; content?: { video_url?: string } | null };
+type VideoResponse = { id: string; task_id?: string; status?: string; error?: string | { message?: string }; file?: UploadedFile };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[] };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
-export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "ark"; model: string };
+export type VideoGenerationResult = UploadedFile;
+export type VideoGenerationTask = { id: string; provider: "seedance" | "wan"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -37,15 +39,26 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    const wan = task.provider === "wan";
+    const timeout = new AbortController();
+    const timer = wan ? setTimeout(() => timeout.abort(), 15 * 60_000) : undefined;
+    const signal = options?.signal ? AbortSignal.any([options.signal, timeout.signal]) : timeout.signal;
+    try {
+        for (let attempt = 0; ; attempt += 1) {
+            signal.throwIfAborted();
+            const state = await pollVideoGenerationTask(config, task, { signal });
+            if (state.status === "completed") return state.result;
+            if (state.status === "failed") throw videoTaskFailed(state.error);
+            if (!wan && attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
+            await delay(VIDEO_POLL_INTERVAL_MS, signal);
+        }
+    } catch (error) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const state = await pollVideoGenerationTask(config, task, options);
-        if (state.status === "completed") return state.result;
-        if (state.status === "failed") throw videoTaskFailed(state.error);
-        if (attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
-        await delay(2500, options?.signal);
+        if (timeout.signal.aborted) throw new Error("前台已等待 15 分钟，后台任务不受影响，可稍后继续查询");
+        throw error;
+    } finally {
+        if (timer) clearTimeout(timer);
     }
-    throw new Error(apiText("videoTimeout", { provider: "" }));
 }
 
 export function isVideoTaskFailed(error: unknown) {
@@ -62,13 +75,15 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
+    const settings = videoSettingsForModel(config, selectedModel, references.length);
+    if (settings.error) throw new Error(settings.error);
+    if (modelVideoTypeOf(config, selectedModel) === "wan") return createWanTask(config, requestConfig, selectedModel, prompt, references, options);
     const [images, videos, audios] = await Promise.all([
         Promise.all(references.map((image) => imageToDataUrl(image))),
-        Promise.all((options?.videos || []).map(async (video) => readFileAsDataUrl(await referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)))),
-        Promise.all((options?.audios || []).map(async (audio) => readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)))),
+        Promise.all((options?.videos || []).map(async (video) => video.storageKey ? resolveMediaUrl(video.storageKey, video.url) : video.url)),
+        Promise.all((options?.audios || []).map(async (audio) => audio.storageKey ? resolveMediaUrl(audio.storageKey, audio.url) : audio.url)),
     ]);
-    const mode = resolveVideoMode(config.videoMode, images.length);
-    const ratio = inferVideoRatio(config.size);
+    const { mode, ratio, resolution, seconds, generateAudio, watermark } = settings;
     const body = {
         model: modelOptionName(selectedModel),
         content: [
@@ -77,16 +92,16 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             ...videos.map((url) => ({ type: "video_url", video_url: { url }, role: "reference_video" })),
             ...audios.map((url) => ({ type: "audio_url", audio_url: { url }, role: "reference_audio" })),
         ],
-        duration: Number(clampVideoSeconds(config.videoSeconds)),
-        resolution: normalizeVideoResolution(config.vquality),
+        duration: Number(seconds),
+        resolution: `${resolution}p`,
         ratio: ratio === "auto" ? "adaptive" : ratio,
-        generate_audio: boolConfig(config.videoGenerateAudio, true),
-        watermark: boolConfig(config.videoWatermark, false),
+        generate_audio: generateAudio,
+        watermark: watermark,
     };
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(requestConfig, "/contents/generations/tasks"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "ark", model: selectedModel };
+        return { id: created.id, provider: "seedance", model: selectedModel };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -96,30 +111,61 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(requestConfig, `/contents/generations/tasks/${encodeURIComponent(task.id)}`), { headers: aiHeaders(requestConfig), signal: options?.signal })).data);
-        if (["failed", "cancelled", "expired"].includes(video.status || "")) return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
-        if (video.status !== "succeeded") return { status: "pending" };
-        const url = video.content?.video_url;
-        return url ? { status: "completed", result: await videoResultFromUrl(url, options) } : { status: "failed", error: apiText("noPlayableVideo") };
+        const path = task.provider === "wan" ? "/videos" : "/contents/generations/tasks";
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(requestConfig, `${path}/${encodeURIComponent(task.id)}`), { headers: aiHeaders(requestConfig), signal: options?.signal })).data);
+        if (video.status === "paused") throw new Error(readApiErrorMessage(video.error) || "后台任务已暂停，可手动恢复处理");
+        if (["failed", "cancelled", "expired"].includes(video.status || "")) return { status: "failed", error: readApiErrorMessage(video.error) || apiText("videoGenerationFailed") };
+        if (video.status !== (task.provider === "wan" ? "completed" : "succeeded")) return { status: "pending" };
+        if (!video.file?.url.startsWith("/api/files/media_files/") || !video.file.storageKey) throw new Error("服务端尚未返回已保存的视频文件，请继续查询任务");
+        return { status: "completed", result: video.file };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
     }
 }
 
-export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
-    if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) return uploadMediaFile(result.url, "video");
-    throw new Error(apiText("noPlayableVideo"));
+export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions) {
+    const requestConfig = resolveModelRequestConfig(config, task.model);
+    const path = task.provider === "wan" ? "/videos" : "/contents/generations/tasks";
+    try {
+        await axios.post(aiApiUrl(requestConfig, `${path}/${encodeURIComponent(task.id)}/resume`), {}, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal });
+    } catch (error) { throw new Error(readAxiosError(error, "恢复后台任务失败")); }
 }
 
-async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
+async function referenceUrl(namespace: "image_files" | "media_files", item: { storageKey?: string; url?: string }, options?: RequestOptions) {
+    if (item.storageKey) return cloudFileUrl(namespace, item.storageKey);
+    if (item.url?.startsWith("/api/files/")) return item.url;
+    if (!item.url) throw new Error("参考文件地址无效，请重新选择");
+    return (await cloudApi<{ url: string }>("/files/import", { method: "POST", body: JSON.stringify({ url: item.url }), signal: options?.signal })).url;
+}
+
+async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const profile = wanModelProfile(modelOptionName(model));
+    if (!profile) throw new Error("WAN 模型名需包含有效的分辨率后缀");
+    if (!profile.referenceVideo && options?.videos?.length) throw new Error("当前 WAN 图生模型不支持参考视频");
+    if (!profile.referenceVideo && !references.length) throw new Error("WAN 图生模型需要至少一张参考图片");
+    if (references.length > 10) throw new Error("WAN 最多支持 10 张参考图");
+    const { mode, ratio, seconds } = videoSettingsForModel(config, model, references.length);
+    const [reference_images, reference_videos, reference_audios] = await Promise.all([
+        Promise.all(references.map(async (image, index) => {
+            const key = image.storageKey || (await uploadImage(await imageToDataUrl(image, options), options)).storageKey;
+            if (!key) throw new Error("参考图片上传失败");
+            return { url: cloudFileUrl("image_files", key), role: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame" };
+        })),
+        Promise.all((options?.videos || []).map(async (video) => {
+            return { url: await referenceUrl("media_files", video, options) };
+        })),
+        Promise.all((options?.audios || []).map(async (audio) => {
+            return { url: await referenceUrl("media_files", audio, options) };
+        })),
+    ]);
+    const body = { model: modelOptionName(model), prompt, seconds, aspect_ratio: ratio === "auto" ? "adaptive" : ratio, reference_images, reference_videos, reference_audios };
     try {
-        const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal });
-        await assertVideoBlob(response.data);
-        return { blob: response.data };
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(requestConfig, "/videos"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data);
+        const id = created.id || created.task_id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "wan", model };
     } catch (error) {
-        if (axios.isCancel(error) || options?.signal?.aborted) throw error;
-        return { url, mimeType: "video/mp4" };
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
 }
 
@@ -127,34 +173,6 @@ function assertVideoConfig(config: AiConfig, model: string) {
     if (!model) throw new Error(apiText("videoModelRequired"));
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
-}
-
-async function referenceMediaToFile(item: { name: string; type?: string; url?: string; storageKey?: string }, fallbackName: string, errorKey: "invalidReferenceVideo" | "invalidReferenceAudio", options?: RequestOptions) {
-    let blob = item.storageKey ? await getMediaBlob(item.storageKey) : null;
-    if (!blob) {
-        const url = item.storageKey ? await resolveMediaUrl(item.storageKey, item.url || "") : item.url || "";
-        if (!url) throw new Error(apiText(errorKey));
-        try {
-            blob = await (await fetch(url, { signal: options?.signal })).blob();
-        } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") throw error;
-            throw new Error(apiText(errorKey));
-        }
-    }
-    if (!blob.size) throw new Error(apiText(errorKey));
-    return new File([blob], item.name || fallbackName, { type: item.type || blob.type || "application/octet-stream" });
-}
-
-function resolveVideoMode(mode: string | undefined, imageCount: number) {
-    if (mode === "reference" || imageCount > 2) return "reference";
-    return "frames";
-}
-
-function normalizeVideoResolution(value: string) {
-    if (value === "low") return "480p";
-    if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = value.replace(/p$/i, "") || "720";
-    return `${resolution}p`;
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {
@@ -217,32 +235,20 @@ function statusMessage(status: number | undefined, fallback: string) {
     return status ? `${fallback}（${status}）` : fallback;
 }
 
-async function assertVideoBlob(blob: Blob) {
-    if (!blob.type.includes("json")) return;
-    let payload: { code?: number; msg?: string; error?: { message?: string } };
-    try {
-        payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
-    } catch {
-        return;
-    }
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(readApiErrorMessage(payload) || apiText("videoDownloadFailed"));
-    if (payload.error?.message) throw new Error(readApiErrorMessage(payload.error.message) || payload.error.message);
-}
-
 function delay(ms: number, signal?: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
         if (signal?.aborted) {
             reject(new DOMException("Aborted", "AbortError"));
             return;
         }
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener(
-            "abort",
-            () => {
-                clearTimeout(timer);
-                reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-        );
+        const abort = () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", abort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", abort, { once: true });
     });
 }

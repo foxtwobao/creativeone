@@ -2,6 +2,19 @@ import { useCloudStore } from "@/stores/use-cloud-store";
 import { expect, test } from "bun:test";
 import { cloudErrorMessage, needsModelAuthorization, splitErrorMessage } from "./error-message";
 
+test("model service failures never request authorization or invalidate existing consent", () => {
+    const state = useCloudStore.getState();
+    state.setModelLoginRequired(false);
+    state.setModelAuthorized(true);
+    for (const code of ["APP_SERVICE_UNAVAILABLE", "APP_DATABASE_UNAVAILABLE", "APP_KEY_RECOVERY_UNAVAILABLE"]) {
+        const error = cloudErrorMessage({ error: code, message: "模型服务暂时不可用", requestId: "trace" });
+        expect(needsModelAuthorization(error)).toBe(false);
+        expect(useCloudStore.getState().modelLoginRequired).toBe(false);
+        expect(useCloudStore.getState().modelAuthorized).toBe(true);
+    }
+    state.setModelAuthorized(false);
+});
+
 test("friendly text and technical details survive string-based history storage", () => {
     const value = cloudErrorMessage({ error: "INSUFFICIENT_BALANCE", message: "余额不足，请充值后重试。", requestId: "request-123" });
     const restored = splitErrorMessage(JSON.parse(JSON.stringify(value)));

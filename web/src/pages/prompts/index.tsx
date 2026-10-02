@@ -31,9 +31,11 @@ export default function PromptsPage() {
         setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
     };
 
-    const savePromptAsset = (item: Prompt) => {
-        addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
+    const savePromptAsset = async (item: Prompt) => {
+        try {
+        await addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
         message.success(t("common.addedToAssets"));
+        } catch (error) { message.error(error instanceof Error ? error.message : "素材保存失败"); }
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {

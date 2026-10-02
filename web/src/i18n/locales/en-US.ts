@@ -433,7 +433,7 @@ export default {
             refreshAll: "Fetch all now",
             lastFetched: "Last fetched {{time}}",
             neverScheduled: "No scheduled fetch yet",
-            scheduleDescription: "When enabled, all active sources are fetched on this interval while the page is open.",
+            scheduleDescription: "Sources are cached on the server after first use. Scheduled refreshes of cached, enabled sources continue while pages are closed.",
             intervals: {
                 disabled: "Disabled",
                 minutes30: "Every 30 minutes",

@@ -13,7 +13,7 @@ const links = [
     { to: "/prompts", label: "灵感广场", icon: Sparkles },
     { to: "/canvas", label: "画布ONE", icon: Maximize2 },
     { to: "/video", label: "视频创作", icon: Video },
-    { to: "/assets", label: "我的素材", icon: Images },
+    { to: "/assets", label: "我的作品", icon: Images },
 ].filter(({ to }) => (to !== "/canvas" || features.canvas) && (to !== "/video" || features.video));
 
 export default function StudioLayout({ children }: { children: ReactNode }) {

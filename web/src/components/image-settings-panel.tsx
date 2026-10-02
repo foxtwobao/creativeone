@@ -1,24 +1,14 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 import { ConfigProvider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, parseAspectRatio, readMediaDimensions } from "@/lib/media-size";
-import { imageModelProfile } from "../../../shared/image-models";
-import { modelImageTypeOf, type AiConfig } from "@/stores/use-config-store";
+import { inferMediaRatio, inferMediaScale, parseAspectRatio, readMediaDimensions } from "@/lib/media-size";
+import { alignImageDimension, imageSettingsForModel, selectImageRatio, selectImageScale } from "@/lib/image-settings";
+import { type AiConfig } from "@/stores/use-config-store";
 
-const qualityOptions = [
-    { value: "auto", labelKey: "auto" },
-    { value: "high", labelKey: "high" },
-    { value: "medium", labelKey: "medium" },
-    { value: "low", labelKey: "low" },
-];
-const DIMENSION_STEP = 16;
-
-export const imageQualityOptions = qualityOptions.map((item) => ({ value: item.value, get label() { return i18n.t(`settingsPanels.common.${item.labelKey}`); } }));
-export const imageAspectOptions = mediaRatioOptions.map((item) => ({ value: item.value, label: item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value }));
-export const imageScaleOptions = mediaScaleOptions.map((value) => ({ value, label: value === "auto" ? i18n.t("settingsPanels.common.auto") : value }));
+export { imageQualityOptions, imageAspectOptions, imageScaleOptions } from "@/lib/image-settings";
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
@@ -32,29 +22,19 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const { t } = useTranslation();
-    const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const model = config.model || config.imageModel;
-    const imageType = modelImageTypeOf(config, model);
-    if (!imageType) return <div className="text-sm" style={{ color: theme.node.muted }}>请先在功能模型配置中为此模型选择图片类型。</div>;
-    const profile = imageModelProfile(model, imageType);
-    const qualities = qualityOptions.filter((item) => profile.qualities.includes(item.value));
-    const ratios = profile.ratios.map((value) => ({ value, ...(parseAspectRatio(value) || { width: 0, height: 0 }) }));
-    const scales = mediaScaleOptions.filter((value) => profile.resolutions.includes(value));
-    const quality = profile.qualities.includes(config.quality) ? config.quality : "auto";
+    const settings = imageSettingsForModel(config, config.model || config.imageModel);
+    const { profile, qualities, ratios, scales, quality, size: activeSize, scale: selectedScale, ratio: selectedRatio, error } = settings;
+    if (!profile) return <div className="text-sm" style={{ color: theme.node.muted }}>{error}</div>;
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
-    const selectedScale = inferMediaScale(activeSize);
-    const selectedRatio = parseAspectRatio(activeSize) ? activeSize : inferMediaRatio(activeSize);
     const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio);
-    const applySize = (scale: string, ratio: string) => onConfigChange("size", computeMediaSize(scale, ratio));
-    const selectScale = (scale: string) => applySize(scale, selectedRatio === "auto" || !profile.ratios.includes(selectedRatio) ? "1:1" : selectedRatio);
-    const selectRatio = (ratio: string) => applySize(scales.length === 1 ? "auto" : selectedScale, ratio);
+    const selectScale = (scale: string) => onConfigChange("size", selectImageScale(settings, scale));
+    const selectRatio = (ratio: string) => onConfigChange("size", selectImageRatio(settings, ratio));
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
         const width = key === "width" ? next : dimensions.width;
         const height = key === "height" ? next : dimensions.height;
-        onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
+        onConfigChange("size", `${alignImageDimension(width)}x${alignImageDimension(height)}`);
     };
 
     return (
@@ -69,6 +49,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 }}
             >
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.image.title")}</div> : null}
+                {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
+                {profile.pixelSize && activeSize === "auto" ? <p className="text-xs" style={{ color: theme.node.muted }}>尺寸由模型决定；选择具体比例后使用 1K，可继续调整分辨率。</p> : null}
                 {profile.family === "banana" ? <div className="text-xs" style={{ color: theme.node.muted }}>
                     分辨率由模型决定{profile.fixedResolution ? `（${profile.fixedResolution.toUpperCase()}）` : ""}，更改分辨率请选择对应模型。
                 </div> : null}
@@ -77,7 +59,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="grid grid-cols-4 gap-2.5">
                         {qualities.map((item) => (
                             <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
-                                {t(`settingsPanels.common.${item.labelKey}`)}
+                                {item.label}
                             </OptionPill>
                         ))}
                     </div>
@@ -85,27 +67,20 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {profile.pixelSize ? <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.size")}</SettingTitle>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                                {t("settingsPanels.image.align16")}
-                            </span>
-                            <span title={t("settingsPanels.image.align16Hint")} onMouseDown={(event) => event.stopPropagation()}>
-                                <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
-                            </span>
-                        </div>
+                        <span className="text-xs" style={{ color: theme.node.muted }}>宽高自动向上对齐到 16 的倍数</span>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                        <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div> : null}
                 {scales.length > 1 ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.resolution")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {scales.map((value) => (
+                        {scales.map(({ value, label }) => (
                             <OptionPill key={value} selected={selectedScale === value} theme={theme} onClick={() => selectScale(value)}>
-                                {value === "auto" ? t("settingsPanels.common.auto") : value}
+                                {label}
                             </OptionPill>
                         ))}
                     </div>
@@ -197,9 +172,9 @@ function OptionPill({ selected, theme, onClick, children }: { selected: boolean;
     );
 }
 
-function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; alignToStep: boolean; onChange: (value: number | null) => void }) {
+function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     const commit = (input: HTMLInputElement) => {
-        const next = alignDimension(Math.max(1, Math.floor(Number(input.value) || value || 1024)), alignToStep);
+        const next = alignImageDimension(Math.max(1, Math.floor(Number(input.value) || value || 1024)));
         input.value = String(next);
         onChange(next);
     };
@@ -263,6 +238,3 @@ function SettingTitle({ children, color }: { children: string; color: string }) 
     );
 }
 
-function alignDimension(value: number, enabled: boolean) {
-    return enabled ? Math.ceil(value / DIMENSION_STEP) * DIMENSION_STEP : value;
-}

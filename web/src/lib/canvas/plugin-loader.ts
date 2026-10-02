@@ -61,8 +61,8 @@ function withCacheBust(url: string) {
 export async function installPluginFromUrl(url: string, opts?: { official?: boolean; bustCache?: boolean }) {
     const source = await fetchPluginSource(opts?.bustCache ? withCacheBust(url) : url);
     const plugin = await evaluatePluginSource(source);
-    deactivatePlugin(plugin.id); // Replace the previous version.
-    usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: opts?.official });
+    await usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: opts?.official });
+    deactivatePlugin(plugin.id); // Replace only after the record was saved.
     activatePlugin(plugin);
     return plugin;
 }
@@ -73,7 +73,7 @@ export async function updatePlugin(record: InstalledPlugin) {
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
-    usePluginStore.getState().setEnabled(record.id, enabled);
+    await usePluginStore.getState().setEnabled(record.id, enabled);
     if (!enabled) {
         deactivatePlugin(record.id);
         return;
@@ -84,9 +84,9 @@ export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean
     activatePlugin(plugin);
 }
 
-export function uninstallPlugin(id: string) {
+export async function uninstallPlugin(id: string) {
+    await usePluginStore.getState().remove(id);
     deactivatePlugin(id);
-    usePluginStore.getState().remove(id);
 }
 
 let loaded = false;
@@ -94,8 +94,8 @@ let loaded = false;
 // Load installed and enabled plugins at application startup.
 export async function ensurePluginsLoaded() {
     if (loaded) return;
+    await usePluginStore.getState().load();
     loaded = true;
-    await usePluginStore.persist.rehydrate();
     await loadLocalPlugins(); // Discover disabled local plugins first, then activate all enabled records.
     const records = usePluginStore.getState().plugins.filter((record) => record.enabled);
     await Promise.all(
@@ -131,7 +131,7 @@ async function loadLocalPlugins() {
                 const source = await fetchPluginSource(withCacheBust(url));
                 const plugin = await evaluatePluginSource(source);
                 const existing = store.plugins.find((item) => item.id === plugin.id);
-                store.upsert({
+                await store.upsert({
                     id: plugin.id,
                     name: plugin.name || plugin.id,
                     version: plugin.version || "0.0.0",

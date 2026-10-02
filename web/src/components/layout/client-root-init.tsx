@@ -1,26 +1,35 @@
+import { features } from "@/constant/features";
 import { App, Button, Modal } from "antd";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { useEffect, useState, type ReactNode } from "react";
-import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
+
 import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
+import { loadUserSettings } from "@/stores/use-config-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { retryCloudSave } from "@/services/cloud-storage";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
-    usePromptSourceScheduler();
+
     const { message } = App.useApp();
+    useEffect(() => {
+        void Promise.all([loadUserSettings(), ...(features.canvas ? [useCanvasStore.getState().load()] : [])]).catch((error) => message.error(error.message));
+    }, [message]);
     const modelLoginRequired = useCloudStore((state) => state.modelLoginRequired);
     const setModelLoginRequired = useCloudStore((state) => state.setModelLoginRequired);
     const [starting, setStarting] = useState(false);
-    const [resumeMessage] = useState(() => useCloudStore.getState().authorizationResume?.message);
+    const [resumeError] = useState(() => {
+        const resume = useCloudStore.getState().authorizationResume;
+        return resume?.result !== "authorized" ? resume?.message : undefined;
+    });
     useEffect(() => {
         const url = new URL(window.location.href);
         if (url.searchParams.has("modelAuthorization")) {
             url.searchParams.delete("modelAuthorization");
             window.history.replaceState(null, "", url.pathname + url.search + url.hash);
             message.error("授权流程已失效，请重新发起授权");
-        } else if (resumeMessage) message.info(resumeMessage);
-    }, [message, resumeMessage]);
+        } else if (resumeError) message.error(resumeError);
+    }, [message, resumeError]);
     const authorize = async () => {
         setStarting(true);
         try {
@@ -34,7 +43,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             });
             if (result.authorizationUrl) window.location.assign(result.authorizationUrl);
             else if (result.pending) message.info("此登录会话已有授权流程，请在原页面完成；过期后可重新发起");
-            else if (result.authorized) { state.setModelAuthorized(true); message.success("模型服务已授权，请手动继续生成"); }
+            else if (result.authorized) { state.setModelAuthorized(true); message.success("模型服务已授权，请返回原任务继续处理"); }
             else throw new Error("暂时无法确认授权结果，请重新发起授权");
         } catch (error) { message.error(error instanceof Error ? error.message : "授权启动失败，请重试"); }
         finally { setStarting(false); }

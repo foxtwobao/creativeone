@@ -1,27 +1,26 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import { features } from "@/constant/features";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import UserLayout from "@/layouts/user-layout";
-import AssetsPage from "@/pages/assets";
-import CanvasPage from "@/pages/canvas";
-import CanvasProjectPage from "@/pages/canvas/project";
-import ConfigPage from "@/pages/config";
-import HomePage from "@/pages/home";
-import ImagePage from "@/pages/image";
-import NotFound from "@/pages/not-found";
-import PromptsPage from "@/pages/prompts";
-import VideoPage from "@/pages/video";
-import { lazy, Suspense } from "react";
+const AssetsPage = lazy(() => import("@/pages/assets"));
+const CanvasPage = lazy(() => import("@/pages/canvas"));
+const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
+const ConfigPage = lazy(() => import("@/pages/config"));
+const HomePage = lazy(() => import("@/pages/home"));
+const ImagePage = lazy(() => import("@/pages/image"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+const PromptsPage = lazy(() => import("@/pages/prompts"));
+const VideoPage = lazy(() => import("@/pages/video"));
 const ChannelsPage = lazy(() => import("@/pages/admin/channels"));
-const TasksPage = lazy(() => import("@/pages/tasks"));
 
 export const router = createBrowserRouter([
     {
         element: (
             <UserLayout>
                 <AnalyticsTracker />
-                <Outlet />
+                <Suspense fallback={<div className="p-6">加载中…</div>}><Outlet /></Suspense>
             </UserLayout>
         ),
         children: [
@@ -34,9 +33,9 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: features.canvas ? <CanvasPage /> : <Navigate to="/studio" replace /> },
             { path: "/canvas/:id", element: features.canvas ? <CanvasProjectPage /> : <Navigate to="/studio" replace /> },
             { path: "/config", element: <ConfigPage /> },
-                { path: "/admin/channels", element: <Suspense fallback={<div className="p-6">加载中…</div>}><ChannelsPage /></Suspense> },
-                { path: "/tasks", element: <Suspense fallback={<div className="p-6">加载中…</div>}><TasksPage /></Suspense> },
+            { path: "/admin/channels", element: <ChannelsPage /> },
+            { path: "/tasks", element: <Navigate to="/assets?view=tasks" replace /> },
         ],
     },
-    { path: "*", element: <NotFound /> },
+    { path: "*", element: <Suspense fallback={<div className="p-6">加载中…</div>}><NotFound /></Suspense> },
 ]);

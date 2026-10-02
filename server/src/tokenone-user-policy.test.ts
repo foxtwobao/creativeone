@@ -29,7 +29,7 @@ test("v2 ensure sends only verified identity and preserves decimal IDs and the c
         assert.equal(init.headers['X-Request-Id'], 'trace-test');
         assert.equal(init.cache, 'no-store');
         assert.deepEqual(JSON.parse(init.body), { identity: { issuer: user.issuer, subject: user.subject } });
-        return Response.json({ status: 'ready', tokenone_user_id: '9007199254740995', api_key: { id: '9007199254740997', key: 'sk-test', group_id: group, status: 'active' } });
+        return Response.json({ status: 'ready', created: false, tokenone_user_id: '9007199254740995', api_key: { id: '9007199254740997', key: 'sk-test', group_id: group, status: 'active' } });
     };
     assert.equal((await ensureKey(user, 'trace-test')).group_id, group);
     assert.deepEqual(writes[0][1], ['local-user', group, '9007199254740995', '9007199254740997', modelProvider]);

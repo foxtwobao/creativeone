@@ -1,6 +1,4 @@
-import i18n from "@/i18n";
-import type { PromptSource } from "./prompt-source-presets";
-
+import type { PromptSource } from "./prompt-sources.js";
 export type RawPrompt = {
     id: string;
     title: string;
@@ -20,35 +18,7 @@ export type RawPrompt = {
     imageCount?: number;
 };
 
-type RunOptions = { signal?: AbortSignal };
-
-async function fetchSource(source: PromptSource, options?: RunOptions) {
-    const response = await fetch(source.url, { cache: "no-store", signal: options?.signal });
-    if (!response.ok) throw new Error(i18n.t("config.promptSources.runtime.requestFailed", { status: response.status }));
-    return response.json();
-}
-
-export async function runPromptSource(source: PromptSource, options?: RunOptions): Promise<RawPrompt[]> {
-    if (!source.url.trim()) throw new Error(i18n.t("config.promptSources.runtime.urlRequired"));
-    let data: unknown;
-    try {
-        data = await fetchSource(source, options);
-    } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
-        throw new Error(i18n.t("config.promptSources.runtime.fetchFailed", { name: source.name, error: error instanceof Error ? error.message : String(error) }));
-    }
-
-    const items = parseJsonSource(data, source);
-    if (source.builtIn && !items.length) throw new Error(i18n.t("config.promptSources.runtime.noPrompts", { name: source.name }));
-    return items;
-}
-
-function parseJsonSource(data: unknown, source: PromptSource) {
-    if (!Array.isArray(data)) throw new Error(i18n.t("config.promptSources.runtime.invalidRoot", { name: source.name }));
-    return normalizeItems(data, source);
-}
-
-function normalizeItems(values: unknown[], source: PromptSource) {
+export function normalizePromptItems(values: unknown[], source: PromptSource) {
     const seen = new Set<string>();
     const items: RawPrompt[] = [];
     values.forEach((value, index) => {

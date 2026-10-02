@@ -1,9 +1,12 @@
+import { fetchGenerationHistory, removeGenerationHistory } from "@/services/api/history";
 import { useCloudStore } from "@/stores/use-cloud-store";
+import { cloudSession } from "@/services/api/cloud";
+import { useQuery } from "@tanstack/react-query";
 import { useAuthorizationDraft } from "@/hooks/use-authorization-draft";
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Popover, Tag, Tooltip, Typography } from "antd";
-import { ChevronDown, Send, X, Bot, Search } from "lucide-react";
+import { Send, X, Bot, Search } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { useInterfaceStore } from "@/stores/use-interface-store";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -11,29 +14,32 @@ import { features } from "@/constant/features";
 import { StudioSettings } from "./studio-settings";
 import { needsModelAuthorization, splitErrorMessage } from "@/services/api/error-message";
 import { StudioInspiration } from "./studio-inspiration";
-import { createUserStore } from "@/services/cloud-storage";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
-import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
-import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { imageSettingsForModel } from "@/lib/image-settings";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
-import { deleteStoredImages, ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
 
+const ImageSettingsPanel = lazy(() => import("@/components/image-settings-panel").then((module) => ({ default: module.ImageSettingsPanel })));
+const PromptSelectDialog = lazy(() => import("@/components/prompts/prompt-select-dialog").then((module) => ({ default: module.PromptSelectDialog })));
+const AssetPickerModal = lazy(() => import("@/components/canvas/asset-picker-modal").then((module) => ({ default: module.AssetPickerModal })));
+
 type GeneratedImage = {
     id: string;
+    sourceUrl?: string;
     dataUrl: string;
     storageKey?: string;
     durationMs: number;
@@ -69,13 +75,13 @@ type GenerationLog = {
     images: GeneratedImage[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "background" | "count">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = createUserStore("image_generation_logs");
+
 
 export default function ImagePage() {
     const { pathname } = useLocation();
@@ -96,8 +102,8 @@ export default function ImagePage() {
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
-    const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
+    const [logPage, setLogPage] = useState(1);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
@@ -109,6 +115,13 @@ export default function ImagePage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    const { data: history, error: historyError, isFetching: historyLoading, refetch: refetchLogs } = useQuery({
+        queryKey: ["generation-history", cloudSession?.user.id, "image", logPage, logSearch],
+        queryFn: () => readStoredLogs(logPage, logSearch),
+        enabled: logsOpen,
+    });
+    const logs = history?.logs || [];
+    const logTotal = history?.total || 0;
     useAuthorizationDraft({ prompt, references, results }, (draft) => {
         setPrompt(draft.prompt);
         setReferences(draft.references);
@@ -121,7 +134,8 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
+    const imageSettings = imageSettingsForModel(effectiveConfig, model);
+    const canGenerate = Boolean(prompt.trim()) && !imageSettings.error;
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
 
     useEffect(() => {
@@ -131,8 +145,8 @@ export default function ImagePage() {
     }, [running, startedAt]);
 
     useEffect(() => {
-        void refreshLogs();
-    }, []);
+        if (historyError) message.error(historyError.message);
+    }, [historyError, message]);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -207,19 +221,7 @@ export default function ImagePage() {
         if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
 
         try {
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs: performance.now() - batchStartedAt,
-                    successCount,
-                    failCount,
-                    status: successCount ? "success" : "failed",
-                    images: successImages,
-                }),
-            );
+            await refreshLogs().catch((error) => message.error(error.message));
             if (successCount) message.success(t("imageWorkbench.generated"));
             else if (!needsModelAuthorization(error || "")) message.error(error || t("workbench.generationFailed"));
         } finally {
@@ -260,17 +262,19 @@ export default function ImagePage() {
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
+        try {
         const stored = await uploadImage(image.dataUrl);
-        addAsset({
+        await addAsset({
             kind: "image",
             title: t("imageWorkbench.resultTitle", { count: index + 1 }),
             coverUrl: stored.url,
             tags: [],
             source: t("imageWorkbench.source"),
             data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
+            metadata: { source: "image-page", prompt, sourceUrl: image.sourceUrl },
         });
         message.success(t("common.addedToAssets"));
+        } catch (error) { message.error(error instanceof Error ? error.message : "素材保存失败"); }
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
@@ -295,9 +299,9 @@ export default function ImagePage() {
         setPreviewLog(null);
     };
 
-    const deleteSelectedLogs = () => {
-        const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+    const deleteSelectedLogs = async () => {
+        try { await Promise.all(selectedLogIds.map(removeGenerationHistory)); await refreshLogs(); }
+        catch (error) { message.error(error instanceof Error ? error.message : "历史记录移除失败"); return; }
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -306,11 +310,7 @@ export default function ImagePage() {
         setDeleteConfirmOpen(false);
     };
 
-    const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(refreshLogs);
-    };
-
-    const refreshLogs = async () => setLogs(await readStoredLogs());
+    const refreshLogs = () => refetchLogs({ cancelRefetch: false, throwOnError: true });
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
@@ -320,6 +320,7 @@ export default function ImagePage() {
         if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
+        updateConfig("background", log.config.background);
         if (log.config.count) updateConfig("count", log.config.count);
         setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
     };
@@ -345,7 +346,7 @@ export default function ImagePage() {
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
             const stored = await uploadImage(image.dataUrl);
-            const nextImage: GeneratedImage = { id: image.id, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            const nextImage: GeneratedImage = { id: image.id, sourceUrl: image.dataUrl, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
             setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
@@ -359,22 +360,9 @@ export default function ImagePage() {
         if (!snapshot) return;
         setPreviewLog(null);
         setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
-        const retryStartedAt = performance.now();
         try {
-            const image = await runGenerationSlot(index, snapshot);
-            saveLog(
-                buildLog({
-                    prompt: snapshot.text,
-                    model,
-                    config: { ...snapshot.config, count: "1" },
-                    references: snapshot.references,
-                    durationMs: performance.now() - retryStartedAt,
-                    successCount: 1,
-                    failCount: 0,
-                    status: "success",
-                    images: [image],
-                }),
-            );
+            await runGenerationSlot(index, snapshot);
+            await refreshLogs().catch((error) => message.error(error.message));
             message.success(t("workbench.retrySuccess"));
         } catch {
             // runGenerationSlot has already marked the result as failed.
@@ -398,11 +386,15 @@ export default function ImagePage() {
                         <div className="studio-input-row">
                             <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
                             <Input.TextArea aria-label="创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述你的灵感，让想象发生…" onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (canGenerate && !running) void generate(); } }} />
-                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings />}><button className="studio-model-button">模型<ChevronDown size={14} /></button></Popover>
                             <button className="studio-send" aria-label="开始生成" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-2">
+                            <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" className="max-w-[min(70vw,320px)]" onMissingConfig={() => openConfigDialog(false)} />
+                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings />}><button className="studio-chip" onClick={() => window.dispatchEvent(new CustomEvent("model-picker-open", { detail: "parameters" }))}><SlidersHorizontal size={14} />参数</button></Popover>
                         </div>
                     </div>
                     <div className="studio-composer-caption"><span>{references.length ? `${references.length} 张参考图 · ` : ""}{modelOptionLabel(effectiveConfig, model)} · {generationCount} 张</span><span>Enter 生成 · Shift + Enter 换行</span></div>
+                    {imageSettings.error ? <p role="alert" className="text-xs text-muted-foreground">{imageSettings.error}</p> : null}
                 </section>
                 {results.length ? <section className="studio-results"><header><h2>{previewLog ? "历史作品" : "生成结果"}</h2>{running ? <span>正在生成 · {formatDuration(elapsedMs)}</span> : <span>灵感，已成形</span>}</header><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{results.map((result, index) => result.status === "success" && result.image ? <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} /> : <PendingImageCard key={result.id} />)}</div></section> : <StudioInspiration onSelect={setPrompt} onUpload={() => fileInputRef.current?.click()} />}
                 <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
@@ -573,9 +565,10 @@ export default function ImagePage() {
                 }}
             />
             <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                {studio ? <Input className="mb-4" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => setLogSearch(event.target.value)} /> : null}
+                {historyLoading ? <p role="status" className="mb-4 text-sm text-muted-foreground">正在加载创作记录…</p> : null}
+                {studio ? <Input className="mb-4" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => { setLogSearch(event.target.value); setLogPage(1); }} /> : null}
                 <LogPanel
-                    logs={studio ? logs.filter((log) => `${log.title} ${log.prompt}`.toLowerCase().includes(logSearch.toLowerCase())) : logs}
+                    logs={logs}
                     selectedLogIds={selectedLogIds}
                     activeLogId={previewLog?.id}
                     onSelectedLogIdsChange={setSelectedLogIds}
@@ -583,14 +576,19 @@ export default function ImagePage() {
                     onDeleteSelected={() => setDeleteConfirmOpen(true)}
                     onPreviewLog={(log) => void previewGenerationLog(log)}
                 />
+                {logTotal > 10 ? <div className="mt-4 flex items-center justify-center gap-4">
+                    <Button disabled={logPage === 1} onClick={() => setLogPage(logPage-1)}>上一页</Button>
+                    <span>{logPage} / {Math.ceil(logTotal/10)}</span>
+                    <Button disabled={logPage*10 >= logTotal} onClick={() => setLogPage(logPage+1)}>下一页</Button>
+                </div> : null}
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            {promptDialogOpen ? <Suspense fallback={null}><PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} /></Suspense> : null}
+            {assetPickerOpen ? <Suspense fallback={null}><AssetPickerModal open defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} /></Suspense> : null}
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
@@ -609,7 +607,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <ImageSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                <Suspense fallback={<p className="text-sm text-muted-foreground">正在加载生成设置…</p>}><ImageSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} /></Suspense>
             </div>
         </>
     );
@@ -823,18 +821,9 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(normalizeLog));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
+async function readStoredLogs(page = 1, keyword = "", upstreamId?: string) {
+    const result = await fetchGenerationHistory<GenerationLog>("image", page, keyword, upstreamId);
+    return { ...result, logs: await Promise.all(result.logs.map(normalizeLog)) };
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
@@ -871,20 +860,13 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     };
 }
 
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
-    };
-}
-
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     return {
         model: log.config?.model || log.model || "",
         imageModel: log.config?.imageModel || log.model || "",
         quality: log.config?.quality || log.quality || "",
         size: log.config?.size || log.size || "",
+        background: log.config?.background || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
     };
 }
@@ -905,52 +887,4 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
-}
-
-function buildLog({
-    prompt,
-    model,
-    config,
-    references,
-    durationMs,
-    successCount,
-    failCount,
-    status,
-    images,
-}: {
-    prompt: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    status: GenerationLog["status"];
-    images: GeneratedImage[];
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        imageModel: config.imageModel,
-        quality: config.quality,
-        size: config.size,
-        count: config.count,
-    };
-    return {
-        id: nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || i18n.t("workbench.untitled"),
-        prompt,
-        time: new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model,
-        config: logConfig,
-        references,
-        durationMs,
-        successCount,
-        failCount,
-        imageCount: Number(logConfig.count) || successCount,
-        size: logConfig.size,
-        quality: logConfig.quality,
-        status,
-        images,
-    };
 }

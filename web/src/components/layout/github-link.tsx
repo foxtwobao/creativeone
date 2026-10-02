@@ -1,4 +1,4 @@
-import { GithubOutlined } from "@ant-design/icons";
+import GithubOutlined from "@ant-design/icons/es/icons/GithubOutlined";
 
 import { cn } from "@/lib/utils";
 

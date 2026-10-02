@@ -1,7 +1,7 @@
 import { App, Button, Select, Switch, Tag } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
@@ -17,6 +17,8 @@ export function ConfigPromptSources() {
     const { i18n, t } = useTranslation();
     const queryClient = useQueryClient();
     const sources = usePromptSourceStore((state) => state.sources);
+    const load = usePromptSourceStore((state) => state.load);
+    useEffect(() => { void load().catch((error) => message.error(error instanceof Error ? error.message : "提示词来源加载失败")); }, [load, message]);
     const schedule = usePromptSourceStore((state) => state.schedule);
     const addSource = usePromptSourceStore((state) => state.addSource);
     const saveSource = usePromptSourceStore((state) => state.saveSource);
@@ -40,9 +42,9 @@ export function ConfigPromptSources() {
         ]);
     };
 
-    const handleSave = (source: PromptSource) => {
-        saveSource(source);
-        void invalidatePrompts();
+    const handleSave = async (source: PromptSource) => {
+        await saveSource(source);
+        await invalidatePrompts();
     };
 
     const handleDelete = (source: PromptSource) => {
@@ -53,7 +55,7 @@ export function ConfigPromptSources() {
             okButtonProps: { danger: true },
             cancelText: t("common.cancel"),
             onOk: async () => {
-                removeSource(source.id);
+                await removeSource(source.id);
                 await invalidatePrompts();
             },
         });
@@ -77,7 +79,7 @@ export function ConfigPromptSources() {
         setRefreshingAll(true);
         try {
             const result = await refreshAllSources();
-            updateSchedule("lastFetchedAt", new Date().toISOString());
+            await usePromptSourceStore.getState().load();
             await invalidatePrompts();
             if (result.failureCount) message.warning(t("config.promptSources.refreshPartial", { success: result.successCount, failed: result.failureCount }));
             else message.success(t("config.promptSources.refreshAllSuccess", { sources: result.successCount, total: result.total }));
@@ -101,7 +103,7 @@ export function ConfigPromptSources() {
                     const status = statusQuery.data?.[source.id];
                     return (
                         <div key={source.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
-                            <Switch size="small" checked={source.enabled} onChange={(checked) => { toggleSource(source.id, checked); void invalidatePrompts(); }} />
+                            <Switch size="small" checked={source.enabled} onChange={(checked) => { void toggleSource(source.id, checked).then(invalidatePrompts).catch((error) => message.error(error.message)); }} />
                             <div className="min-w-[220px] flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <span className="truncate text-sm font-semibold">{source.name}</span>
@@ -136,7 +138,7 @@ export function ConfigPromptSources() {
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-stone-500">{t("config.promptSources.interval")}</span>
-                        <Select size="small" className="w-36" value={schedule.intervalMinutes} options={intervalOptions} onChange={(value) => updateSchedule("intervalMinutes", value)} />
+                        <Select size="small" className="w-36" value={schedule.intervalMinutes} options={intervalOptions} onChange={(value) => void updateSchedule("intervalMinutes", value).catch((error) => message.error(error.message))} />
                     </div>
                     <Button size="small" type="primary" icon={<RefreshCw className="size-3.5" />} loading={refreshingAll} onClick={() => void handleRefreshAll()}>
                         {t("config.promptSources.refreshAll")}

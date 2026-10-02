@@ -1,8 +1,7 @@
-import { saveAs } from "file-saver";
 
-import { createZip, readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { readZip } from "@/lib/zip";
+import { setMediaBlob } from "@/services/file-storage";
+import { setImageBlob } from "@/services/image-storage";
 import type { Asset } from "@/stores/use-asset-store";
 
 type AssetExportFile = {
@@ -20,26 +19,8 @@ type AssetExportItem = {
     bytes: number;
 };
 
-export async function exportAssets(assets: Asset[], filename: string) {
-    const files: AssetExportItem[] = [];
-    const zipFiles: { name: string; data: BlobPart }[] = [];
-
-    await Promise.all(
-        assets.map(async (asset) => {
-            if (asset.kind !== "image" && asset.kind !== "video") return;
-            const storageKey = asset.data.storageKey;
-            if (!storageKey) return;
-            const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-            if (!blob) return;
-            const path = `files/${safeFileName(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
-            files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });
-            zipFiles.push({ name: path, data: blob });
-        }),
-    );
-
-    const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets, files };
-    const zip = await createZip([{ name: "assets.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
-    saveAs(zip, filename);
+export function exportAssets() {
+    const link = document.createElement("a"); link.href = "/api/assets/export"; link.download = "creativeone-assets.zip"; link.click();
 }
 
 export async function readAssetPackage(file: File) {
@@ -56,18 +37,4 @@ export async function readAssetPackage(file: File) {
         }),
     );
     return data.assets;
-}
-
-function safeFileName(value: string) {
-    return value.replace(/[\\/:*?"<>|]/g, "_");
-}
-
-function fileExtension(mimeType: string, kind: Asset["kind"]) {
-    if (mimeType.includes("png")) return "png";
-    if (mimeType.includes("jpeg")) return "jpg";
-    if (mimeType.includes("webp")) return "webp";
-    if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return "mp4";
-    if (mimeType.includes("webm")) return "webm";
-    return kind === "image" ? "png" : "bin";
 }

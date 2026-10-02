@@ -1,6 +1,6 @@
 import { Check, Download, Pencil, Trash2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Input } from "antd";
+import { App, Button, Input } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -9,6 +9,7 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
+    const { message } = App.useApp();
     const { i18n, t } = useTranslation();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -27,9 +28,9 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
         const agentHash = hasAgentUrlBootstrap(window.location.hash) ? window.location.hash : "";
         navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
     };
-    const saveTitle = () => {
-        renameProject(project.id, editingTitle);
-        stopEditing();
+    const saveTitle = async () => {
+        try { await renameProject(project.id, editingTitle); stopEditing(); }
+        catch (error) { message.error(error instanceof Error ? error.message : "画布重命名失败"); }
     };
 
     return (
