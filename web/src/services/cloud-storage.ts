@@ -12,8 +12,10 @@ type Store = {
 };
 const stores = new Map<string, Store>();
 const retries = new Set<() => Promise<void>>();
+export const registerCloudRetry = (retry: () => Promise<void>) => { retries.add(retry); };
 const documents = new Map<string, Map<string, Entry>>();
-const jsonNamespaces = ["app_state", "preferences", "image_generation_logs", "video_generation_logs"];
+const refreshers = new Map<string, () => Promise<void>>();
+const jsonNamespaces = ["app_state", "preferences"];
 
 // Disposable previews and fetched prompt caches live only for the current page.
 export function createMemoryStore(): Store {
@@ -74,10 +76,12 @@ export function createUserStore(namespace: string): Store {
     const entries = new Map<string, Entry>();
     documents.set(namespace, entries);
     let loaded: Promise<void> | undefined;
+    let refreshing: Promise<void> | undefined;
     const queue = new Map<string, Promise<void>>();
     const load = () => loaded ??= (async () => {
         const remote = await cloudApi<{ entries: Entry[] }>(`/storage/${namespace}`);
-        for (const entry of remote.entries) entries.set(entry.key, entry);
+        for (const [key, entry] of entries) if (!entry.pending) entries.delete(key);
+        for (const entry of remote.entries) if (!entries.get(entry.key)?.pending) entries.set(entry.key, entry);
         useCloudStore.getState().setError(namespace);
     })().catch((error) => { loaded = undefined; useCloudStore.getState().setError(namespace, error.message); throw error; });
     const write = async (key: string, value: unknown, deleted: boolean) => {
@@ -88,11 +92,12 @@ export function createUserStore(namespace: string): Store {
             const entry: Entry = { key, value, deleted, revision: entries.get(key)?.revision || 0, pending: true };
             entries.set(key, entry);
             try {
-                const result = await cloudApi<{ revision: number }>(`/storage/${namespace}/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value, revision: entry.revision, deleted }) });
+                const result = await cloudApi<{ revision: number }>(`/storage/${namespace}/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value, deleted }) });
                 entry.revision = result.revision; entry.pending = false;
                 state.setError(name);
             } catch (error) {
                 state.setError(name, error instanceof Error ? error.message : "保存失败，修改仅保留在当前页面", error instanceof CloudError ? error.code : undefined);
+                throw error;
             }
         }).finally(() => state.end());
         queue.set(key, work.catch(() => undefined));
@@ -119,13 +124,22 @@ export function createUserStore(namespace: string): Store {
         for (const entry of [...entries.values()]) if (entry.pending) await write(entry.key, entry.value, entry.deleted);
     });
     stores.set(namespace, store);
+    refreshers.set(namespace, () => refreshing ??= (async () => {
+        await Promise.all(queue.values());
+        // Finish the initial read before replacing it, so an older response cannot win.
+        await loaded;
+        loaded = undefined;
+        await load();
+    })().finally(() => { refreshing = undefined; }));
     return store;
 }
 
-export async function retryCloudSave() { for (const retry of retries) await retry(); }
-export async function initializeCloudStorage() {
-    await Promise.all(jsonNamespaces.map((namespace) => createUserStore(namespace).keys()));
+export async function refreshUserStore(namespace: string) {
+    createUserStore(namespace);
+    await refreshers.get(namespace)?.();
 }
+
+export async function retryCloudSave() { for (const retry of retries) await retry(); }
 export function exportUnsavedChanges() {
     const data = Object.fromEntries([...documents].map(([namespace, entries]) => [namespace, [...entries.values()].filter((entry) => entry.pending)]));
     return new Blob([JSON.stringify({ userId: cloudSession?.user.id, documents: data }, null, 2)], { type: "application/json" });

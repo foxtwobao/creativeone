@@ -1,0 +1,2 @@
+export const IMAGE_PREVIEW_MAX_EDGE = 768;
+export const IMAGE_PREVIEW_QUALITY = 86;

@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS channels (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS channels_capability ON channels(capability);
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS image_types jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS video_types jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS model_descriptions jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS key_bindings (
     user_id uuid NOT NULL REFERENCES users(id), group_id text NOT NULL,
     tokenone_user_id text NOT NULL, key_id text NOT NULL,
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS generation_tasks_owner ON generation_tasks(user_id, created_at DESC);
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS hidden_from_works boolean NOT NULL DEFAULT false;
 
 -- v2 delegates group selection to Enhance; retain task and binding IDs without numeric conversion.
 ALTER TABLE channels DROP COLUMN IF EXISTS group_id;
@@ -70,3 +73,14 @@ CREATE TABLE IF NOT EXISTS reseller_authorizations (
     return_to text NOT NULL, draft jsonb, expires_at timestamptz NOT NULL,
     consumed boolean NOT NULL DEFAULT false, result text
 );
+
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS request jsonb;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS hidden_from_history boolean NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS prompt_caches (
+    user_id uuid NOT NULL REFERENCES users(id), source_id text NOT NULL,
+    source_url text NOT NULL, last_attempt_at timestamptz NOT NULL DEFAULT now(), items jsonb NOT NULL DEFAULT '[]',
+    last_success_at timestamptz, last_error text NOT NULL DEFAULT '',
+    PRIMARY KEY (user_id, source_id)
+);
+
+ALTER TABLE prompt_caches ADD COLUMN IF NOT EXISTS last_attempt_at timestamptz NOT NULL DEFAULT now();

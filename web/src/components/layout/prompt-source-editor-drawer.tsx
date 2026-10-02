@@ -4,9 +4,10 @@ import { useTranslation } from "react-i18next";
 
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
-export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { open: boolean; source: PromptSource | null; onSave: (source: PromptSource) => void; onClose: () => void }) {
+export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { open: boolean; source: PromptSource | null; onSave: (source: PromptSource) => Promise<void>; onClose: () => void }) {
     const { message } = App.useApp();
     const { t } = useTranslation();
+    const [saving, setSaving] = useState(false);
     const [draft, setDraft] = useState<PromptSource | null>(source);
 
     useEffect(() => {
@@ -17,14 +18,16 @@ export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { op
 
     const patch = (value: Partial<PromptSource>) => setDraft((current) => (current ? { ...current, ...value } : current));
 
-    const save = () => {
+    const save = async () => {
         const name = draft.name.trim();
         const url = draft.url.trim();
         if (!name) return message.warning(t("config.promptSources.editor.nameRequired"));
         if (!isHttpUrl(url)) return message.warning(t("config.promptSources.editor.invalidUrl"));
         if (draft.homepage.trim() && !isHttpUrl(draft.homepage.trim())) return message.warning(t("config.promptSources.editor.invalidHomepage"));
-        onSave({ ...draft, name, url, homepage: draft.homepage.trim(), builtIn: false });
-        onClose();
+        setSaving(true);
+        try { await onSave({ ...draft, name, url, homepage: draft.homepage.trim(), builtIn: false }); onClose(); }
+        catch (error) { message.error(error instanceof Error ? error.message : "提示词源保存失败"); }
+        finally { setSaving(false); }
     };
 
     return (
@@ -37,7 +40,7 @@ export function PromptSourceEditorDrawer({ open, source, onSave, onClose }: { op
             extra={
                 <Space>
                     <Button onClick={onClose}>{t("common.cancel")}</Button>
-                    <Button type="primary" onClick={save}>
+                    <Button type="primary" loading={saving} onClick={save}>
                         {t("common.save")}
                     </Button>
                 </Space>

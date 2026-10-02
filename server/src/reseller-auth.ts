@@ -52,7 +52,7 @@ resellerRouter.post("/model-authorization", async (req, res) => {
 });
 resellerRouter.get("/model-authorization", async (_req, res) => {
     const flow = (await db.query("SELECT return_to,draft,result FROM reseller_authorizations WHERE session_hash=$1 AND consumed=true AND result<>'processing'", [res.locals.sessionHash])).rows[0];
-    res.json(flow ? { returnTo: flow.return_to, draft: flow.draft, result: flow.result, message: flow.result === "authorized" ? "授权完成，已恢复编辑内容；请检查云端任务后手动重试未完成操作。" : modelErrorMessage(flow.result) || "授权未完成，请重新发起。" } : null);
+    res.json(flow ? { returnTo: flow.return_to, draft: flow.draft, result: flow.result, message: flow.result === "authorized" ? "模型服务已授权" : modelErrorMessage(flow.result) || "授权未完成，请重新发起。" } : null);
 });
 resellerRouter.delete("/model-authorization/resume", async (_req, res) => {
     await db.query("DELETE FROM reseller_authorizations WHERE session_hash=$1 AND consumed=true AND result<>'processing'", [res.locals.sessionHash]);

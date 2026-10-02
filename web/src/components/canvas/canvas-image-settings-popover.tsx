@@ -5,11 +5,10 @@ import { Button } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
-import { imageModelProfile } from "../../../../shared/image-models";
+import { imageSettingsForModel } from "@/lib/image-settings";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { inferMediaRatio, parseAspectRatio } from "@/lib/media-size";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { modelImageTypeOf, type AiConfig } from "@/stores/use-config-store";
+import { type AiConfig } from "@/stores/use-config-store";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
@@ -30,13 +29,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const model = config.model || config.imageModel;
-    const imageType = modelImageTypeOf(config, model);
-    const profile = imageType ? imageModelProfile(model, imageType) : undefined;
-    const quality = profile?.qualities.includes(config.quality) ? config.quality : "auto";
+    const { profile, quality, ratio, size, error } = imageSettingsForModel(config, model);
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
-    const ratio = parseAspectRatio(activeSize) ? activeSize : inferMediaRatio(activeSize);
-    const sizeLabel = profile ? `${profile.fixedResolution ? `${profile.fixedResolution.toUpperCase()} · ` : ""}${imageSizeLabel(profile.resolutions.length === 1 ? ratio : activeSize)}` : "未配置图片类型";
+    const sizeLabel = error ? "请重新选择参数" : profile ? `${profile.fixedResolution ? `${profile.fixedResolution.toUpperCase()} · ` : ""}${imageSizeLabel(profile.resolutions.length === 1 ? ratio : size)}` : "未配置图片类型";
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);

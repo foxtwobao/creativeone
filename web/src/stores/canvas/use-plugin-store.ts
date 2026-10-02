@@ -1,8 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-
-import { cloudStateStorage } from "@/lib/cloud-state-storage";
-
+import { getAccountResource, changeAccountResource } from "@/services/api/account";
 export type InstalledPlugin = {
     id: string;
     name: string;
@@ -16,30 +13,18 @@ export type InstalledPlugin = {
     installedAt: string;
 };
 
+
 type PluginStore = {
     plugins: InstalledPlugin[];
-    upsert: (plugin: Omit<InstalledPlugin, "installedAt"> & { installedAt?: string }) => void;
-    setEnabled: (id: string, enabled: boolean) => void;
-    remove: (id: string) => void;
+    load: () => Promise<void>;
+    upsert: (plugin: Omit<InstalledPlugin, "installedAt"> & { installedAt?: string }) => Promise<void>;
+    setEnabled: (id: string, enabled: boolean) => Promise<void>;
+    remove: (id: string) => Promise<void>;
 };
-
-export const usePluginStore = create<PluginStore>()(
-    persist(
-        (set) => ({
-            plugins: [],
-            upsert: (plugin) =>
-                set((state) => {
-                    const installedAt = plugin.installedAt || new Date().toISOString();
-                    const exists = state.plugins.some((item) => item.id === plugin.id);
-                    const next = { ...plugin, installedAt };
-                    return { plugins: exists ? state.plugins.map((item) => (item.id === plugin.id ? next : item)) : [next, ...state.plugins] };
-                }),
-            setEnabled: (id, enabled) => set((state) => ({ plugins: state.plugins.map((item) => (item.id === id ? { ...item, enabled } : item)) })),
-            remove: (id) => set((state) => ({ plugins: state.plugins.filter((item) => item.id !== id) })),
-        }),
-        {
-            name: "infinite-canvas:plugin_store",
-            storage: createJSONStorage(() => cloudStateStorage),
-        },
-    ),
-);
+export const usePluginStore = create<PluginStore>()((set) => ({
+    plugins: [],
+    load: async () => set(await getAccountResource<{ plugins: InstalledPlugin[] }>("/plugins")),
+    upsert: async (plugin) => set(await changeAccountResource<{ plugins: InstalledPlugin[] }>("/plugins", plugin, "POST")),
+    setEnabled: async (id, enabled) => set(await changeAccountResource<{ plugins: InstalledPlugin[] }>(`/plugins/${encodeURIComponent(id)}`, { enabled })),
+    remove: async (id) => set(await changeAccountResource<{ plugins: InstalledPlugin[] }>(`/plugins/${encodeURIComponent(id)}`, undefined, "DELETE")),
+}));

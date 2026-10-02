@@ -1,18 +1,19 @@
-import i18n from "i18next";
+import i18n, { type BackendModule } from "i18next";
 import { initReactI18next } from "react-i18next";
-
-import enUS from "@/i18n/locales/en-US";
-import zhCN from "@/i18n/locales/zh-CN";
 
 export type AppLocale = "zh-CN" | "en-US";
 
 const LOCALE_STORAGE_KEY = "infinite-canvas:locale";
 
-i18n.use(initReactI18next).init({
-    resources: {
-        "zh-CN": { translation: zhCN },
-        "en-US": { translation: enUS },
+const languageBackend: BackendModule = {
+    type: "backend",
+    read(language, _namespace, callback) {
+        const resource = language === "en-US" ? import("./locales/en-US") : import("./locales/zh-CN");
+        resource.then(({ default: translation }) => callback(null, translation)).catch((error) => callback(error, false));
     },
+};
+
+export const appLocaleReady = i18n.use(languageBackend).use(initReactI18next).init({
     lng: (localStorage.getItem(LOCALE_STORAGE_KEY) as AppLocale) || "zh-CN",
     fallbackLng: "zh-CN",
     supportedLngs: ["zh-CN", "en-US"],

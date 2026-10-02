@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Empty, Input, Modal, Pagination, Tag } from "antd";
+import { App, Empty, Input, Modal, Pagination, Tag } from "antd";
 import { Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -54,9 +54,12 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
 }
 
 function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
+    const { message } = App.useApp();
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const assets = useAssetStore((state) => state.assets);
+    const load = useAssetStore((state) => state.load);
+    useEffect(() => { void load().catch((error) => message.error(error instanceof Error ? error.message : "素材加载失败")); }, [load, message]);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);

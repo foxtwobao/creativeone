@@ -3,10 +3,10 @@ import type { NavigateFunction } from "react-router-dom";
 import i18n from "@/i18n";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
-import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
+import { imageSettingsForModel } from "@/lib/image-settings";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import { clampVideoSeconds } from "@/lib/media-size";
+import { clampVideoSeconds, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
+import { videoResolutionOptions, videoSecondsRange, videoSizeOptions, videoSettingsForModel } from "@/lib/video-settings";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
@@ -51,7 +51,7 @@ export const SITE_TOOL_LABELS: Record<SiteToolName, string> = {
 
 type SiteToolInput = Record<string, unknown>;
 type SiteToolContext = { canvasSnapshot?: CanvasAgentSnapshot | null };
-type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
+type GenerationStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "unknown";
 type GenerationStatusItem = { id: string; source: "canvas" | "image" | "video"; status: GenerationStatus; kind?: string; title?: string; prompt?: string; projectId?: string; createdAt?: string; updatedAt?: string; successCount?: number; failCount?: number; error?: string };
 
 export async function runSiteTool(name: SiteToolName, input: SiteToolInput, navigate: NavigateFunction, context: SiteToolContext = {}): Promise<unknown> {
@@ -90,7 +90,7 @@ function getGenerationStatus(input: SiteToolInput, canvasSnapshot?: CanvasAgentS
 
     if (includeCanvas && canvasSnapshot) {
         canvasSnapshot.nodes.forEach((node) => {
-            const status = normalizeCanvasGenerationStatus(node.metadata?.status);
+            const status = node.metadata?.videoTaskId && !node.metadata?.content && node.metadata?.status === "error" ? "unknown" : normalizeCanvasGenerationStatus(node.metadata?.status);
             if (!status || (nodeIds.size && !nodeIds.has(node.id))) return;
             const metadata = node.metadata || {};
             if (!nodeIds.size && node.type !== "config" && status !== "running" && status !== "failed" && !metadata.generationMode && !metadata.generationType && !metadata.model) return;
@@ -107,7 +107,7 @@ function getGenerationStatus(input: SiteToolInput, canvasSnapshot?: CanvasAgentS
     }
 
     tasks.sort((a, b) => generationStatusOrder(a.status) - generationStatusOrder(b.status) || (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-    const summary: Record<GenerationStatus, number> = { idle: 0, queued: 0, running: 0, succeeded: 0, failed: 0 };
+    const summary: Record<GenerationStatus, number> = { idle: 0, queued: 0, running: 0, succeeded: 0, failed: 0, unknown: 0 };
     tasks.forEach((task) => (summary[task.status] += 1));
     return { total: tasks.length, summary, tasks: tasks.slice(0, limit) };
 }
@@ -149,12 +149,14 @@ function listCanvasProjects(input: SiteToolInput) {
 function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
+    const settings = imageSettingsForModel(config, model);
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), quality: settings.quality, size: settings.size, count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        qualityOptions: imageQualityOptions,
-        scaleOptions: imageScaleOptions,
-        sizeOptions: imageAspectOptions,
+        qualityOptions: settings.qualities,
+        scaleOptions: settings.scales,
+        sizeOptions: settings.ratios,
+        parameterError: settings.error,
         countRange: { min: 1, max: 15 },
     };
 }
@@ -190,21 +192,24 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 function getVideoConfig() {
     const { config } = useConfigStore.getState();
     const model = config.videoModel || config.model;
+    const settings = videoSettingsForModel(config, model);
     return {
         current: {
             model,
             modelName: modelOptionName(model),
-            size: config.size || "1280x720",
-            seconds: config.videoSeconds || "6",
-            resolution: config.vquality || "720",
-            generateAudio: config.videoGenerateAudio !== "false",
-            watermark: config.videoWatermark === "true",
-            mode: config.videoMode === "reference" ? "reference" : "frames",
+            size: settings.ratio,
+            seconds: settings.seconds,
+            resolution: settings.resolution,
+            generateAudio: settings.audioOptions ? settings.generateAudio : undefined,
+            watermark: settings.audioOptions ? settings.watermark : undefined,
+            mode: settings.mode,
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
+        sizeOptions: videoSizeOptions.filter((item) => settings.ratios.some((ratio) => ratio.value === item.value)),
         secondsRange: videoSecondsRange,
-        resolutionOptions: videoResolutionOptions,
+        resolutionOptions: videoResolutionOptions.filter((item) => !settings.wan || item.value === settings.resolution),
+        referenceVideo: settings.wan?.referenceVideo ?? true,
+        fixedResolution: Boolean(settings.wan),
         modeOptions: [
             { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
             { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
@@ -214,6 +219,14 @@ function getVideoConfig() {
 
 function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
+    const model = typeof input.model === "string" && input.model.trim() ? normalizeModelOptionValue(input.model, configStore.config.channels) : configStore.config.videoModel;
+    if (!model || !selectableModelsByCapability(configStore.config, "video").includes(model)) throw new Error("请选择已配置的视频模型");
+    const settings = videoSettingsForModel(configStore.config, model);
+    if (settings.wan) {
+        if (typeof input.resolution === "string" && parseVideoResolution(input.resolution) !== settings.resolution) throw new Error("WAN 分辨率由模型决定，请选择对应分辨率的模型");
+        if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("WAN 仅支持 16:9、9:16、1:1 和自适应比例");
+        if (input.generateAudio != null || input.watermark != null) throw new Error("WAN 暂不提供生成音频或水印开关");
+    }
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
@@ -221,8 +234,8 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         applied.model = value;
     }
     if (typeof input.size === "string" && input.size.trim()) {
-        configStore.updateConfig("size", input.size);
-        applied.size = input.size;
+        configStore.updateConfig("videoSize", inferVideoRatio(input.size));
+        applied.size = inferVideoRatio(input.size);
     }
     if (input.seconds != null && String(input.seconds).trim()) {
         const seconds = clampVideoSeconds(String(input.seconds));
@@ -267,9 +280,9 @@ async function searchPrompts(input: SiteToolInput) {
     };
 }
 
-function listAssets(input: SiteToolInput) {
-    const { assets, hydrated } = useAssetStore.getState();
-    if (!hydrated) throw new Error(siteText("assetsLoading"));
+async function listAssets(input: SiteToolInput) {
+    await useAssetStore.getState().load();
+    const { assets } = useAssetStore.getState();
     const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" ? input.kind : "all";
     const keyword = String(input.keyword || "").trim().toLowerCase();
     const filtered = assets.filter((asset) => {
@@ -304,7 +317,7 @@ async function addAsset(input: SiteToolInput) {
     if (kind === "text") {
         const content = String(input.content || "").trim();
         if (!content) throw new Error(siteText("textContentRequired"));
-        const id = store.addAsset({ kind: "text", title, coverUrl: "", tags, source, note, data: { content } });
+        const id = await store.addAsset({ kind: "text", title, coverUrl: "", tags, source, note, data: { content } });
         return { ok: true, id, kind: "text" };
     }
     if (kind === "image") {
@@ -316,7 +329,7 @@ async function addAsset(input: SiteToolInput) {
         } catch {
             throw new Error(siteText("imageReadFailed"));
         }
-        const id = store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
+        const id = await store.addAsset({ kind: "image", title, coverUrl: stored.url, tags, source, note, data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType } });
         return { ok: true, id, kind: "image" };
     }
     throw new Error(siteText("assetKindUnsupported"));

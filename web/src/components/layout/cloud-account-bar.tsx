@@ -11,7 +11,6 @@ export function CloudAccountBar() {
     const { message, modal } = App.useApp();
     const saving = useCloudStore((state) => state.saving);
     const errors = useCloudStore((state) => state.errors);
-    const conflict = useCloudStore((state) => Object.values(state.errorCodes).includes("SYNC_CONFLICT"));
     const [details, setDetails] = useState(false);
     const [retrying, setRetrying] = useState(false);
     const failed = Object.keys(errors).length > 0;
@@ -51,20 +50,19 @@ export function CloudAccountBar() {
             <span>{cloudSession?.user.displayName}</span>
             <div className="flex items-center gap-3">
                 {failed ? <>
-                    <button onClick={() => setDetails(true)}>{conflict ? "版本冲突 · 处理" : "保存失败"}</button>
-                    {!conflict && !needsLogin ? <button disabled={saving > 0 || retrying} onClick={() => void retry()}>{retrying ? "正在重试…" : "重试"}</button> : null}
+                    <button onClick={() => setDetails(true)}>保存失败</button>
+                    {!needsLogin ? <button disabled={saving > 0 || retrying} onClick={() => void retry()}>{retrying ? "正在重试…" : "重试"}</button> : null}
                 </> : <span role="status">{saving || retrying ? "正在保存…" : "已保存"}</span>}
-                <Link to="/tasks">云端任务</Link>
                 {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
                 <button disabled={saving > 0 || retrying} onClick={() => void logout()}>退出</button>
             </div>
         </div>
-        <Modal title={needsLogin ? "登录状态已变化" : conflict ? "处理版本冲突" : "保存失败"} open={details && failed} onCancel={() => setDetails(false)} footer={null}>
+        <Modal title={needsLogin ? "登录状态已变化" : "保存失败"} open={details && failed} onCancel={() => setDetails(false)} footer={null}>
             <div className="space-y-3">
                 {Object.entries(errors).map(([key, error]) => <p key={key}>{error}</p>)}
                 <p className="text-sm text-muted-foreground">未保存的修改仅保留在当前页面，关闭或刷新后会丢失。</p>
                 <div className="flex flex-wrap gap-2">
-                    {conflict || needsLogin ? <>
+                    {needsLogin ? <>
                         <Button disabled={saving > 0} onClick={async () => { await flushCanvasPersistence(); saveAs(exportUnsavedChanges(), "creativeone-unsaved.json"); }}>导出未保存修改</Button>
                         <Button danger disabled={saving > 0} onClick={() => modal.confirm({ title: "放弃当前页面未保存的修改？", content: "此操作将放弃所有未保存修改并重新读取云端数据。请先导出需要保留的内容。", okText: "放弃修改并加载云端", cancelText: "取消", onOk: () => { leaving.current = true; window.location.reload(); } })}>放弃修改并加载云端</Button>
                     </> : <Button loading={retrying} disabled={saving > 0} onClick={() => void retry()}>重试保存</Button>}

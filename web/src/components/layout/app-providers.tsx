@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { ProConfigProvider } from "@ant-design/pro-components";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
 import enUS from "antd/es/locale/en_US";
@@ -9,7 +8,6 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { useTranslation } from "react-i18next";
 
-import { ClientRootInit } from "@/components/layout/client-root-init";
 import type { AppLocale } from "@/i18n";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -55,13 +53,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
     return (
         <ConfigProvider locale={locale === "zh-CN" ? zhCN : enUS} theme={getAntThemeConfig(dark)}>
-            <ProConfigProvider dark={dark}>
-                <App>
-                    <QueryClientProvider client={queryClient}>
-                        <ClientRootInit>{children}</ClientRootInit>
-                    </QueryClientProvider>
-                </App>
-            </ProConfigProvider>
+            <App>
+                <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+            </App>
         </ConfigProvider>
     );
 }

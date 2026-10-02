@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { imageToDataUrl } from "@/services/image-storage";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+import { requestVideoGeneration } from "@/services/api/video";
 import { decodeChannelModel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
@@ -73,7 +73,7 @@ export function usePluginHost(params: PluginHostParams) {
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
                 ensureReady(config);
-                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), { signal: options?.signal }));
+                const file = await requestVideoGeneration(config, prompt, toReferences(options?.references), { signal: options?.signal });
                 return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
             },
             generateText: async (prompt, options) => {

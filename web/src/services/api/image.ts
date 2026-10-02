@@ -9,6 +9,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { cloudErrorMessage } from "./error-message";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
+import { imageSettingsForModel } from "@/lib/image-settings";
 import { bananaImageBody } from "./image-adapters/banana";
 import { grokImageBody } from "./image-adapters/grok";
 import { openAiImageParams, normalizeQuality, normalizeBackground, parseRatioValue, parseImageRatio, parseImageDimensions, resolveRequestSize } from "./image-adapters/openai";
@@ -631,7 +632,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-async function requestModelImages(config: ReturnType<typeof resolveModelRequestConfig>, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+async function requestModelImages(config: ReturnType<typeof resolveModelRequestConfig>, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions, userPrompt = prompt) {
     const family = config.imageType;
     const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const requestPrompt = withSystemPrompt(config, prompt);
@@ -639,7 +640,7 @@ async function requestModelImages(config: ReturnType<typeof resolveModelRequestC
         ? bananaImageBody(config.model, requestPrompt, config.size, count, images)
         : grokImageBody(config.model, requestPrompt, config.size, config.quality, count, images);
     const endpoint = family === "banana" || !images.length ? "/images/generations" : "/images/edits";
-    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, endpoint), body, {
+    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, endpoint), { ...body, user_prompt: userPrompt }, {
         headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS,
     });
     return parseImagePayload(response.data);
@@ -647,11 +648,15 @@ async function requestModelImages(config: ReturnType<typeof resolveModelRequestC
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    if (requestConfig.apiFormat !== "gemini") {
+        const settings = imageSettingsForModel(config, config.model || config.imageModel);
+        if (settings.error) throw new Error(settings.error);
+    }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -687,6 +692,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             {
                 model: requestConfig.model,
                 prompt: withSystemPrompt(requestConfig, prompt),
+                user_prompt: prompt,
                 n,
                 ...params,
             },
@@ -705,12 +711,16 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    if (requestConfig.apiFormat !== "gemini") {
+        const settings = imageSettingsForModel(config, config.model || config.imageModel);
+        if (settings.error) throw new Error(settings.error);
+    }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -730,7 +740,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (requestConfig.apiFormat !== "gemini" && !requestConfig.imageType) throw new Error("请先在功能模型配置中为此模型选择图片类型。");
     if (requestConfig.imageType !== "openai" && requestConfig.apiFormat !== "gemini") {
-        try { return await requestModelImages(requestConfig, requestPrompt, references, n, options); }
+        try { return await requestModelImages(requestConfig, requestPrompt, references, n, options, prompt); }
         catch (error) { throw new Error(readAxiosError(error, apiText("requestFailed"))); }
     }
     if (requestConfig.apiFormat === "gemini") {
@@ -742,17 +752,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 
     const params = openAiImageParams(requestConfig);
-    const formData = new FormData();
-    formData.set("model", requestConfig.model);
-    formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-    formData.set("n", String(n));
-    for (const [key, value] of Object.entries(params)) formData.set(key, value);
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    const imageField = files.length > 1 ? "image[]" : "image";
-    files.forEach((file) => formData.append(imageField, file));
+    const editBody = { model: requestConfig.model, prompt: withSystemPrompt(requestConfig, requestPrompt), user_prompt: prompt, n, ...params, image_references: references.map((image) => image.dataUrl || image.url || (image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : "")) };
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), editBody, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
         const images = await parseImagePayload(response.data);
         return images;
     } catch (error) {

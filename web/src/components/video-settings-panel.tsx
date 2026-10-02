@@ -1,82 +1,55 @@
 import { type ReactNode } from "react";
-import { Slider } from "antd";
+import { Slider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
 
-import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
+import { clampVideoSeconds, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN } from "@/lib/media-size";
 import { type AiConfig } from "@/stores/use-config-store";
+import { videoModeOptions, videoResolutionOptions, videoSettingsForModel } from "@/lib/video-settings";
 
-const resolutionOptions = [
-    { value: "480", label: "480p" },
-    { value: "720", label: "720p" },
-    { value: "1080", label: "1080p" },
-];
-const videoModeOptions = [
-    { value: "frames", labelKey: "frames" },
-    { value: "reference", labelKey: "reference" },
-];
-
-export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
-export const videoSizeOptions = videoRatioOptions.map((item) => ({ value: item.value, get label() { return item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value; } }));
-export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MAX };
+export { videoResolutionOptions, videoSizeOptions, videoSecondsRange } from "@/lib/video-settings";
+export { videoResolutionLabel, videoSizeLabel, videoSecondsLabel, videoModeLabel, normalizeVideoModeValue, normalizeVideoSizeValue, normalizeVideoResolutionValue } from "@/lib/video-settings";
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
+    referenceImageCount?: number;
+    onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, referenceImageCount = 0, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
-    const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
-    const videoMode = normalizeVideoModeValue(config.videoMode);
-    const resolution = parseVideoResolution(config.vquality);
-    const selectedRatio = inferVideoRatio(config.size || "auto");
-    const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
-    const applySize = (nextResolution: string, ratio: string) => {
-        onConfigChange("vquality", nextResolution);
-        onConfigChange("size", computeVideoSize(nextResolution, ratio));
-    };
-    const selectResolution = (nextResolution: string) => {
-        if (selectedRatio === "auto") onConfigChange("vquality", nextResolution);
-        else applySize(nextResolution, selectedRatio);
-    };
+    const model = config.model || config.videoModel;
+    const { wan, ratios, resolution, ratio: selectedRatio, seconds, mode: videoMode, forcedReference, generateAudio, watermark, audioOptions, error } = videoSettingsForModel(config, model, referenceImageCount);
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
+                {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
+                    {wan ? <div className="text-sm">{wan.resolution}p（由模型决定）</div> : <div className="grid grid-cols-4 gap-2.5">
+                        {videoResolutionOptions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
-                        <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
-                    </div>
-                </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
-                    </div>
+                        <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} />
+                    </div>}
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {videoRatioOptions.map((item) => (
+                        {ratios.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
                                 className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
                                 style={{ borderColor: selectedRatio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => applySize(resolution, item.value)}
+                                onClick={() => onConfigChange("videoSize", item.value)}
                             >
                                 <SizePreview width={item.width} height={item.height} color={theme.node.text} />
                                 <span>{item.value === "auto" ? t("settingsPanels.common.auto") : item.value}</span>
@@ -86,61 +59,29 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
                     <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
-                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={VIDEO_SECONDS_MAX} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
-                        <SecondsInput value={seconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
+                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={VIDEO_SECONDS_MAX} step={1} value={Number(seconds)} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
+                        <SecondsInput value={Number(seconds)} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
                         <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
                     </div>
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-2.5">
                         {videoModeOptions.map((item) => (
-                            <OptionPill key={item.value} selected={videoMode === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
-                                {t(`settingsPanels.video.modes.${item.labelKey}`)}
+                            <OptionPill key={item.value} selected={videoMode === item.value} disabled={forcedReference && item.value === "frames"} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
+                                {item.label}
                             </OptionPill>
                         ))}
                     </div>
                 </SettingGroup>
+                {forcedReference ? <p className="text-xs" style={{ color: theme.node.muted }}>超过两张图片，已使用参考图模式。</p> : null}
+                {audioOptions ? <>
+                    <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /></div>
+                    <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /></div>
+                </> : null}
+                {wan ? <p className="text-xs" style={{ color: theme.node.muted }}>{wan.referenceVideo ? "参考视频时长参与计费。" : "图生专用模型不支持参考视频。"}</p> : null}
             </div>
         </ImageSettingsTheme>
     );
-}
-
-export function videoResolutionLabel(value: string) {
-    return `${parseVideoResolution(value)}p`;
-}
-
-export function videoSizeLabel(value: string) {
-    const ratio = inferVideoRatio(value);
-    return ratio === "auto" ? i18n.t("settingsPanels.video.adaptive") : ratio;
-}
-
-export function videoSecondsLabel(value: string) {
-    if (String(value).trim() === "-1") return i18n.t("settingsPanels.video.smart");
-    return `${value || "6"}s`;
-}
-
-export function videoModeLabel(value: string) {
-    return i18n.t(`settingsPanels.video.modes.${normalizeVideoModeValue(value)}`);
-}
-
-export function normalizeVideoModeValue(value: string | undefined) {
-    return value === "reference" ? "reference" : "frames";
-}
-
-export function normalizeVideoSizeValue(value: string, resolution = "720") {
-    if (value === "auto") return "auto";
-    if (/^\d+x\d+$/.test(value || "")) return value;
-    const ratio = inferVideoRatio(value);
-    return ratio === "auto" ? "auto" : computeVideoSize(resolution, ratio);
-}
-
-export function normalizeVideoResolutionValue(value: string) {
-    return parseVideoResolution(value);
-}
-
-function updateDimension(key: "width" | "height", value: number | null, dimensions: { width: number; height: number }, onConfigChange: VideoSettingsPanelProps["onConfigChange"]) {
-    const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
-    onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
@@ -195,17 +136,6 @@ function SecondsInput({ value, theme, onCommit }: { value: number; theme: Canvas
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
             />
-        </label>
-    );
-}
-
-function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
-    return (
-        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text, opacity: disabled ? 0.55 : 1 }}>
-            <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
-                {prefix}
-            </span>
-            <input type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
         </label>
     );
 }

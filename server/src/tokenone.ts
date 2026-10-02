@@ -7,13 +7,16 @@ import { requireAdmin, type User } from "./auth.js";
 import { HttpError } from "./http.js";
 import { tokenoneError } from "./model-errors.js";
 import { imageModelTypes, type ImageModelType } from "../../shared/image-models.js";
+import { videoModelTypes, wanModelProfile, type VideoModelType } from "../../shared/video-models.js";
 
 const capabilitySchema = z.enum(["image", "text", "video", "audio"]);
 const capabilityNames = { image: "图片", text: "文本", video: "视频", audio: "音频" };
-export type Channel = { id: string; capability: z.infer<typeof capabilitySchema>; models: string[]; image_types?: Record<string, ImageModelType>; enabled: boolean };
+export type Channel = { id: string; capability: z.infer<typeof capabilitySchema>; models: string[]; image_types?: Record<string, ImageModelType>; video_types?: Record<string, VideoModelType>; enabled: boolean };
 export const featureModelsSchema = z.object({
     models: z.array(z.string().trim().min(1)), default_model: z.string().trim(), enabled: z.boolean(),
     image_types: z.record(z.string(), z.enum(imageModelTypes)).default({}),
+    video_types: z.record(z.string(), z.enum(videoModelTypes)).default({}),
+    model_descriptions: z.record(z.string(), z.string().trim()).default({}),
 }).strict().refine((value) => value.models.length ? value.models.includes(value.default_model) : !value.enabled && !value.default_model, {
     message: "请选择模型列表中的默认模型；启用时至少配置一个模型",
 });
@@ -63,7 +66,7 @@ export function upstreamUrl(path: string) {
 }
 export const channelRouter = Router();
 channelRouter.get("/channels", async (_req, res) => {
-    const { rows } = await db.query("SELECT id,name,capability,models,image_types,is_default FROM channels WHERE enabled ORDER BY is_default DESC,name,id");
+    const { rows } = await db.query("SELECT id,name,capability,models,image_types,video_types,model_descriptions,is_default FROM channels WHERE enabled ORDER BY is_default DESC,name,id");
     res.json({ channels: rows });
 });
 channelRouter.get("/admin/groups", requireAdmin, async (_req, res) => res.json(await enhancer("/groups", res.locals.requestId)));
@@ -78,7 +81,7 @@ channelRouter.get("/admin/models", requireAdmin, async (_req, res) => {
     res.json({ models: [...new Set(result.data.data.map((model) => model.id))] });
 });
 channelRouter.get("/admin/channels", requireAdmin, async (_req, res) => {
-    const { rows } = await db.query("SELECT id,capability,models,image_types,enabled,COALESCE(models->>0,'') AS default_model FROM channels ORDER BY capability");
+    const { rows } = await db.query("SELECT id,capability,models,image_types,video_types,model_descriptions,enabled,COALESCE(models->>0,'') AS default_model FROM channels ORDER BY capability");
     res.json({ channels: rows });
 });
 channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) => {
@@ -86,11 +89,15 @@ channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) 
     const config = featureModelsSchema.parse(req.body);
     const models = config.models.length ? [...new Set([config.default_model, ...config.models])] : [];
     if (capability === "image" && models.some((model) => !config.image_types[model])) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
+    if (capability === "video" && models.some((model) => !config.video_types[model])) throw new HttpError(400, "VIDEO_MODEL_TYPE_REQUIRED");
+    if (capability === "video" && models.some((model) => config.video_types[model] === "wan" && !wanModelProfile(model))) throw new HttpError(400, "INVALID_WAN_MODEL");
     if (Object.keys(config.image_types).some((model) => capability !== "image" || !models.includes(model))) throw new HttpError(400, "INVALID_IMAGE_MODEL_TYPES");
-    const { rows } = await db.query(`INSERT INTO channels (id,name,capability,models,image_types,enabled,is_default) VALUES ($1,$2,$3,$4,$5,$6,true)
-        ON CONFLICT (capability) DO UPDATE SET name=EXCLUDED.name,models=EXCLUDED.models,image_types=EXCLUDED.image_types,enabled=EXCLUDED.enabled,is_default=true
-        RETURNING id,capability,models,image_types,enabled,COALESCE(models->>0,'') AS default_model`,
-        [randomUUID(), capabilityNames[capability], capability, JSON.stringify(models), JSON.stringify(config.image_types), config.enabled]);
+    if (Object.keys(config.video_types).some((model) => capability !== "video" || !models.includes(model))) throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES");
+    if (Object.keys(config.model_descriptions).some((model) => !models.includes(model))) throw new HttpError(400, "INVALID_MODEL_DESCRIPTIONS");
+    const { rows } = await db.query(`INSERT INTO channels (id,name,capability,models,image_types,video_types,model_descriptions,enabled,is_default) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
+        ON CONFLICT (capability) DO UPDATE SET name=EXCLUDED.name,models=EXCLUDED.models,image_types=EXCLUDED.image_types,video_types=EXCLUDED.video_types,model_descriptions=EXCLUDED.model_descriptions,enabled=EXCLUDED.enabled,is_default=true
+        RETURNING id,capability,models,image_types,video_types,model_descriptions,enabled,COALESCE(models->>0,'') AS default_model`,
+        [randomUUID(), capabilityNames[capability], capability, JSON.stringify(models), JSON.stringify(config.image_types), JSON.stringify(config.video_types), JSON.stringify(config.model_descriptions), config.enabled]);
     res.json({ channel: rows[0] });
 });
 

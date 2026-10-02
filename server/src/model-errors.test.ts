@@ -31,12 +31,34 @@ test("known upstream balance rejection stays distinct from the user's balance", 
     const explicit = await tokenoneError(Response.json({ code: "INSUFFICIENT_BALANCE", error: { message: "account balance is negative, please recharge first" } }, { status: 403 }));
     assert.equal(explicit.code, "INSUFFICIENT_BALANCE");
 });
+test("invalid composite bindings have a precise message without exposing provider details", async () => {
+    for (const suffix of ["", " (request id: trace-123)"]) {
+        const error = await tokenoneError(Response.json({ error: { type: "new_api_error", message: `composite has invalid channel bindings${suffix}` } }, { status: 403 }));
+        assert.equal(error.code, "TOKENONE_GROUP_BINDINGS_INVALID");
+        assert.match(modelErrorMessage(error.code)!, /渠道绑定无效/);
+        assert.doesNotMatch(modelErrorMessage(error.code)!, /trace-123/);
+    }
+    const unknown = await tokenoneError(Response.json({ error: { type: "new_api_error", message: "composite has invalid channel bindings: private details" } }, { status: 403 }));
+    assert.equal(unknown.code, "TOKENONE_HTTP_403");
+});
 test("HTML, malformed JSON and missing bodies use safe status messages", async () => {
     for (const body of ["<html>internal secret</html>", "{", ""]) {
         const error = await tokenoneError(new Response(body, { status: 503 }));
         assert.equal(error.code, "TOKENONE_HTTP_503");
         assert.ok(modelErrorMessage(error.code));
     }
+});
+test("unsupported composite endpoints are distinct from account permissions", async () => {
+    for (const suffix of ["", " (request id: trace-123)"]) {
+        const error = await tokenoneError(Response.json({ error: { type: "new_api_error", message: `this endpoint does not support composite groups${suffix}` } }, { status: 403 }));
+        assert.equal(error.code, "TOKENONE_COMPOSITE_ENDPOINT_UNSUPPORTED");
+        assert.match(modelErrorMessage(error.code)!, /组合分组.*不支持此接口/);
+        assert.doesNotMatch(modelErrorMessage(error.code)!, /trace-123|Key 状态/);
+    }
+    const unknown = await tokenoneError(Response.json({ error: { type: "new_api_error", message: "this endpoint does not support composite groups: private" } }, { status: 403 }));
+    assert.equal(unknown.code, "TOKENONE_HTTP_403");
+    const explicit = await tokenoneError(Response.json({ code: "API_KEY_DISABLED", error: { type: "new_api_error", message: "this endpoint does not support composite groups" } }, { status: 403 }));
+    assert.equal(explicit.code, "API_KEY_DISABLED");
 });
 test("upstream authentication failures are not mistaken for an expired app session", async () => {
     const error = await tokenoneError(Response.json({ code: "API_KEY_DISABLED" }, { status: 401 }));

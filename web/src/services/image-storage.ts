@@ -1,5 +1,5 @@
 import { createUserStore, createMemoryStore } from "@/services/cloud-storage";
-import { cloudFileUrl } from "@/services/api/cloud";
+import { cloudApi, cloudFileUrl } from "@/services/api/cloud";
 
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
@@ -16,13 +16,10 @@ export type UploadedImage = {
 
 const store = createUserStore("image_files");
 const previewStore = createMemoryStore();
-const imageLogStore = createUserStore("image_generation_logs");
-const videoLogStore = createUserStore("video_generation_logs");
 const objectUrls = new Map<string, string>();
 const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
 let previewRevision = 0;
-let previewQueue: Promise<unknown> = Promise.resolve();
 const IMAGE_PREVIEW_VERSION = 1;
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
@@ -36,6 +33,8 @@ type ImageReadOptions = { signal?: AbortSignal };
 export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
     if (typeof input !== "string") return storeImage(input, options);
 
+    if (input.startsWith("/api/files/")) return cloudApi<UploadedImage>("/files/info", { method: "POST", body: JSON.stringify({ url: input }), signal: options?.signal });
+    if (/^https?:/.test(input)) return cloudApi<UploadedImage>("/files/import", { method: "POST", body: JSON.stringify({ url: input }), signal: options?.signal });
     const blob = await fetchImageBlob(input, options);
     return storeImage(blob, options);
 }
@@ -138,12 +137,12 @@ export async function getImageBlob(storageKey: string) {
     return store.getItem<Blob>(storageKey);
 }
 
-// 缩略图按图片的 storageKey 缓存在当前页面内存中，不写进业务数据或导出文件。
+// 已上传图片直接使用服务端缩略图；本页新上传图片可复用已有 Blob 生成的预览。
 export function previewUrlFor(storageKey?: string) {
-    return storageKey ? previewUrls.get(storageKey) : undefined;
+    return storageKey ? previewUrls.get(storageKey) || imagePreviewUrl(cloudFileUrl("image_files", storageKey)) : undefined;
 }
 
-// 缩略图在后台补，生成完成后再让用到它的界面重渲染一次。
+// 本页上传产生新的内存预览时通知使用它的界面。
 export function subscribeImagePreviews(listener: () => void) {
     previewListeners.add(listener);
     return () => {
@@ -156,23 +155,12 @@ export function getImagePreviewRevision() {
 }
 
 export async function ensureImagePreview(storageKey?: string) {
-    if (!storageKey) return undefined;
-    const cached = previewUrls.get(storageKey);
-    if (cached) return cached;
-    const stored = await previewStore.getItem<StoredImagePreview>(storageKey).catch(() => null);
-    if (stored?.version === IMAGE_PREVIEW_VERSION) return stored.blob ? cacheImagePreview(storageKey, stored.blob) : undefined;
-    queueImagePreview(storageKey);
-    return undefined;
+    return previewUrlFor(storageKey);
 }
 
-// 缩略图生成排成一队，避免一次打开大量图片时同时解码。
-function queueImagePreview(storageKey: string) {
-    previewQueue = previewQueue
-        .then(async () => {
-            const original = await getImageBlob(storageKey);
-            if (original) await storeImagePreview(storageKey, original);
-        })
-        .catch(() => undefined);
+// Only local server files have a thumbnail endpoint. Never fetch originals to build list previews.
+export function imagePreviewUrl(url: string) {
+    return /^\/api\/files\/(image_files|media_files)\/[^/?#]+$/.test(url) ? `${url}?preview=1` : url;
 }
 
 async function storeImagePreview(storageKey: string, original: Blob) {
@@ -207,47 +195,16 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
-    if (!url || url.startsWith("data:")) return url;
+    if (!url || url.startsWith("data:") || url.startsWith("/api/files/")) return url;
+    if (/^https?:/.test(url)) return (await uploadImage(url, options)).url;
     return blobToDataUrl(await fetchImageBlob(url, options));
 }
 
-export async function deleteStoredImages(keys: Iterable<string>) {
-    await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
-            const url = objectUrls.get(key);
-            if (url) URL.revokeObjectURL(url);
-            objectUrls.delete(key);
-            await deleteImagePreview(key);
-            await store.removeItem(key);
-        }),
-    );
+
+export async function cleanupUnusedImages() {
+    await cloudApi("/files/cleanup", { method: "POST", body: "{}" });
 }
 
-export async function cleanupUnusedImages(usedData: unknown) {
-    const usedKeys = collectImageStorageKeys(usedData);
-    await Promise.all([
-        imageLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-        videoLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-    ]);
-    const unused: string[] = [];
-    for (const key of await store.keys()) if (!usedKeys.has(key)) unused.push(key);
-    const orphanPreviews: string[] = [];
-    await previewStore.iterate((_value, key) => {
-        if (!usedKeys.has(key)) orphanPreviews.push(key);
-    });
-    await Promise.all([deleteStoredImages(unused), ...orphanPreviews.map(deleteImagePreview)]);
-}
-
-export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {
-    if (!value || typeof value !== "object") return keys;
-    if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.startsWith("image:")) keys.add(value.storageKey);
-    Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectImageStorageKeys(child, keys)) : collectImageStorageKeys(item, keys)));
-    return keys;
-}
 
 function blobToDataUrl(blob: Blob) {
     return new Promise<string>((resolve, reject) => {

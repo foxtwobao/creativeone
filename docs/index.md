@@ -16,6 +16,7 @@
 ## Development and Data
 
 - [Local Development](/docs/development/local-development)
+- [用户页面流量巡检](/docs/development/page-size-audit)
 - [Multi-user Cloud Backend](/docs/development/cloud-backend)
 - [Local TokenONE Integration](/docs/development/local-tokenone)
 - [Canvas Data Structure](/docs/development/canvas-data-structure)
@@ -33,11 +34,12 @@
 
 ## Project Progress
 
+- [Reseller 登录会话恢复交接说明](handoffs/reseller-session-recovery.md)
 - [Changelog](/docs/progress/changelog)
 - [Pending Tests](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
 
 ## Notes
 
-- In standalone mode, projects/assets and AI keys remain in the browser, with optional WebDAV synchronization and direct model requests.
-- Optional cloud mode adds IDONE authentication, server-side TokenONE feature routing and per-user PostgreSQL/media storage. Real provider and deployment acceptance remains in Pending Tests.
+- 项目仅支持登录后的服务端模式，业务数据按账号保存在 PostgreSQL 与媒体卷；浏览器仅缓存展示状态和设备偏好，TokenONE Key 不下发浏览器。
+- 尚待真实联调及生产部署验收的事项见 Pending Tests 和 TODO。

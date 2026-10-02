@@ -1,3 +1,4 @@
+import { cloudApi } from "@/services/api/cloud";
 import i18n from "@/i18n";
 import type { ReferenceImage } from "@/types/image";
 
@@ -41,6 +42,7 @@ export function readFileAsDataUrl(file: File) {
 }
 
 export function readImageMeta(dataUrl: string) {
+    if (dataUrl.startsWith("/api/files/")) return cloudApi<{ width: number; height: number; mimeType: string }>("/files/info", { method: "POST", body: JSON.stringify({ url: dataUrl }) });
     return new Promise<{ width: number; height: number; mimeType: string }>((resolve) => {
         const image = new Image();
         const done = () => resolve({ width: image.naturalWidth || 1024, height: image.naturalHeight || 1024, mimeType: dataUrl.match(/^data:([^;]+)/)?.[1] || "image/png" });

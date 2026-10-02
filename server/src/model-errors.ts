@@ -1,41 +1,50 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    TASK_NOT_REMOVABLE: "任务不存在或尚未结束，暂不能从作品中移除。",
+    INVALID_MODEL_DESCRIPTIONS: "模型描述与允许的模型列表不一致，请重新配置。",
     IMAGE_MODEL_TYPE_REQUIRED: "请管理员在功能模型配置中为每个图片模型选择类型。",
     INVALID_IMAGE_MODEL_TYPES: "模型类型配置与图片模型列表不一致，请重新配置。",
     TOKENONE_GENERATION_PERMISSION_DISABLED: "模型服务分组未启用生成权限（服务返回：图片生成未启用）；视频请求也可能受此开关限制，请管理员核查 TokenONE 中对应 Key 所属分组的生成能力配置。",
     TOKENONE_INVALID_RESPONSE: "模型服务返回的数据格式无效，请联系管理员。",
-    ENHANCER_NOT_CONFIGURED: "Reseller 应用接入尚未配置，请联系管理员。",
-    ENHANCER_FAILED: "Reseller 查询失败，请联系管理员并提供请求 ID。",
-    ENHANCER_INVALID_RESPONSE: "Reseller 返回了无效响应，请联系管理员检查接口版本。",
-    UNAUTHORIZED: "Reseller 应用凭证无效、过期或已撤销，请联系管理员更新。",
-    APP_USER_LOGIN_REQUIRED: "模型服务版本较旧，请管理员升级 Reseller 后再从本应用授权。",
-    APP_USER_AUTHORIZATION_REQUIRED: "请先完成模型服务授权，编辑内容将保存后带回。",
+    ENHANCER_NOT_CONFIGURED: "模型服务尚未配置，请联系管理员。",
+    ENHANCER_FAILED: "模型服务请求失败，请稍后重试；如持续失败，请联系管理员并提供请求 ID。",
+    ENHANCER_INVALID_RESPONSE: "模型服务返回了无效响应，请联系管理员。",
+    UNAUTHORIZED: "模型服务接入凭据无效或已撤销，请联系管理员。",
+    APP_USER_LOGIN_REQUIRED: "模型服务版本暂不支持当前授权流程，请联系管理员。",
+    APP_USER_AUTHORIZATION_REQUIRED: "请完成模型服务授权后继续。",
     IDENTITY_BINDING_CONFLICT: "模型服务账号与当前登录身份不一致，请停止操作并联系管理员核验。",
     TOKENONE_USER_DISABLED: "当前模型服务账号已停用，请联系管理员。",
-    REDIRECT_URI_FORBIDDEN: "模型服务授权回调未获允许，请管理员核对 HTTPS 地址及 Reseller 回调白名单。",
+    REDIRECT_URI_FORBIDDEN: "模型服务授权返回地址未获允许，请联系管理员。",
     AUTHORIZATION_FLOW_INVALID: "授权流程已失效，请重新发起授权。",
     TOKENONE_ACCOUNT_USAGE_UNAVAILABLE: "账户余额、用量明细和统计暂不可用，不影响模型生成。",
     TASK_PROVIDER_CHANGED: "模型服务已切换，不能使用当前服务查询历史视频任务，请联系管理员核验原服务。",
     APP_DISABLED: "当前应用已停用，请联系管理员。",
     SCOPE_FORBIDDEN: "应用未获得该接口权限，请联系管理员开通。",
-    ISSUER_FORBIDDEN: "登录身份源与 Reseller 配置不一致，请联系管理员。",
-    KEY_FORBIDDEN: "查询的 Key 不属于当前应用或用户，请检查筛选条件。",
+    ISSUER_FORBIDDEN: "登录身份与模型服务配置不一致，请联系管理员。",
+    KEY_FORBIDDEN: "模型服务访问凭据不属于当前应用或用户，请检查筛选条件。",
     INVALID_REQUEST: "请求参数无效，请检查字段和查询时间范围。",
     INVALID_OR_EXPIRED_CURSOR: "消耗查询游标已失效，请从第一页重新查询并替换原结果。",
     TOKENONE_USER_INACTIVE: "当前 TokenONE 账号已停用，请联系管理员。",
     IDENTITY_CONFLICT: "模型服务身份关联存在冲突，请联系管理员核验。",
-    APP_KEY_BINDING_DISABLED: "应用 Key 绑定已停用，请联系管理员处理。",
-    APP_KEY_UNAVAILABLE: "应用 Key 不可用，请联系管理员处理，不要创建替代 Key。",
-    APP_KEY_RESULT_AMBIGUOUS: "Key 创建结果尚不确定，请联系管理员核验。",
-    APP_SERVICE_NOT_CONFIGURED: "Reseller 应用服务尚未配置，请联系管理员。",
-    APP_WRITES_DISABLED: "Reseller 暂未开放 Key 申请，请联系管理员。",
-    TOKENONE_DATABASE_NOT_CONFIGURED: "TokenONE 数据库尚未配置，请联系管理员。",
-    APP_KEY_ENCRYPTION_NOT_CONFIGURED: "Key 加密服务尚未配置，请联系管理员。",
-    APP_KEY_RECOVERY_UNAVAILABLE: "Key 恢复服务不可用，请联系管理员处理。",
-    APP_DATABASE_UNAVAILABLE: "Reseller 数据库暂时不可用，请稍后手动重试或联系管理员。",
-    APP_SERVICE_UNAVAILABLE: "Reseller 服务暂时不可用，请稍后手动重试或联系管理员。",
+    APP_KEY_BINDING_DISABLED: "当前应用的模型服务访问凭据已停用，请联系管理员。",
+    APP_KEY_UNAVAILABLE: "模型服务访问凭据不可用，请联系管理员处理。",
+    APP_KEY_RESULT_AMBIGUOUS: "模型服务访问凭据创建结果尚不确定，请联系管理员核验。",
+    APP_SERVICE_NOT_CONFIGURED: "模型服务尚未配置，请联系管理员。",
+    APP_WRITES_DISABLED: "模型服务暂未开放授权申请，请联系管理员。",
+    TOKENONE_DATABASE_NOT_CONFIGURED: "模型服务尚未配置完成，请联系管理员。",
+    APP_KEY_ENCRYPTION_NOT_CONFIGURED: "模型服务凭据保护尚未配置，请联系管理员。",
+    APP_KEY_RECOVERY_UNAVAILABLE: "模型服务暂时无法取得访问凭据，请稍后重试；如持续失败，请联系管理员。",
+    APP_DATABASE_UNAVAILABLE: "模型服务暂时不可用，请稍后重试；如持续失败，请联系管理员。",
+    APP_SERVICE_UNAVAILABLE: "模型服务暂时不可用，请稍后重试；如持续失败，请联系管理员。",
     TASK_GROUP_CHANGED: "应用默认分组已变更，暂不能查询原分组的视频任务，请联系管理员处理。",
+    VIDEO_MODEL_TYPE_REQUIRED: "请为每个视频模型选择调用类型。",
+    INVALID_WAN_MODEL: "WAN 模型名须包含 480p、720p 或 1080p 分辨率后缀。",
+    WAN_REFERENCE_VIDEO_UNSUPPORTED: "当前 WAN 图生模型不支持参考视频。",
+    WAN_REFERENCE_IMAGE_REQUIRED: "WAN 图生模型需要至少一张参考图片。",
+    VIDEO_ENDPOINT_MISMATCH: "视频模型与调用协议不匹配，请检查后台模型类型配置。",
+    WAN_PUBLIC_ORIGIN_REQUIRED: "WAN 参考素材需要公网可访问的 HTTPS 应用地址。",
+    MEDIA_LINK_EXPIRED: "参考素材链接已过期，请重新发起任务；请先核查已有任务状态，避免重复计费。",
     TOKENONE_USER_NOT_FOUND: "原生模型服务账号不存在，请联系管理员核验账号及身份绑定。",
     INSUFFICIENT_BALANCE: "账户余额不足，暂时无法使用模型。请前往 TokenONE 充值，完成后手动重试。",
     UPSTREAM_BALANCE_INSUFFICIENT: "该模型的上游服务账户余额不足，请联系管理员处理模型渠道，或切换其他模型后重试。无需重新授权。",
@@ -50,7 +59,9 @@ const messages: Record<string, string> = {
     USER_INACTIVE: "当前 TokenONE 账号已停用，请联系管理员。",
     USAGE_LIMIT_EXCEEDED: "当前账号已达到用量限制，请等待额度恢复或联系管理员。",
     TOKENONE_GROUP_FORBIDDEN: "你尚未获得该渠道的分组授权或有效订阅，请联系管理员。",
-    TOKENONE_GROUP_UNAVAILABLE: "应用默认分组不可用，请联系管理员检查 Reseller 分组配置。",
+    TOKENONE_GROUP_UNAVAILABLE: "模型服务默认分组不可用，请联系管理员。",
+    TOKENONE_GROUP_BINDINGS_INVALID: "TokenONE 默认组合分组（Composite）的渠道绑定无效，请管理员在 TokenONE 中核查并修复分组渠道绑定后重试。",
+    TOKENONE_COMPOSITE_ENDPOINT_UNSUPPORTED: "TokenONE 当前组合分组（Composite）不支持此接口，请管理员处理组合分组的接口支持或调整应用默认分组后再重试。",
     TOKENONE_KEY_UNAVAILABLE: "当前模型 Key 不可用，请联系管理员检查状态、有效期及额度。",
     TOKENONE_KEY_QUOTA_EXHAUSTED: "当前模型 Key 的额度已用完，请联系管理员调整额度后重试。",
     MODEL_NOT_ALLOWED: "该渠道不支持所选模型，请选择其他模型。",
@@ -82,6 +93,12 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
     }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
+    if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^composite has invalid channel bindings(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
+        return new HttpError(403, "TOKENONE_GROUP_BINDINGS_INVALID");
+    }
+    if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^this endpoint does not support composite groups(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
+        return new HttpError(403, "TOKENONE_COMPOSITE_ENDPOINT_UNSUPPORTED");
+    }
     if (!code && response.status === 403 && typeof body?.error?.message === "string" && /^account balance is negative, please recharge first(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
         return new HttpError(403, "UPSTREAM_BALANCE_INSUFFICIENT");
     }

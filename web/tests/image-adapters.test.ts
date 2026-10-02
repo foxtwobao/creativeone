@@ -52,7 +52,7 @@ test("switching from unsupported settings asks for a new selection instead of do
 test("OpenAI parameter extraction preserves generation and edit fields", async () => {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => null } });
     const { openAiImageParams } = await import("../src/services/api/image-adapters/openai");
-    const config = { model: "gpt-image-2", size: "16:9", quality: "high", background: "transparent" };
+    const config = { model: "gpt-image-2", size: "3840x2160", quality: "high", background: "transparent" };
     const params = openAiImageParams(config as Parameters<typeof openAiImageParams>[0]);
     expect(params).toEqual({ quality: "high", size: "3840x2160", background: "transparent", output_format: "png" });
     expect(openAiImageParams({ ...config, model: "dall-e-3" } as Parameters<typeof openAiImageParams>[0]).response_format).toBe("b64_json");

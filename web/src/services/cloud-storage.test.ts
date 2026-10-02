@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { initializeCloud } from "./api/cloud";
-import { createMemoryStore, createUserStore, exportUnsavedChanges, retryCloudSave } from "./cloud-storage";
+import { createMemoryStore, createUserStore, exportUnsavedChanges, refreshUserStore, retryCloudSave } from "./cloud-storage";
 import { useCloudStore } from "../stores/use-cloud-store";
 
 const originalFetch = globalThis.fetch;
@@ -20,9 +20,10 @@ beforeAll(async () => {
         if (init?.method === "PUT") {
             const id = `${namespace}/${decodeURIComponent(encodedKey)}`;
             const body = JSON.parse(String(init.body));
-            if (body.revision !== (records.get(id)?.revision || 0)) return Response.json({ error: "SYNC_CONFLICT" }, { status: 409 });
-            records.set(id, { ...body, revision: body.revision + 1 });
-            return Response.json({ revision: body.revision + 1 });
+            expect(body).not.toHaveProperty("revision");
+            const revision = (records.get(id)?.revision || 0)+1;
+            records.set(id, { ...body, revision });
+            return Response.json({ revision });
         }
         return Response.json({ entries: [...records].filter(([id]) => id.startsWith(`${namespace}/`)).map(([id, entry]) => ({ ...entry, key: id.slice(namespace.length + 1) })) });
     }) as typeof fetch;
@@ -30,7 +31,7 @@ beforeAll(async () => {
 });
 afterAll(() => { globalThis.fetch = originalFetch; });
 
-test("loads cloud state and serializes writes against the latest revision", async () => {
+test("loads cloud state and serializes confirmed plugin key writes without client versions", async () => {
     records.set("app_state/canvas", { value: "cloud", revision: 3, deleted: false });
     const store = createUserStore("app_state");
     expect(await store.getItem("canvas")).toBe("cloud");
@@ -43,7 +44,7 @@ test("failed changes stay in memory and retry saves them without reporting succe
     const store = createUserStore("preferences");
     await store.setItem("config", "saved");
     offline = true;
-    await store.setItem("config", "unsaved");
+    await expect(store.setItem("config", "unsaved")).rejects.toThrow("offline");
     expect(records.get("preferences/config")?.value).toBe("saved");
     expect(await store.getItem("config")).toBe("unsaved");
     expect(useCloudStore.getState().errors["preferences/config"]).toBe("offline");
@@ -55,17 +56,6 @@ test("failed changes stay in memory and retry saves them without reporting succe
     expect(useCloudStore.getState().saving).toBe(0);
 });
 
-test("revision conflicts preserve remote data and expose recoverable pending changes", async () => {
-    const store = createUserStore("image_generation_logs");
-    await store.setItem("history", "initial");
-    records.set("image_generation_logs/history", { value: "other device", revision: 2, deleted: false });
-    await store.setItem("history", "current page");
-    await retryCloudSave();
-    expect(records.get("image_generation_logs/history")?.value).toBe("other device");
-    expect(useCloudStore.getState().errorCodes["image_generation_logs/history"]).toBe("SYNC_CONFLICT");
-    expect(await exportUnsavedChanges().text()).toContain("current page");
-});
-
 test("media is read from the server and preview caches are disposable", async () => {
     const store = createUserStore("image_files");
     expect(await store.keys()).toEqual(["image:one"]);
@@ -73,4 +63,19 @@ test("media is read from the server and preview caches are disposable", async ()
     const cache = createMemoryStore();
     await cache.setItem("preview", "temporary");
     expect(await createMemoryStore().getItem("preview")).toBeNull();
+});
+
+test("refresh reads another browser's server value while preserving a failed edit in page memory", async () => {
+    const store = createUserStore("app_state");
+    await store.setItem("plugin:dirty", "saved");
+    offline = true;
+    await expect(store.setItem("plugin:dirty", "unsaved")).rejects.toThrow("offline");
+    offline = false;
+    records.set("app_state/plugin:remote", {value: "other browser", revision: 1, deleted: false});
+    await refreshUserStore("app_state");
+    expect(await store.getItem("plugin:remote")).toBe("other browser");
+    expect(await store.getItem("plugin:dirty")).toBe("unsaved");
+    await retryCloudSave();
+    expect(records.get("app_state/plugin:dirty")?.value).toBe("unsaved");
+    expect(useCloudStore.getState().saving).toBe(0);
 });

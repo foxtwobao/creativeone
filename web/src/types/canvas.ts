@@ -56,6 +56,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
+    videoSize?: string;
     quality?: string;
     background?: string;
     count?: number;
@@ -82,7 +83,8 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     videoTaskId?: string;
-    videoTaskProvider?: "openai" | "gemini";
+    videoTaskProvider?: "seedance" | "wan";
+    videoTaskModel?: string;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };

@@ -1,8 +1,10 @@
+import { registerCloudRetry } from "@/services/cloud-storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { cloudSession } from "@/services/api/cloud";
-import { createUserStore } from "@/services/cloud-storage";
+import { getAccountResource, changeAccountResource } from "@/services/api/account";
+import { useCloudStore } from "@/stores/use-cloud-store";
 import type { ImageModelType } from "../../../shared/image-models";
+import type { VideoModelType } from "../../../shared/video-models";
 
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -13,6 +15,8 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     imageType?: ImageModelType;
+    videoType?: VideoModelType;
+    description?: string;
     script?: string;
 };
 
@@ -49,6 +53,7 @@ export type AiConfig = {
     models: string[];
     quality: string;
     size: string;
+    videoSize: string;
     background: string;
     count: string;
     canvasImageCount: string;
@@ -80,6 +85,7 @@ export const defaultConfig: AiConfig = {
     models: [],
     quality: "auto",
     size: "1:1",
+    videoSize: "1:1",
     background: "",
     count: "1",
     canvasImageCount: "3",
@@ -89,7 +95,7 @@ const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "mode
 function applyCloudConfig(config: AiConfig): AiConfig {
     const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
         id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
-        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name] })),
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], description: channel.model_descriptions?.[name] })),
     }));
     const next = { ...config, channels, models: modelOptionsFromChannels(channels), baseUrl: "", apiKey: "", apiFormat: "openai" as const };
     for (const [key, capability] of [["imageModel", "image"], ["textModel", "text"], ["videoModel", "video"], ["audioModel", "audio"]] as const) {
@@ -99,7 +105,7 @@ function applyCloudConfig(config: AiConfig): AiConfig {
     next.model = next.imageModel;
     return next;
 }
-const preferenceStore = createUserStore("preferences");
+
 
 type ConfigStore = {
     config: AiConfig;
@@ -132,6 +138,10 @@ export function modelImageTypeOf(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.imageType;
 }
 
+export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelType {
+    return findChannelModel(config, value)?.model.videoType || "seedance";
+}
+
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
     if (!capability) return true;
     return modelCapabilityOf(config, value) === capability;
@@ -160,35 +170,44 @@ function isAiConfigReady(config: AiConfig, model: string) {
     return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
 }
 
-export const useConfigStore = create<ConfigStore>()(
-    persist(
-        (set) => ({
-            config: applyCloudConfig(defaultConfig),
-            isConfigOpen: false,
-            shouldPromptContinue: false,
-            updateConfig: (key, value) =>
-                set((state) => ({
-                    config: managedKeys.has(key) ? state.config : {
-                        ...state.config,
-                        [key]: value,
-                    },
-                })),
-            isAiConfigReady: (config, model) => isAiConfigReady(config, model),
-            openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),
-            setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
-            clearPromptContinue: () => set({ shouldPromptContinue: false }),
-        }),
-        {
-            name: CONFIG_STORE_KEY,
-            storage: createJSONStorage(() => ({ getItem: (key) => preferenceStore.getItem<string>(key), setItem: async (key, value) => { await preferenceStore.setItem(key, value); }, removeItem: (key) => preferenceStore.removeItem(key) })),
-            partialize: (state) => ({ config: Object.fromEntries(Object.entries(state.config).filter(([key]) => !managedKeys.has(key))) as AiConfig }),
-            merge: (persisted, current) => {
-                const saved = (persisted || {}) as Partial<ConfigStore>;
-                return { ...current, config: applyCloudConfig({ ...defaultConfig, ...saved.config }) };
-            },
-        },
-    ),
-);
+let settingsVersion = 0;
+let settingsSaving: Promise<void> = Promise.resolve();
+const pendingSettings = new Map<string, string>();
+function saveSetting(key: string, value: string) {
+    pendingSettings.set(key, value);
+    const cloud = useCloudStore.getState(); cloud.begin();
+    const action = settingsSaving.catch(() => undefined).then(async () => {
+        try {
+            await changeAccountResource("/settings", { [key]: value });
+            if (pendingSettings.get(key) === value) { pendingSettings.delete(key); cloud.setError(`settings/${key}`); }
+        } catch (error) { cloud.setError(`settings/${key}`, error instanceof Error ? error.message : "设置保存失败"); throw error; }
+        finally { cloud.end(); }
+    });
+    settingsSaving = action; return action;
+}
+registerCloudRetry(async () => { await settingsSaving.catch(() => undefined); for (const [key, value] of [...pendingSettings]) await saveSetting(key, value); });
+
+export const useConfigStore = create<ConfigStore>()((set, get) => ({
+    config: applyCloudConfig(defaultConfig),
+    isConfigOpen: false,
+    shouldPromptContinue: false,
+    updateConfig: (key, value) => {
+        if (managedKeys.has(key) || get().config[key] === value) return;
+        settingsVersion++;
+        set((state) => ({ config: { ...state.config, [key]: value } }));
+        void saveSetting(key, value as string).catch(() => undefined);
+    },
+    isAiConfigReady: (config, model) => isAiConfigReady(config, model),
+    openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),
+    setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
+    clearPromptContinue: () => set({ shouldPromptContinue: false }),
+}));
+export async function loadUserSettings() {
+    const version = settingsVersion;
+    const saved = await getAccountResource<Partial<AiConfig>>("/settings");
+    if (version !== settingsVersion) return;
+    useConfigStore.setState({ config: applyCloudConfig({ ...defaultConfig, ...saved }) });
+}
 
 export function useEffectiveConfig() {
     return useConfigStore((state) => state.config);
@@ -212,11 +231,8 @@ export function modelOptionName(value: string) {
     return decodeChannelModel(value)?.model || value;
 }
 
-export function modelOptionLabel(config: AiConfig, value: string) {
-    const decoded = decodeChannelModel(value);
-    if (!decoded) return value;
-    const channel = config.channels.find((item) => item.id === decoded.channelId);
-    return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
+export function modelOptionLabel(_config: AiConfig, value: string) {
+    return modelOptionName(value);
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
