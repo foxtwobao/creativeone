@@ -12,6 +12,7 @@ import { type AiConfig } from "@/stores/use-config-store";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
+    referenceImageCount?: number;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     onMissingConfig?: () => void;
     onOpenChange?: (open: boolean) => void;
@@ -21,7 +22,7 @@ type CanvasImageSettingsPopoverProps = {
     autoAdjustOverflow?: boolean;
 };
 
-export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasImageSettingsPopoverProps) {
+export function CanvasImageSettingsPopover({ config, referenceImageCount = 0, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasImageSettingsPopoverProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
@@ -29,9 +30,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
     const model = config.model || config.imageModel;
-    const { profile, quality, ratio, size, error } = imageSettingsForModel(config, model);
+    const { profile, quality, ratio, size, scale, error, ratioLocked } = imageSettingsForModel(config, model, referenceImageCount);
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const sizeLabel = error ? "请重新选择参数" : profile ? `${profile.fixedResolution ? `${profile.fixedResolution.toUpperCase()} · ` : ""}${imageSizeLabel(profile.resolutions.length === 1 ? ratio : size)}` : "未配置图片类型";
+    const sizeLabel = error ? "请重新选择参数" : ratioLocked ? `${scale === "auto" ? "自动" : scale.toUpperCase()} · 参考图比例` : profile ? `${profile.fixedResolution ? `${profile.fixedResolution.toUpperCase()} · ` : ""}${imageSizeLabel(profile.resolutions.length === 1 ? ratio : size)}` : "未配置图片类型";
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -60,7 +61,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} referenceImageCount={referenceImageCount} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
@@ -82,6 +83,7 @@ function ImageSettingsPortal({
     placement,
     theme,
     config,
+    referenceImageCount,
     onConfigChange,
 }: {
     buttonRect: DOMRect;
@@ -89,6 +91,7 @@ function ImageSettingsPortal({
     placement: CanvasImageSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
+    referenceImageCount?: number;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
     const width = 356;
@@ -121,7 +124,7 @@ function ImageSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <ImageSettingsPanel config={config} referenceImageCount={referenceImageCount} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,
         document.body,
     );

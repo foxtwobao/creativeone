@@ -712,7 +712,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     if (requestConfig.apiFormat !== "gemini") {
-        const settings = imageSettingsForModel(config, config.model || config.imageModel);
+        const settings = imageSettingsForModel(config, config.model || config.imageModel, references.length);
         if (settings.error) throw new Error(settings.error);
     }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));

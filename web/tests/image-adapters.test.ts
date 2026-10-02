@@ -35,8 +35,8 @@ test("automatic sizing leaves ratio and resolution to the provider", () => {
 
 test("Grok editing uses JSON image/image lists and keeps all references", () => {
     const one = grokImageBody("grok-imagine-image", "猫", "2048x1152", "high", 1, ["data:image/png;base64,YQ=="]);
-    expect(one).toMatchObject({ aspect_ratio: "16:9", resolution: "2k", image: { type: "image_url", url: "data:image/png;base64,YQ==" } });
-    for (const key of ["size", "quality", "background", "output_format", "images"]) expect(one).not.toHaveProperty(key);
+    expect(one).toMatchObject({ resolution: "2k", image: { type: "image_url", url: "data:image/png;base64,YQ==" } });
+    for (const key of ["size", "quality", "background", "output_format", "images", "aspect_ratio"]) expect(one).not.toHaveProperty(key);
     const many = grokImageBody("grok-imagine-image-2.0", "猫", "1:1", "medium", 2, ["a", "b"]);
     expect(many).toMatchObject({ quality: "medium", n: 2, images: [{ type: "image_url", url: "a" }, { type: "image_url", url: "b" }] });
     expect(many).not.toHaveProperty("image");
@@ -56,4 +56,26 @@ test("OpenAI parameter extraction preserves generation and edit fields", async (
     const params = openAiImageParams(config as Parameters<typeof openAiImageParams>[0]);
     expect(params).toEqual({ quality: "high", size: "3840x2160", background: "transparent", output_format: "png" });
     expect(openAiImageParams({ ...config, model: "dall-e-3" } as Parameters<typeof openAiImageParams>[0]).response_format).toBe("b64_json");
+});
+
+
+test("GPT 2.5 exposes and sends extra quality levels without applying them to GPT 2", async () => {
+    const { openAiImageParams } = await import("../src/services/api/image-adapters/openai");
+    for (const model of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst-4k"]) {
+        for (const quality of ["xhigh", "max"]) {
+            expect(imageModelProfile(model, "openai").qualities).toContain(quality);
+            expect(openAiImageParams({ model, quality, size: "1024x1024" } as any).quality).toBe(quality);
+        }
+    }
+    expect(imageModelProfile("gpt-image-2", "openai").qualities).not.toContain("max");
+    expect(imageModelProfile("my-banana-4k", "banana").fixedResolution).toBeUndefined();
+});
+
+test("Grok rejects extra references and preserves extended ratios across resolution changes", async () => {
+    const { computeMediaSize } = await import("../src/lib/media-size");
+    expect(() => grokImageBody("grok-imagine-image", "prompt", "auto", "auto", 1, ["a", "b"])).toThrow("1 张");
+    expect(() => grokImageBody("grok-imagine-image-2.0", "prompt", "auto", "auto", 1, Array(6).fill("a"))).toThrow("5 张");
+    for (const resolution of ["1k", "2k"]) for (const ratio of imageModelProfile("grok-imagine-image-2.0", "grok").ratios.filter((ratio) => ratio !== "auto")) {
+        expect(grokImageBody("grok-imagine-image-2.0", "prompt", computeMediaSize(resolution, ratio), "auto", 1, [])).toMatchObject({ resolution, aspect_ratio: ratio });
+    }
 });

@@ -16,8 +16,10 @@ export function generationPrompt(request?: Record<string, any> | null): string {
 
 export function generationRequestSettings(capability: string, request: Record<string, any>) {
     const ratio = request.aspect_ratio || request.ratio || "auto";
+    // Single-image Grok edits omit ratio; this preset retains resolution while the editor locks ratio to the reference.
+    const imageRatio = request.aspect_ratio || (request.image ? "1:1" : "auto");
     return {
-        size: capability === "image" ? request.size || imageSizePresets[request.resolution]?.[request.aspect_ratio] || request.aspect_ratio || "auto" : "",
+        size: capability === "image" ? request.size || imageSizePresets[request.resolution]?.[imageRatio] || request.aspect_ratio || "auto" : "",
         videoSize: capability === "video" ? ratio === "adaptive" ? "auto" : ratio : "",
         quality: request.quality || "auto",
         background: request.background || "",
