@@ -69,7 +69,11 @@ export function inferMediaScale(size: string, storedScale?: string) {
 
 export function inferMediaRatio(size: string, fallback = "1:1") {
     if (!size || size === "auto") return "auto";
-    if (mediaRatioOptions.some((item) => item.value === size)) return size;
+    if (parseAspectRatio(size)) return size;
+    for (const presets of Object.values(imageSizePresets)) {
+        const exact = Object.entries(presets).find(([, pixels]) => pixels === size);
+        if (exact) return exact[0];
+    }
     const pixels = parsePixelSize(size) || parseAspectRatio(size);
     if (!pixels) return fallback;
     const target = pixels.width / pixels.height;
@@ -106,6 +110,7 @@ export function parseVideoResolution(value: string | undefined) {
     const raw = String(value || "").trim().toLowerCase();
     if (raw === "low") return "480";
     if (raw === "auto" || raw === "high" || raw === "medium") return "720";
+    if (raw === "4k") return raw;
     const number = raw.replace(/p$/i, "");
     return /^\d+$/.test(number) && Number(number) > 0 ? number : "720";
 }

@@ -34,7 +34,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const mode = node.metadata?.generationMode || "image";
     const nodes = useCanvasStore((state) => state.nodes);
     const connections = useCanvasStore((state) => state.connections);
-    const referenceImageCount = mode === "video" ? buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "").imageCount : 0;
+    const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "") : undefined;
+    const referenceImageCount = referenceContext?.imageCount || 0;
     const config = buildGenerationConfig(globalConfig, node, mode);
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
@@ -107,9 +108,9 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
                 <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
-                    <CanvasVideoSettingsPopover config={config} referenceImageCount={referenceImageCount} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                    <CanvasVideoSettingsPopover config={config} referenceMedia={{ videos: referenceContext?.referenceVideos, audios: referenceContext?.referenceAudios }} referenceImageCount={referenceImageCount} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                 ) : mode === "image" ? (
-                    <CanvasImageSettingsPopover config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
+                    <CanvasImageSettingsPopover referenceImageCount={referenceImageCount} config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
                 ) : mode === "audio" ? (
                     <CanvasAudioSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
                 ) : (

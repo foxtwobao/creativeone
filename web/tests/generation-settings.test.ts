@@ -106,3 +106,41 @@ test("canvas video panel exposes audio and watermark, removes W/H and shows effe
     expect(wan).not.toContain('aria-label="生成音频"');
     expect(wan).toContain("由模型决定");
 });
+
+test("model-aware panels show extra GPT quality and single-image Grok follows the reference ratio", async () => {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { ImageSettingsPanel } = await import("@/components/image-settings-panel");
+    const { canvasThemes } = await import("@/lib/canvas-theme");
+    const model = "models::gpt-image-2.5-flare";
+    const configured = { ...config, model, channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "gpt-image-2.5-flare", capability: "image" as const, imageType: "openai" as const }] }] };
+    const markup = renderToStaticMarkup(createElement(ImageSettingsPanel, { config: configured, theme: canvasThemes.light, onConfigChange: () => {} }));
+    expect(markup).toContain("极致");
+    expect(markup).toContain("超高");
+    const grok = renderToStaticMarkup(createElement(ImageSettingsPanel, { config: { ...config, model: "models::grok-imagine-image-2.0", size: "2048x1152" }, referenceImageCount: 1, theme: canvasThemes.dark, onConfigChange: () => {} }));
+    expect(grok).toContain("单图编辑沿用参考图片比例");
+    expect(grok).not.toContain(">16:9<");
+    const restored = generationRequestSettings("image", { image: { url: "reference.png" }, resolution: "2k" });
+    const { grokImageBody } = await import("@/services/api/image-adapters/grok");
+    const request = grokImageBody("grok-imagine-image-2.0", "edit", restored.size, "auto", 1, ["reference.png"]);
+    expect(request.resolution).toBe("2k");
+    expect(request).not.toHaveProperty("aspect_ratio");
+    expect(images.imageSettingsForModel(configured, model, 17).error).toContain("16 张");
+});
+
+test("Seedance panel and history preserve automatic duration and 4k", async () => {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { VideoSettingsPanel } = await import("@/components/video-settings-panel");
+    const { canvasThemes } = await import("@/lib/canvas-theme");
+    const model = "models::doubao-seedance-2-0-260128";
+    const configured = { ...config, model, videoSeconds: "-1", vquality: "4k", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const }] }] };
+    const markup = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: configured, theme: canvasThemes.light, onConfigChange: () => {} }));
+    expect(markup).toContain("4K");
+    expect(markup).toContain('aria-label="自动时长"');
+    expect(markup).toContain('max="15"');
+    expect(markup).not.toContain('min="1"');
+    expect(generationRequestSettings("video", { duration: -1, resolution: "4k" })).toMatchObject({ videoSeconds: "-1", vquality: "4k" });
+    const { taskSettings } = await import("@/pages/assets/task-details");
+    expect(taskSettings({ duration: -1, quality: "max" })).toEqual([{ key: "duration", label: "时长", children: "自动" }, { key: "quality", label: "质量", children: "极致" }]);
+});

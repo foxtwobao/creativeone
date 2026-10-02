@@ -134,7 +134,7 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const imageSettings = imageSettingsForModel(effectiveConfig, model);
+    const imageSettings = imageSettingsForModel(effectiveConfig, model, references.length);
     const canGenerate = Boolean(prompt.trim()) && !imageSettings.error;
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
 
@@ -336,6 +336,7 @@ export default function ImagePage() {
             openConfigDialog(true);
             return null;
         }
+        if (imageSettings.error) { message.error(imageSettings.error); return null; }
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
@@ -390,7 +391,7 @@ export default function ImagePage() {
                         </div>
                         <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-2">
                             <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" className="max-w-[min(70vw,320px)]" onMissingConfig={() => openConfigDialog(false)} />
-                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings />}><button className="studio-chip" onClick={() => window.dispatchEvent(new CustomEvent("model-picker-open", { detail: "parameters" }))}><SlidersHorizontal size={14} />参数</button></Popover>
+                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings referenceImageCount={references.length} />}><button className="studio-chip" onClick={() => window.dispatchEvent(new CustomEvent("model-picker-open", { detail: "parameters" }))}><SlidersHorizontal size={14} />参数</button></Popover>
                         </div>
                     </div>
                     <div className="studio-composer-caption"><span>{references.length ? `${references.length} 张参考图 · ` : ""}{modelOptionLabel(effectiveConfig, model)} · {generationCount} 张</span><span>Enter 生成 · Shift + Enter 换行</span></div>
@@ -514,7 +515,7 @@ export default function ImagePage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <GenerationSettings referenceImageCount={references.length} config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                             </div>
                         </div>
 
@@ -584,7 +585,7 @@ export default function ImagePage() {
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings referenceImageCount={references.length} config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
             {promptDialogOpen ? <Suspense fallback={null}><PromptSelectDialog open onOpenChange={setPromptDialogOpen} onSelect={setPrompt} /></Suspense> : null}
@@ -596,7 +597,7 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, referenceImageCount }: { referenceImageCount: number; config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
 
@@ -607,7 +608,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <Suspense fallback={<p className="text-sm text-muted-foreground">正在加载生成设置…</p>}><ImageSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} /></Suspense>
+                <Suspense fallback={<p className="text-sm text-muted-foreground">正在加载生成设置…</p>}><ImageSettingsPanel referenceImageCount={referenceImageCount} config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} /></Suspense>
             </div>
         </>
     );

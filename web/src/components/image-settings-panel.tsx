@@ -16,14 +16,15 @@ type ImageSettingsPanelProps = {
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    referenceImageCount?: number;
     maxCount?: number;
     quickCount?: number;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", referenceImageCount = 0, maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const { t } = useTranslation();
-    const settings = imageSettingsForModel(config, config.model || config.imageModel);
-    const { profile, qualities, ratios, scales, quality, size: activeSize, scale: selectedScale, ratio: selectedRatio, error } = settings;
+    const settings = imageSettingsForModel(config, config.model || config.imageModel, referenceImageCount);
+    const { profile, qualities, ratios, scales, quality, size: activeSize, scale: selectedScale, ratio: selectedRatio, error, ratioLocked } = settings;
     if (!profile) return <div className="text-sm" style={{ color: theme.node.muted }}>{error}</div>;
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const transparentBackground = config.background === "transparent";
@@ -85,7 +86,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div> : null}
-                <div className="space-y-2.5">
+                {ratioLocked ? <p className="text-xs" style={{ color: theme.node.muted }}>单图编辑沿用参考图片比例。</p> : <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.aspectRatio")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {ratios.map((item) => (
@@ -102,7 +103,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </button>
                         ))}
                     </div>
-                </div>
+                </div>}
                 {profile.transparent ? <div className="flex items-center justify-between gap-3">
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.transparent")}</SettingTitle>
@@ -147,6 +148,8 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageQualityLabel(value: string) {
+    if (value === "xhigh") return "超高";
+    if (value === "max") return "极致";
     return (["auto", "high", "medium", "low"].includes(value) ? i18n.t(`settingsPanels.common.${value}`) : value);
 }
 

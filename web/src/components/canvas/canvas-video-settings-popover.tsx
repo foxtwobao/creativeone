@@ -12,15 +12,16 @@ import { videoSettingsForModel } from "@/lib/video-settings";
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
     referenceImageCount?: number;
+    referenceMedia?: Parameters<typeof videoSettingsForModel>[3];
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
-export function CanvasVideoSettingsPopover({ config, referenceImageCount = 0, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
+export function CanvasVideoSettingsPopover({ config, referenceImageCount = 0, referenceMedia, onConfigChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const model = config.model || config.videoModel;
-    const settings = videoSettingsForModel(config, model, referenceImageCount);
+    const settings = videoSettingsForModel(config, model, referenceImageCount, referenceMedia);
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
@@ -47,7 +48,7 @@ export function CanvasVideoSettingsPopover({ config, referenceImageCount = 0, on
         };
     }, [open]);
 
-    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} referenceImageCount={referenceImageCount} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} referenceImageCount={referenceImageCount} referenceMedia={referenceMedia} onConfigChange={onConfigChange} /> : null;
 
     return (
         <>
@@ -70,6 +71,7 @@ function VideoSettingsPortal({
     theme,
     config,
     referenceImageCount,
+    referenceMedia,
     onConfigChange,
 }: {
     buttonRect: DOMRect;
@@ -78,6 +80,7 @@ function VideoSettingsPortal({
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
     referenceImageCount: number;
+    referenceMedia?: Parameters<typeof videoSettingsForModel>[3];
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 }) {
     const width = 356;
@@ -110,7 +113,7 @@ function VideoSettingsPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <VideoSettingsPanel config={config} referenceImageCount={referenceImageCount} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+            <VideoSettingsPanel config={config} referenceImageCount={referenceImageCount} referenceMedia={referenceMedia} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,
         document.body,
     );

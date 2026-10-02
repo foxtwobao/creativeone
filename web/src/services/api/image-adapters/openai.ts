@@ -1,7 +1,7 @@
 import i18n from "@/i18n";
 import { imageSizePresets } from "@/lib/media-size";
 import type { AiConfig } from "@/stores/use-config-store";
-import { IMAGE_DIMENSION_STEP } from "../../../../../shared/image-models";
+import { IMAGE_DIMENSION_STEP, imageModelProfile, imagePixelSizeError } from "../../../../../shared/image-models";
 
 const apiText = (key: string) => i18n.t(`apiErrors.${key}`);
 
@@ -9,6 +9,8 @@ const QUALITY_BASE: Record<string, number> = {
     low: 1024,
     medium: 2048,
     high: 2880,
+    xhigh: 2880,
+    max: 2880,
     standard: 1024,
     hd: 2048,
 };
@@ -18,9 +20,6 @@ const QUALITY_ALIASES: Record<string, string> = {
     "4k": "high",
 };
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
-const IMAGE_MIN_PIXELS = 655360;
-const IMAGE_MAX_PIXELS = 8294400;
-const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 
 export function openAiImageParams(config: AiConfig) {
@@ -32,7 +31,7 @@ export function openAiImageParams(config: AiConfig) {
         ...(size ? { size } : {}),
         ...(background ? { background } : {}),
         // GPT Image always returns base64 and rejects response_format.
-        ...(/gpt-image/.test(config.model) ? {} : { response_format: "b64_json" }),
+        ...(imageModelProfile(config.model, "openai").omitResponseFormat ? {} : { response_format: "b64_json" }),
         output_format: "png",
     };
 }
@@ -52,7 +51,11 @@ export function normalizeBackground(background: string | undefined) {
 function resolveSize(ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
     const preset = imageSizePresets["1k"][ratio];
-    if (preset) return preset;
+    if (preset) {
+        const [width, height] = preset.split("x").map(Number);
+        validateImageSize(width, height);
+        return preset;
+    }
     const landscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = landscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
     const shortSide = DEFAULT_IMAGE_SHORT_SIDE;
@@ -85,12 +88,8 @@ export function parseImageDimensions(value: string) {
 }
 
 function validateImageSize(width: number, height: number) {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error(apiText("positiveImageDimensions"));
-    if (width % IMAGE_DIMENSION_STEP !== 0 || height % IMAGE_DIMENSION_STEP !== 0) throw new Error(apiText("imageDimensionStep"));
-    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error(apiText("imageEdgeLimit"));
-    if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error(apiText("imageRatioLimit"));
-    const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error(apiText("imagePixelLimit"));
+    const error = imagePixelSizeError(`${width}x${height}`);
+    if (error) throw new Error(error);
 }
 
 export function resolveRequestSize(size: string) {

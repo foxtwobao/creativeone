@@ -75,7 +75,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
-    const settings = videoSettingsForModel(config, selectedModel, references.length);
+    const settings = videoSettingsForModel(config, selectedModel, references.length, options);
     if (settings.error) throw new Error(settings.error);
     if (modelVideoTypeOf(config, selectedModel) === "wan") return createWanTask(config, requestConfig, selectedModel, prompt, references, options);
     const [images, videos, audios] = await Promise.all([
@@ -92,8 +92,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             ...videos.map((url) => ({ type: "video_url", video_url: { url }, role: "reference_video" })),
             ...audios.map((url) => ({ type: "audio_url", audio_url: { url }, role: "reference_audio" })),
         ],
+        ...(settings.profile.explicitReferenceTask && (mode === "reference" || videos.length || audios.length) ? { omni_reference_task_type: "reference" } : {}),
         duration: Number(seconds),
-        resolution: `${resolution}p`,
+        resolution: resolution === "4k" ? "4k" : `${resolution}p`,
         ratio: ratio === "auto" ? "adaptive" : ratio,
         generate_audio: generateAudio,
         watermark: watermark,
@@ -143,7 +144,6 @@ async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: s
     if (!profile) throw new Error("WAN 模型名需包含有效的分辨率后缀");
     if (!profile.referenceVideo && options?.videos?.length) throw new Error("当前 WAN 图生模型不支持参考视频");
     if (!profile.referenceVideo && !references.length) throw new Error("WAN 图生模型需要至少一张参考图片");
-    if (references.length > 10) throw new Error("WAN 最多支持 10 张参考图");
     const { mode, ratio, seconds } = videoSettingsForModel(config, model, references.length);
     const [reference_images, reference_videos, reference_audios] = await Promise.all([
         Promise.all(references.map(async (image, index) => {

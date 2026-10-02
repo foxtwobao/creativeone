@@ -5,8 +5,8 @@ import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
 import { imageSettingsForModel } from "@/lib/image-settings";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import { clampVideoSeconds, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
-import { videoResolutionOptions, videoSecondsRange, videoSizeOptions, videoSettingsForModel } from "@/lib/video-settings";
+import { inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
+import { videoSizeOptions, videoSettingsForModel } from "@/lib/video-settings";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
@@ -156,6 +156,7 @@ function getImageConfig() {
         qualityOptions: settings.qualities,
         scaleOptions: settings.scales,
         sizeOptions: settings.ratios,
+        maxReferenceImages: settings.profile?.maxReferences ?? null,
         parameterError: settings.error,
         countRange: { min: 1, max: 15 },
     };
@@ -206,8 +207,12 @@ function getVideoConfig() {
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         sizeOptions: videoSizeOptions.filter((item) => settings.ratios.some((ratio) => ratio.value === item.value)),
-        secondsRange: videoSecondsRange,
-        resolutionOptions: videoResolutionOptions.filter((item) => !settings.wan || item.value === settings.resolution),
+        secondsRange: settings.secondsRange,
+        automaticSeconds: settings.autoSeconds,
+        maxReferenceImages: settings.profile.maxImages,
+        maxReferenceVideos: settings.profile.maxVideos,
+        maxReferenceAudios: settings.profile.maxAudios,
+        resolutionOptions: settings.wan ? [{ value: settings.resolution, label: `${settings.resolution}p` }] : settings.resolutions,
         referenceVideo: settings.wan?.referenceVideo ?? true,
         fixedResolution: Boolean(settings.wan),
         modeOptions: [
@@ -238,7 +243,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         applied.size = inferVideoRatio(input.size);
     }
     if (input.seconds != null && String(input.seconds).trim()) {
-        const seconds = clampVideoSeconds(String(input.seconds));
+        const seconds = String(input.seconds);
         configStore.updateConfig("videoSeconds", seconds);
         applied.seconds = seconds;
     }

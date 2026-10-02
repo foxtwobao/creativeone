@@ -10,6 +10,7 @@ import { HttpError, requireUuid } from "./http.js";
 import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
 import { persistRemoteMedia, readBytes } from "./media.js";
 import { tokenoneError, modelErrorMessage } from "./model-errors.js";
+import { imageRequestCapabilityError, videoRequestCapabilityError } from "./model-capabilities.js";
 import { wanModelProfile } from "../../shared/video-models.js";
 
 const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES, fieldSize: env.MAX_JSON_BYTES } }).any();
@@ -98,6 +99,12 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             }
         }
     }
+    if (req.method === "POST" && ["image", "video"].includes(channel.capability)) {
+        const error = channel.capability === "image"
+            ? imageRequestCapabilityError(req.body.model, channel.image_types![req.body.model], req.body, (req.files as Express.Multer.File[] || []).filter((file) => file.fieldname !== "mask").length)
+            : videoRequestCapabilityError(req.body.model, channel.video_types?.[req.body.model] || "seedance", req.body);
+        if (error) return res.status(400).json({ error: "MODEL_CAPABILITY_INVALID", message: error, retryable: false, requestId: res.locals.requestId });
+    }
     const requestSnapshot = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }) };
     if (path === "videos") for (const field of ["reference_images", "reference_videos", "reference_audios"]) {
         for (const ref of req.body[field] || []) {
@@ -105,6 +112,11 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             const match = /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(ref.url)!;
             ref.url = await mediaReferenceForUser(user.id, match[1], decodeURIComponent(match[2]), Date.now()+30*60_000);
         }
+    }
+    if (path === "contents/generations/tasks") for (const part of req.body.content || []) {
+        const url = part.type === "video_url" ? part.video_url?.url : undefined;
+        if (typeof url !== "string" || !url.startsWith("/api/files/media_files/")) continue;
+        part.video_url.url = await mediaReferenceForUser(user.id, "media_files", decodeURIComponent(url.slice("/api/files/media_files/".length)), Date.now()+30*60_000);
     }
     const apiKey = await ensureKey(user, res.locals.requestId);
     const key = apiKey.key;

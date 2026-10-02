@@ -34,6 +34,8 @@ beforeAll(async () => {
         models: [
             { name: "wan3.0-video-720p", capability: "video", videoType: "wan" },
             { name: "wan3.0-image-1080p", capability: "video", videoType: "wan" },
+            { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance" },
+            { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance" },
             { name: "seedance", capability: "video", videoType: "seedance" },
         ],
     }] };
@@ -153,4 +155,41 @@ test("paused tasks require explicit resume and never resubmit generation", async
     await api.resumeVideoGenerationTask(config, task);
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0]![0]).toEndWith("/videos/existing/resume");
+});
+
+
+test("Seedance model switching preserves invalid duration and blocks submission before media reads", async () => {
+    const post = spyOn(axios, "post"); mocks.push(post);
+    const selected = { ...config, model: "video::doubao-seedance-2-0-260128", videoSeconds: "30" };
+    expect(settings.videoSettingsForModel(selected, selected.model)).toMatchObject({ seconds: "30", secondsRange: { min: 4, max: 15 } });
+    await expect(api.createVideoGenerationTask(selected, "prompt")).rejects.toThrow("4–15");
+    expect(post).not.toHaveBeenCalled();
+});
+
+test("Seedance supports native 4k and automatic duration without adding a p suffix", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "task" } }); mocks.push(post);
+    await api.createVideoGenerationTask({ ...config, model: "video::doubao-seedance-2-0-260128", vquality: "4k", videoSeconds: "-1" }, "prompt");
+    expect(post.mock.calls[0]![1]).toMatchObject({ resolution: "4k", duration: -1 });
+    await expect(api.createVideoGenerationTask({ ...config, model: "video::doubao-seedance-2-5-260628", vquality: "4k" }, "prompt")).rejects.toThrow("分辨率");
+});
+
+test("Seedance 2.5 frames require adaptive ratio; reference generation uses its explicit task type", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "task" } }); mocks.push(post);
+    const selected = { ...config, model: "video::doubao-seedance-2-5-260628", videoSize: "16:9" };
+    const image = { id: "i", name: "image", type: "image/png", dataUrl: "data:image/png;base64,YQ==" };
+    await expect(api.createVideoGenerationTask(selected, "prompt", [image])).rejects.toThrow("自动宽高比");
+    expect(post).not.toHaveBeenCalled();
+    await api.createVideoGenerationTask({ ...selected, videoMode: "reference" }, "prompt", [image]);
+    expect(post.mock.calls[0]![1]).toMatchObject({ omni_reference_task_type: "reference", ratio: "16:9" });
+});
+
+test("Seedance applies per-model reference counts and prevents mixing frame and reference modes", async () => {
+    const post = spyOn(axios, "post"); mocks.push(post);
+    const image = { id: "i", name: "image", type: "image/png", dataUrl: "data:image/png;base64,YQ==" };
+    const video = { id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" };
+    const selected = { ...config, model: "video::doubao-seedance-2-0-260128" };
+    await expect(api.createVideoGenerationTask(selected, "prompt", Array(10).fill(image))).rejects.toThrow("9");
+    await expect(api.createVideoGenerationTask(selected, "prompt", [image], { videos: [video] })).rejects.toThrow("不能混用");
+    await expect(api.createVideoGenerationTask({ ...selected, videoMode: "reference" }, "prompt", [image], { videos: Array(4).fill(video) })).rejects.toThrow("3");
+    expect(post).not.toHaveBeenCalled();
 });
