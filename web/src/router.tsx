@@ -14,6 +14,7 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const PromptsPage = lazy(() => import("@/pages/prompts"));
 const VideoPage = lazy(() => import("@/pages/video"));
 const ChannelsPage = lazy(() => import("@/pages/admin/channels"));
+const AdminTasksPage = lazy(() => import("@/pages/admin/tasks"));
 
 export const router = createBrowserRouter([
     {
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
             { path: "/canvas/:id", element: features.canvas ? <CanvasProjectPage /> : <Navigate to="/studio" replace /> },
             { path: "/config", element: <ConfigPage /> },
             { path: "/admin/channels", element: <ChannelsPage /> },
+            { path: "/admin/tasks", element: <AdminTasksPage /> },
             { path: "/tasks", element: <Navigate to="/assets?view=tasks" replace /> },
         ],
     },

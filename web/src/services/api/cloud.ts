@@ -10,6 +10,7 @@ const errors: Record<string, string> = {
     APP_USER_LOGIN_REQUIRED: "模型服务版本暂不支持当前授权流程，请联系管理员。",
     APP_USER_AUTHORIZATION_REQUIRED: "请完成模型服务授权后继续。",
     LOGIN_REQUIRED: "请先登录", SESSION_EXPIRED: "登录已过期，请重新登录", CSRF_FAILED: "登录状态已变化，请重新打开页面",
+    ADMIN_REQUIRED: "只有管理员可以访问此功能", TASK_NOT_FOUND: "任务不存在，请刷新列表",
     ASSET_NOT_FOUND: "素材已被删除，请刷新列表", ASSET_API_REQUIRED: "素材保存接口已更新，请刷新页面后重试",
     RESOURCE_API_REQUIRED: "保存接口已更新，请刷新页面后重试",
     PROJECT_NOT_FOUND: "画布已被删除，请刷新列表", PROJECT_REVISION_CONFLICT: "画布已在其他页面更新，请先重新加载云端内容", PROJECT_OPERATION_CONFLICT: "画布操作已发生冲突，请刷新后重试", INVALID_CANVAS_GRAPH: "画布节点或连线结构无效，请刷新后重试", CANVAS_NODE_NOT_FOUND: "画布节点不存在，请刷新画布后重试", CANVAS_GENERATION_CHANGED: "画布生成目标已变化，请确认当前节点后再生成", CANVAS_GENERATION_ALREADY_ACCEPTED: "这次生成已受理，请查看原任务，勿重复提交", FILE_NOT_SYNCED: "画布引用的文件尚未同步完成，请重新选择素材", FILE_NOT_FOUND: "文件已不存在，请重新选择",

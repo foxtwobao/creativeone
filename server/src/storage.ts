@@ -1,5 +1,5 @@
 import multer from "multer";
-import { Router, raw } from "express";
+import { Router, raw, type Response } from "express";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile, unlink, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -235,11 +235,10 @@ storageRouter.get("/files/:namespace", async (req, res) => {
     const { rows } = await db.query("SELECT key FROM files WHERE user_id=$1 AND namespace=$2 AND NOT delete_requested ORDER BY key", [res.locals.user.id, ns]);
     res.json({ keys: rows.map((row) => row.key) });
 });
-storageRouter.get("/files/:namespace/:key", async (req, res) => {
-    const ns = fileNamespace.parse(req.params.namespace), key = requireKey(req.params.key);
-    const { rows } = await db.query("SELECT * FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [res.locals.user.id, ns, key]);
+export async function sendStoredFile(res: Response, userId: string, namespace: unknown, fileKey: unknown, preview: boolean) {
+    const ns = fileNamespace.parse(namespace), key = requireKey(fileKey);
+    const { rows } = await db.query("SELECT * FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [userId, ns, key]);
     if (!rows[0]) throw new HttpError(404, "FILE_NOT_FOUND");
-    const preview = req.query.preview === "1";
     if (preview && !rows[0].mime_type.startsWith("image/")) throw new HttpError(415, "UNSUPPORTED_MEDIA");
     const original = resolve(mediaRoot, rows[0].disk_id);
     const path = preview ? await ensureImagePreviewFile(original) : original;
@@ -247,6 +246,9 @@ storageRouter.get("/files/:namespace/:key", async (req, res) => {
     res.setHeader("Cache-Control", "private, no-cache");
     res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
     res.sendFile(path);
+}
+storageRouter.get("/files/:namespace/:key", async (req, res) => {
+    await sendStoredFile(res, res.locals.user.id, req.params.namespace, req.params.key, req.query.preview === "1");
 });
 storageRouter.delete("/files/:namespace/:key", async (req, res) => {
     const ns = fileNamespace.parse(req.params.namespace), key = requireKey(req.params.key);
