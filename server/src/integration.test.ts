@@ -904,6 +904,85 @@ test("plugin records and works filtering use server mutations and pagination", a
     assert.notEqual(response.works[0].id, next.works[0].id);
 });
 
+test("admin task endpoints reject ordinary users and support user lookup", async () => {
+    for (const path of ["/admin/users", "/admin/tasks", `/admin/tasks/${randomUUID()}`, `/admin/users/${alice}/files/image_files/image:missing`]) {
+        assert.equal((await call(path)).status, 403);
+        assert.equal((await realFetch(`${base}/api${path}`)).status, 401);
+    }
+    for (const keyword of [alice, `${alice}@example.test`]) {
+        const result = await (await call(`/admin/users?keyword=${encodeURIComponent(keyword)}`, admin)).json();
+        assert.equal(result.total, 1); assert.equal(result.users[0].id, alice);
+        assert.ok(!("subject" in result.users[0]));
+    }
+    const first = await (await call("/admin/users?pageSize=1", admin)).json();
+    const second = await (await call("/admin/users?pageSize=1&page=2", admin)).json();
+    assert.equal(first.users.length, 1); assert.notEqual(first.users[0].id, second.users[0].id);
+    assert.equal((await call(`/admin/tasks/${randomUUID()}`, admin)).status, 404);
+    assert.equal((await call("/admin/tasks?from=2030-01-02T00:00:00Z&to=2030-01-01T00:00:00Z", admin)).status, 400);
+});
+test("admin task filtering paginates hidden records and returns only display fields", async () => {
+    const ids = [randomUUID(), randomUUID(), randomUUID()], channel = randomUUID();
+    for (const [index, id] of ids.entries()) {
+        await db.query(`INSERT INTO generation_tasks(id,user_id,channel_id,group_id,model,capability,path,status,provider,request,result,error,upstream_id,canvas_generation_id,hidden_from_works,hidden_from_history,created_at)
+            VALUES($1,$2,$3,'test','fixture',$4,'test',$5,'test',$6,$7,$8,$9,$10,$11,$11,$12)`,
+            [id, index === 2 ? bob : alice, channel, index === 2 ? "video" : "image", index === 1 ? "failed" : "succeeded",
+                JSON.stringify({ prompt: "完整提示词".repeat(50), user_prompt: "用户提示词", size: "1024x1024", n: 2, api_key: "sk-private", canvas_submission: { secret: "private" } }),
+                JSON.stringify({ data: [{ url: "/api/files/image_files/image:missing" }] }), index === 1 ? "TOKENONE_GENERATION_FAILED" : null,
+                `admin-fixture-${id}`, index === 1 ? randomUUID() : null, true, `2030-01-01T00:00:0${index}Z`]);
+    }
+    const filter = `/admin/tasks?userId=${alice}&from=2030-01-01T00:00:00Z&to=2030-01-02T00:00:00Z&pageSize=1`;
+    const first = await (await call(filter, admin)).json(), second = await (await call(`${filter}&page=2`, admin)).json();
+    assert.equal(first.total, 2); assert.equal(first.tasks.length, 1); assert.notEqual(first.tasks[0].id, second.tasks[0].id);
+    assert.ok(first.tasks.every((task: any) => task.user.id === alice));
+    assert.equal(first.tasks[0].hiddenFromWorks, true); assert.equal(first.tasks[0].hiddenFromHistory, true);
+    assert.ok(!("request" in first.tasks[0])); assert.ok(!("result" in first.tasks[0]));
+    const failed = await (await call(`${filter}&status=failed&capability=image`, admin)).json();
+    assert.equal(failed.total, 1); assert.equal(failed.tasks[0].source, "canvas");
+    const video = await (await call("/admin/tasks?capability=video&from=2030-01-01T00:00:00Z&to=2030-01-02T00:00:00Z", admin)).json();
+    assert.equal(video.total, 1); assert.equal(video.tasks[0].user.id, bob);
+    for (const taskId of [ids[1], `admin-fixture-${ids[1]}`]) assert.equal((await (await call(`/admin/tasks?taskId=${taskId}`, admin)).json()).tasks[0].id, ids[1]);
+    const detail = await (await call(`/admin/tasks/${ids[1]}`, admin)).json();
+    assert.equal(detail.task.prompt, "用户提示词"); assert.equal(detail.task.sentPrompt, "完整提示词".repeat(50));
+    assert.equal(detail.task.error, "TOKENONE_GENERATION_FAILED"); assert.ok(detail.task.errorMessage);
+    assert.equal(detail.task.results.length, 1); assert.equal(detail.task.results[0].url, undefined);
+    assert.ok(detail.task.settings.some((item: any) => item.key === "n"));
+    assert.ok(!JSON.stringify(detail).includes("sk-private")); assert.ok(!JSON.stringify(detail).includes("canvas_submission"));
+    await db.query("UPDATE generation_tasks SET status='failed',error=NULL,result=$2 WHERE id=$1", [ids[2], JSON.stringify({ status: "failed", error: { message: "provider-private-details" } })]);
+    const failedVideo = (await (await call(`/admin/tasks/${ids[2]}`, admin)).json()).task;
+    assert.equal(failedVideo.error, "TOKENONE_GENERATION_FAILED"); assert.ok(failedVideo.errorMessage);
+    assert.ok(!JSON.stringify(failedVideo).includes("provider-private-details"));
+    assert.equal((await call("/admin/tasks?capability=text", admin)).status, 400);
+});
+test("admin media uses the task owner for previews, multi-image results and video", async () => {
+    const key = `image:${randomUUID()}`, bobKey = `image:${randomUUID()}`, videoKey = `file:${randomUUID()}`;
+    const url = `/api/files/image_files/${key}`, bobUrl = `/api/files/image_files/${bobKey}`, videoUrl = `/api/files/media_files/${videoKey}`;
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6swAAAABJRU5ErkJggg==", "base64");
+    for (const [owner, path, bytes, mime] of [[alice, url, jpegBytes, "image/jpeg"], [bob, url, png, "image/png"], [bob, bobUrl, png, "image/png"], [alice, videoUrl, videoBytes, "video/mp4"]] as const) {
+        const response = await realFetch(`${base}${path}`, { method: "PUT", headers: { ...headers(owner), "Content-Type": mime }, body: bytes });
+        assert.equal(response.status, 200);
+    }
+    const imageTask = randomUUID(), videoTask = randomUUID();
+    for (const [id, capability, request, result] of [
+        [imageTask, "image", { image_references: [url, bobUrl], reference_videos: [{ url: videoUrl }] }, { data: [{ url }, { url: bobUrl }, { url: "/api/files/image_files/image:missing" }] }],
+        [videoTask, "video", { content: [{ type: "image_url", image_url: { url } }] }, { file: { url: videoUrl } }],
+    ] as const) await db.query(`INSERT INTO generation_tasks(id,user_id,channel_id,group_id,model,capability,path,status,provider,request,result)
+        VALUES($1,$2,$3,'test','fixture',$4,'test','succeeded','test',$5,$6)`, [id, alice, randomUUID(), capability, JSON.stringify(request), JSON.stringify(result)]);
+    const image = (await (await call(`/admin/tasks/${imageTask}`, admin)).json()).task;
+    assert.equal(image.results.length, 3); assert.equal(image.results[1].url, undefined); assert.equal(image.results[2].url, undefined);
+    assert.equal(image.references.length, 3); assert.equal(image.references[1].url, undefined);
+    const original = await realFetch(`${base}${image.results[0].url}`, { headers: headers(admin) });
+    assert.equal(original.status, 200); assert.deepEqual(new Uint8Array(await original.arrayBuffer()), jpegBytes);
+    const preview = await realFetch(`${base}${image.results[0].previewUrl}`, { headers: headers(admin) });
+    assert.equal(preview.status, 200); assert.equal(preview.headers.get("content-type"), "image/webp");
+    assert.equal((await realFetch(`${base}${image.results[0].url}`, { headers: headers(bob) })).status, 403);
+    assert.equal((await call(`/admin/users/${alice}/files/image_files/${bobKey}`, admin)).status, 404);
+    assert.equal((await realFetch(`${base}${url}`, { headers: headers(admin) })).status, 404);
+    const video = (await (await call(`/admin/tasks/${videoTask}`, admin)).json()).task;
+    assert.equal(video.results[0].kind, "video");
+    const playback = await realFetch(`${base}${video.results[0].url}`, { headers: { ...headers(admin), Range: "bytes=0-7" } });
+    assert.equal(playback.status, 206); assert.equal((await playback.arrayBuffer()).byteLength, 8);
+});
+
 test("account switching and logout invalidate stale clients", async () => {
     const changed = await realFetch(`${base}/api/tasks`, { headers: { ...headers(bob), "X-Expected-User": alice } });
     assert.equal(changed.status, 409);
