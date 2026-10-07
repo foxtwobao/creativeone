@@ -80,7 +80,7 @@ export default function CanvasPage() {
     return (
         <main className="h-full overflow-auto" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
-                <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-6" style={{ borderColor: theme.toolbar.border }}>
+                <header className="flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <p className="text-xs" style={{ color: theme.node.muted }}>{t("canvas.library")}</p>
                         <h1 className="mt-3 text-3xl font-semibold">{t("canvas.title")}</h1>
@@ -111,7 +111,7 @@ export default function CanvasPage() {
                 </header>
 
                 {!hydrated ? (
-                    <section className="flex min-h-[360px] items-center justify-center border-y text-sm" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }}>{t("canvas.loading")}</section>
+                    <section className="flex min-h-[360px] items-center justify-center text-sm" style={{ color: theme.node.muted }}>{t("canvas.loading")}</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                         {projects.map((project) => (
@@ -119,7 +119,7 @@ export default function CanvasPage() {
                         ))}
                     </div>
                 ) : (
-                    <section className="flex min-h-[360px] flex-col items-center justify-center border-y text-center" style={{ borderColor: theme.toolbar.border }}>
+                    <section className="flex min-h-[360px] flex-col items-center justify-center text-center">
                         <h2 className="text-xl font-medium">{t("canvas.empty")}</h2>
                         <p className="mt-3 text-sm" style={{ color: theme.node.muted }}>{t("canvas.emptyDescription")}</p>
                         <Button type="primary" className="mt-6" icon={<Plus className="size-4" />} onClick={createAndEnter}>
