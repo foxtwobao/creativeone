@@ -170,7 +170,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
 }
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
-    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : type === CanvasNodeType.Audio ? "audio" : "image";
+    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video || type === CanvasNodeType.Audio ? "video" : "image";
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {

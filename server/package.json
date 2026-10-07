@@ -14,6 +14,7 @@
     "fflate": "0.8.3",
     "mp4box": "2.4.1",
     "multer": "^2.0.2",
+    "music-metadata": "11.16.1",
     "openid-client": "^6.8.0",
     "pg": "^8.16.3",
     "sharp": "0.35.5",

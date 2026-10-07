@@ -1,3 +1,4 @@
+import multer from "multer";
 import { Router, raw } from "express";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile, unlink, readFile } from "node:fs/promises";
@@ -7,6 +8,7 @@ import { z } from "zod";
 import { db, transaction } from "./db.js";
 import { env } from "./config.js";
 import { HttpError, requireKey } from "./http.js";
+import { storedMediaMetadata } from "./media-metadata.js";
 import { ensureImagePreviewFile, imagePreviewPath } from "./image-preview.js";
 
 const namespace = z.enum(["app_state", "preferences", "image_generation_logs", "video_generation_logs"]);
@@ -61,6 +63,7 @@ export function fileReferences(value: unknown, references = new Set<string>()): 
     else if (value && typeof value === "object") {
         const record = value as Record<string, unknown>;
         if (typeof record.storageKey === "string" && record.storageKey) references.add(record.storageKey);
+        if (Array.isArray(record.references)) for (const key of record.references) if (typeof key === "string" && /^(image|file|video|audio):/.test(key)) references.add(key);
         Object.values(record).forEach((item) => fileReferences(item, references));
     }
     return references;
@@ -88,7 +91,8 @@ export async function saveFile(userId: string, ns: string, key: string, bytes: B
 export async function collectDeletedFiles(userId: string, candidates: string[] = []) {
     const deleted = await transaction(async (client) => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
-        const documents = await client.query("SELECT value FROM documents WHERE user_id=$1 AND NOT deleted UNION ALL SELECT result AS value FROM generation_tasks WHERE user_id=$1 AND result IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history) UNION ALL SELECT request AS value FROM generation_tasks WHERE user_id=$1 AND request IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history)", [userId]);
+        await client.query("UPDATE files SET delete_requested=true WHERE user_id=$1 AND key=ANY($2::text[])", [userId, candidates]);
+        const documents = await client.query("SELECT value FROM documents WHERE user_id=$1 AND NOT deleted UNION ALL SELECT jsonb_build_object('nodes',nodes,'connections',connections,'chatSessions',chat_sessions) AS value FROM canvas_projects WHERE user_id=$1 AND deleted_at IS NULL UNION ALL SELECT c.inverse AS value FROM canvas_project_commands c JOIN canvas_projects p ON p.id=c.project_id WHERE p.user_id=$1 AND p.deleted_at IS NULL AND c.inverse IS NOT NULL UNION ALL SELECT result AS value FROM generation_tasks WHERE user_id=$1 AND result IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history) UNION ALL SELECT request AS value FROM generation_tasks WHERE user_id=$1 AND request IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history)", [userId]);
         const references = new Set<string>();
         for (const row of documents.rows) fileReferences(row.value, references);
         const { rows } = await client.query("DELETE FROM files WHERE user_id=$1 AND (delete_requested OR key=ANY($3::text[])) AND NOT (key=ANY($2::text[])) RETURNING disk_id", [userId, [...references], candidates]);
@@ -100,15 +104,26 @@ export async function collectDeletedFiles(userId: string, candidates: string[] =
     }
 }
 export const storageRouter = Router();
-export async function storedFileInfo(userId: string, url: string) {
+storageRouter.post("/files/canvas-import", multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES } }).single("file"), async (req, res) => {
+    if (!req.file || !/^(image|video|audio)\//.test(req.file.mimetype)) throw new HttpError(415, "UNSUPPORTED_MEDIA");
+    const image = req.file.mimetype.startsWith("image/");
+    if (image) {
+        const metadata = await sharp(req.file.buffer).metadata().catch(() => null);
+        if (!metadata?.width || !metadata.height) throw new HttpError(400, "INVALID_CANVAS_ARCHIVE");
+    }
+    const key = `${image ? "image" : "file"}:${randomUUID()}`;
+    const url = await saveFile(res.locals.user.id, image ? "image_files" : "media_files", key, req.file.buffer, req.file.mimetype);
+    res.status(201).json(await storedFileInfo(res.locals.user.id, url));
+});
+export async function storedFileInfo(userId: string, url: string, client: Pick<typeof db, "query"> = db) {
     const match = /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(url);
     if (!match) throw new HttpError(400, "INVALID_FILE_REFERENCE");
     const ns = match[1], key = decodeURIComponent(match[2]);
-    const { rows } = await db.query("SELECT * FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [userId, ns, key]);
+    const { rows } = await client.query("SELECT * FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [userId, ns, key]);
     if (!rows[0]) throw new HttpError(404, "FILE_NOT_FOUND");
     const file = rows[0];
-    const metadata: { width?: number; height?: number } = file.mime_type.startsWith("image/") ? await sharp(resolve(mediaRoot, file.disk_id)).metadata().catch(() => ({})) : {};
-    return { url: fileUrl(ns, key), storageKey: key, bytes: Number(file.bytes), mimeType: file.mime_type, width: metadata.width || 0, height: metadata.height || 0 };
+    const metadata = file.mime_type.startsWith("image/") ? await sharp(resolve(mediaRoot, file.disk_id)).metadata().catch(() => ({} as { width?: number; height?: number })) : await storedMediaMetadata(file.disk_id, file.mime_type);
+    return { url: fileUrl(ns, key), storageKey: key, bytes: Number(file.bytes), mimeType: file.mime_type, width: metadata.width || 0, height: metadata.height || 0, ...("durationMs" in metadata ? { durationMs: metadata.durationMs } : {}) };
 }
 export async function inlineStoredFile(userId: string, url: string) {
     const file = await storedFileInfo(userId, url);

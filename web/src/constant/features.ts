@@ -1,8 +1,10 @@
-// 暂时关闭入口和页面访问，保留实现及用户数据，恢复时统一调整这里。
+// 个人画布已开放；Agent 和第三方可执行插件待独立接入服务端命令。
 export const features = {
     assistant: false,
     video: true,
-    canvas: false,
+    canvas: true,
+    canvasAgent: false,
+    canvasPlugins: false,
     originalUi: false,
     imageAdvancedSettings: false,
 };

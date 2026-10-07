@@ -5,19 +5,26 @@ import { createZip } from "@/lib/zip";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
+import { archiveCanvasNode, canvasArchiveMediaValid } from "../../../../shared/canvas-archive";
+import { getAccountResource } from "@/services/api/account";
+import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
-export async function exportCanvasProjects(projects: CanvasProject[], fileName = i18n.t("canvas.export.defaultProjectName")) {
+export async function exportCanvasProjects(projects: Array<Pick<CanvasProject, "id">>, fileName = i18n.t("canvas.export.defaultProjectName")) {
+    await flushCanvasPersistence();
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const exportedProjects = await Promise.all(
-        projects.map(async (project) => {
+        projects.map(async ({ id }) => {
+            const { project: saved } = await getAccountResource<{ project: CanvasProject }>(`/projects/${id}`);
+            if (!canvasArchiveMediaValid(saved.nodes)) throw new Error("画布包含未保存的素材或临时参考地址，请先保存文件再导出");
+            const project = { title: saved.title, nodes: saved.nodes.map(archiveCanvasNode), connections: saved.connections, backgroundMode: saved.backgroundMode, showImageInfo: saved.showImageInfo, viewport: saved.viewport };
             const files: CanvasExportAsset[] = [];
             await Promise.all(
                 collectStorageKeys(project).map(async (storageKey) => {
                     const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                    if (!blob) return;
-                    const path = `projects/${project.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+                    if (!blob) throw new Error("画布引用的文件已不存在，导出失败");
+                    const path = `projects/${id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
                 }),
@@ -26,7 +33,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
         }),
     );
 
-    const data: CanvasExportFile = { app: "infinite-canvas", version: 3, exportedAt: new Date().toISOString(), projects: exportedProjects };
+    const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), projects: exportedProjects };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     saveAs(zip, `${safeFileName(fileName)}.zip`);
 }
@@ -43,7 +50,8 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n
     };
 
     await Promise.all(
-        nodes.map(async (node) => {
+        nodes.map(async (source) => {
+            const node = archiveCanvasNode(source);
             const title = node.title || node.type;
             const storageKey = node.metadata?.storageKey || "";
             if (storageKey) {
@@ -65,6 +73,11 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = i18n
 }
 
 function collectStorageKeys(value: unknown, keys = new Set<string>()) {
+    if (typeof value === "string") {
+        if (/^(image|file|video|audio):/.test(value)) keys.add(value);
+        const match = /^\/api\/files\/(?:image_files|media_files)\/([^/?#]+)$/.exec(value);
+        if (match) keys.add(decodeURIComponent(match[1]));
+    }
     if (!value || typeof value !== "object") return [...keys];
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectStorageKeys(child, keys)) : collectStorageKeys(item, keys)));

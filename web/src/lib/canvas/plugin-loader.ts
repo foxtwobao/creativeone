@@ -1,3 +1,4 @@
+import { features } from "@/constant/features";
 import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/node-registry";
 import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
@@ -9,6 +10,7 @@ const cleanups = new Map<string, () => void>();
 // A remote plugin may export CanvasPlugin directly or a factory that receives runtime and returns CanvasPlugin.
 // The factory uses runtime.React so the bundle does not need its own React copy.
 async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
+    if (!features.canvasPlugins) throw new Error("画布插件尚未开放");
     const blob = new Blob([source], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
     try {
@@ -29,6 +31,7 @@ function assertPlugin(plugin: unknown): asserts plugin is CanvasPlugin {
 }
 
 export function activatePlugin(plugin: CanvasPlugin) {
+    if (!features.canvasPlugins) return;
     registerNodeDefinitions(plugin.nodes, plugin.id);
     const runtime = getPluginRuntime();
     const disposers: Array<() => void> = [];
@@ -59,6 +62,7 @@ function withCacheBust(url: string) {
 // Install or replace a plugin from a URL and enable it immediately.
 // bustCache bypasses HTTP/CDN caches during upgrades while persisting a clean URL without the timestamp query.
 export async function installPluginFromUrl(url: string, opts?: { official?: boolean; bustCache?: boolean }) {
+    if (!features.canvasPlugins) throw new Error("画布插件尚未开放");
     const source = await fetchPluginSource(opts?.bustCache ? withCacheBust(url) : url);
     const plugin = await evaluatePluginSource(source);
     await usePluginStore.getState().upsert({ id: plugin.id, name: plugin.name || plugin.id, version: plugin.version || "0.0.0", description: plugin.description, url, source, enabled: true, official: opts?.official });
@@ -73,6 +77,7 @@ export async function updatePlugin(record: InstalledPlugin) {
 }
 
 export async function setPluginEnabled(record: InstalledPlugin, enabled: boolean) {
+    if (!features.canvasPlugins) throw new Error("画布插件尚未开放");
     await usePluginStore.getState().setEnabled(record.id, enabled);
     if (!enabled) {
         deactivatePlugin(record.id);
@@ -93,6 +98,7 @@ let loaded = false;
 
 // Load installed and enabled plugins at application startup.
 export async function ensurePluginsLoaded() {
+    if (!features.canvasPlugins) return;
     if (loaded) return;
     await usePluginStore.getState().load();
     loaded = true;

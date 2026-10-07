@@ -1,6 +1,22 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    CANVAS_REFERENCE_NOT_READY: "连接的参考节点为空或仍在生成，请等待完成或断开该引用后再生成",
+    REFERENCE_DURATION_EXCEEDED: "参考视频或音频的真实总时长超过当前型号限制，请减少素材",
+    MODEL_CAPABILITY_INVALID: "画布已保存参数不适用于当前模型，请检查模型、尺寸和参考素材",
+    TASK_NOT_RECOVERABLE: "当前任务没有可恢复的结果，请查看原任务状态",
+    INVALID_CANVAS_ARCHIVE: "画布文件格式无效、引用缺失或素材已损坏",
+    CANVAS_PLUGINS_DISABLED: "画布第三方插件尚未开放",
+    REFERENCE_DURATION_UNKNOWN: "无法读取参考媒体的真实时长，请重新上传可解析的视频或音频后生成",
+    INVALID_IMAGE_RESPONSE: "图片结果尚未完整保存，请查看原任务，勿重复提交",
+    PROJECT_NOT_FOUND: "画布不存在、已删除或当前账号无权访问。",
+    PROJECT_REVISION_CONFLICT: "画布已在其他页面更新，请先重新加载云端内容，再继续编辑。",
+    PROJECT_OPERATION_CONFLICT: "画布操作标识已对应其他内容，请刷新后重试。",
+    CANVAS_NODE_NOT_FOUND: "画布节点不存在或已删除，请刷新画布后重试。",
+    CANVAS_GENERATION_CHANGED: "画布生成目标已变化，请确认当前节点后再生成。",
+    CANVAS_GENERATION_ALREADY_ACCEPTED: "这次生成已受理，请查看原任务，不要重复提交。",
+    FILE_NOT_SYNCED: "画布引用了尚未同步完成的文件，请重新选择素材后重试。",
+    INVALID_CANVAS_GRAPH: "画布节点或连线结构无效，请刷新后重试。",
     TASK_NOT_REMOVABLE: "任务不存在或尚未结束，暂不能从作品中移除。",
     INVALID_MODEL_DESCRIPTIONS: "模型描述与允许的模型列表不一致，请重新配置。",
     IMAGE_MODEL_TYPE_REQUIRED: "请管理员在功能模型配置中为每个图片模型选择类型。",

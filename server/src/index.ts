@@ -14,11 +14,11 @@ import { businessRouter } from "./business.js";
 import { aiRouter } from "./ai.js";
 import { HttpError, noCache } from "./http.js";
 import { modelErrorMessage } from "./model-errors.js";
+import { startGenerationWorker } from "./generation-executor.js";
 import { startVideoWorker } from "./video-tasks.js";
 
 await initializeDatabase();
-// Never resubmit calls whose outcome became uncertain after an application restart.
-await db.query("UPDATE generation_tasks SET status='unknown',error='SERVER_RESTARTED',updated_at=now() WHERE status='running'");
+// Task recovery is performed by the worker only after acquiring its session lock.
 export const app = express();
 app.disable("x-powered-by");
 app.use((req, res, next) => { res.locals.requestId = randomUUID(); res.setHeader("X-Request-Id", res.locals.requestId); next(); });
@@ -42,6 +42,7 @@ const errors: ErrorRequestHandler = (error, _req, res, _next) => {
 app.use(errors);
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
     app.listen(env.PORT, "0.0.0.0", () => console.log(`CreativeOne API listening on ${env.PORT}`));
+    startGenerationWorker();
     startVideoWorker();
     startPromptWorker();
 }

@@ -339,6 +339,7 @@ export default {
         closeAgent: "Close Agent",
         plugins: "Node plugins",
         docs: "Documentation",
+        recharge: "Recharge",
         switchLanguage: "Switch to {{language}}",
         shortcuts: "Keyboard shortcuts",
         lightTheme: "Switch to light theme",

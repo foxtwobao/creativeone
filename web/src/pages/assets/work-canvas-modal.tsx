@@ -1,11 +1,10 @@
 import { App, Modal, Select } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCanvasStore, flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { createCanvasNode } from "@/lib/canvas/canvas-node-factory";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
-import { readImageMeta } from "@/lib/image-utils";
 import { CanvasNodeType } from "@/types/canvas";
 import { assetMedia, taskMedia, type Work, type WorkMedia } from "./works";
 
@@ -16,6 +15,7 @@ export function WorkCanvasModal({ work, onClose }: { work: Work | null; onClose:
     const [saving, setSaving] = useState(false);
     const { message } = App.useApp();
     const navigate = useNavigate();
+    useEffect(() => { if (work) void useCanvasStore.getState().load().catch((error) => message.error(error.message)); }, [work, message]);
     const insert = async () => {
         if (!work || !hydrated) return;
         setSaving(true);
@@ -26,12 +26,12 @@ export function WorkCanvasModal({ work, onClose }: { work: Work | null; onClose:
             const text = work.asset?.kind === "text" ? work.asset.data.content : work.task?.result?.text;
             const entries: WorkMedia[] = work.kind === "text" ? [{ url: text || "" }] : media;
             const nodes = await Promise.all(entries.map(async (item, index) => {
-                const size = work.kind === "image" ? await readImageMeta(item.url) : item;
+                const size = item;
                 const node = createCanvasNode(type, { x: 360 + index * 700, y: 300 }, { content: item.url, storageKey: "storageKey" in item ? item.storageKey : undefined, status: "success", naturalWidth: "width" in size ? size.width : undefined, naturalHeight: "height" in size ? size.height : undefined });
                 return { ...node, title, ...("width" in size && "height" in size && size.width && size.height ? fitNodeSize(size.width, size.height) : {}) };
             }));
             const store = useCanvasStore.getState();
-            const existing = target ? store.projects.find((project) => project.id === target) : undefined;
+            const existing = target ? await store.refreshProject(target) : undefined;
             if (target && !existing) throw new Error("画布已不存在，请重新选择");
             const id = existing?.id || await store.createProject(title);
             const right = existing?.nodes.length ? Math.max(...existing.nodes.map((node) => node.position.x + node.width)) + 80 : 0;

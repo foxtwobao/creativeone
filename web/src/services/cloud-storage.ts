@@ -1,3 +1,4 @@
+import { unsavedCanvasChanges } from "@/stores/canvas/use-canvas-store";
 import { cloudApi, cloudFileUrl, cloudSession, CloudError } from "@/services/api/cloud";
 import { useCloudStore } from "@/stores/use-cloud-store";
 
@@ -142,5 +143,5 @@ export async function refreshUserStore(namespace: string) {
 export async function retryCloudSave() { for (const retry of retries) await retry(); }
 export function exportUnsavedChanges() {
     const data = Object.fromEntries([...documents].map(([namespace, entries]) => [namespace, [...entries.values()].filter((entry) => entry.pending)]));
-    return new Blob([JSON.stringify({ userId: cloudSession?.user.id, documents: data }, null, 2)], { type: "application/json" });
+    return new Blob([JSON.stringify({ userId: cloudSession?.user.id, documents: data, canvas: unsavedCanvasChanges() }, null, 2)], { type: "application/json" });
 }

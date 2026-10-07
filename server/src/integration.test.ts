@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Server } from "node:http";
 import { unzipSync } from "fflate";
 import { createFile } from "mp4box";
+import sharp from "sharp";
 
 const database = process.env.TEST_DATABASE_URL;
 if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error("Provide TEST_DATABASE_URL pointing at an isolated *_test database");
@@ -22,6 +23,7 @@ const { app } = await import("./index.js");
 const { db } = await import("./db.js");
 const { env } = await import("./config.js");
 const { processVideoTask, startVideoWorker } = await import("./video-tasks.js");
+const { finishCanvasTask } = await import("./canvas-tasks.js");
 let server: Server, base: string;
 const admin = randomUUID(), alice = randomUUID(), bob = randomUUID(), unverified = randomUUID();
 let imageChannel: string, textChannel: string;
@@ -39,6 +41,7 @@ let videoDownloads = 0;
 const fixture = createFile();
 fixture.addTrack({ type: "avc1", width: 960, height: 960, timescale: 1000, media_duration: 4000, duration: 4000 });
 const videoBytes = new Uint8Array(fixture.getBuffer().buffer);
+const jpegBytes = new Uint8Array(await sharp({ create: { width: 1, height: 1, channels: 3, background: "white" } }).jpeg().toBuffer());
 let promptFetches = 0;
 let promptFails = false;
 let videoQueryHandler: (() => Promise<Response>) | undefined;
@@ -58,7 +61,7 @@ globalThis.fetch = async (input, init) => {
     }
     if (url === "https://tokenone.test/banana-result.jpg") {
         assert.equal(new Headers(init?.headers).get("Authorization"), null);
-        return new Response(new Uint8Array([255, 216, 255, 217]), { headers: { "Content-Type": "image/jpeg" } });
+        return new Response(jpegBytes, { headers: { "Content-Type": "image/jpeg" } });
     }
     if (url === "https://tokenone.test/video-result.mp4") {
         videoDownloads++;
@@ -230,7 +233,7 @@ test("model failures return friendly messages and request IDs, retain specific t
         try {
             const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "gpt-image-2" });
             const body = await response.json() as any;
-            assert.equal(response.status, status === 401 ? 502 : status);
+            assert.equal(response.status, 422); // Durable task failure; the specific provider code remains in the body.
             assert.equal(body.error, code);
             assert.ok(body.message);
             assert.equal(body.requestId, response.headers.get("X-Request-Id"));
@@ -266,7 +269,7 @@ test("Banana OpenAI requests preserve parameters, image permissions, user Key an
 });
 
 test("Grok edits preserve JSON references and model-specific parameters", async () => {
-    const body = { model: "grok-imagine-image", prompt: "猫", aspect_ratio: "16:9", resolution: "2k", n: 1, response_format: "url", image: { type: "image_url", url: "data:image/png;base64,YQ==" } };
+    const body = { model: "grok-imagine-image", prompt: "猫", resolution: "2k", n: 1, response_format: "url", image: { type: "image_url", url: "data:image/png;base64,YQ==" } };
     const response = await call(`/ai/${imageChannel}/v1/images/edits`, alice, "POST", body);
     assert.equal(response.status, 200);
     assert.deepEqual(forwardedRequests.at(-1), { url: "https://tokenone.test/v1/images/edits", body });
@@ -274,7 +277,7 @@ test("Grok edits preserve JSON references and model-specific parameters", async 
     const file = await realFetch(`${base}${result.data[0].url}`, { headers: headers(alice) });
     assert.equal(file.status, 200);
     assert.match(file.headers.get("Content-Type") || "", /^image\/jpeg/);
-    assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array([255, 216, 255, 217]));
+    assert.deepEqual(new Uint8Array(await file.arrayBuffer()), jpegBytes);
 });
 
 test("video model configuration exposes types and rejects mismatched protocols before upstream calls", async () => {
@@ -592,16 +595,34 @@ test("asset operations are owner-scoped and concurrent changes preserve other as
     assert.ok(remaining.some((asset: any) => asset.id === two.id));
 });
 
-test("project and settings mutations preserve concurrent server fields without client revisions", async () => {
+test("project commands enforce ownership, versions and idempotency", async () => {
     const responses = await Promise.all([call("/projects", alice, "POST", { title: "first" }), call("/projects", alice, "POST", { title: "second" })]);
     assert.ok(responses.every((r) => r.status === 201));
     const projects = await Promise.all(responses.map(async (r) => (await r.json()).project));
-    await Promise.all([call(`/projects/${projects[0].id}`, alice, "PATCH", { title: "renamed" }), call(`/projects/${projects[0].id}`, alice, "PATCH", { viewport: {x: 5, y: 7, k: 2} })]);
+    const operationId = randomUUID();
+    const command = { operationId, baseRevision: projects[0].contentRevision, command: { type: "edit_project", patch: { title: "renamed" }, graphEdits: [] } };
+    const first = await call(`/projects/${projects[0].id}/commands`, alice, "POST", command);
+    assert.equal(first.status, 200);
+    const replay = await call(`/projects/${projects[0].id}/commands`, alice, "POST", command);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), await first.clone().json());
+    const stale = await call(`/projects/${projects[0].id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: projects[0].contentRevision, command: { type: "edit_project", patch: { viewport: {x: 5, y: 7, k: 2} }, graphEdits: [] } });
+    assert.equal(stale.status, 409);
+    const current = (await first.json()).project;
+    const update = await call(`/projects/${projects[0].id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: current.contentRevision, command: { type: "edit_project", patch: { viewport: {x: 5, y: 7, k: 2} }, graphEdits: [] } });
+    assert.equal(update.status, 200);
+    const receipts = await db.query("SELECT result FROM canvas_project_commands WHERE project_id=$1", [projects[0].id]);
+    assert.ok(receipts.rows.every(({ result }: any) => Object.keys(result).sort().join(",") === "contentRevision,generationRevision"));
+    const replayAfterViewport = await call(`/projects/${projects[0].id}/commands`, alice, "POST", command);
+    assert.equal(replayAfterViewport.status, 200);
+    assert.equal((await replayAfterViewport.json()).project.viewport.k, 2);
     const list = (await (await call("/projects")).json()).projects;
     assert.equal(list.find((p: any) => p.id === projects[0].id).title, "renamed");
-    assert.equal(list.find((p: any) => p.id === projects[0].id).viewport.k, 2);
+    assert.equal("nodes" in list[0], false);
+    assert.equal((await (await call(`/projects/${projects[0].id}`)).json()).project.viewport.k, 2);
+    assert.equal((await update.json()).project.contentRevision, current.contentRevision);
     assert.ok(list.some((p: any) => p.id === projects[1].id));
-    assert.equal((await call(`/projects/${projects[0].id}`, bob, "PATCH", {title: "stolen"})).status, 404);
+    assert.equal((await call(`/projects/${projects[0].id}/commands`, bob, "POST", { operationId: randomUUID(), baseRevision: 1, command: { type: "edit_project", patch: {title: "stolen"}, graphEdits: [] } })).status, 404);
     await Promise.all([call("/settings", alice, "PATCH", { quality: "high" }), call("/settings", alice, "PATCH", {size: "1:1"})]);
     assert.deepEqual(await (await call("/settings")).json(), {quality: "high", size: "1:1"});
     assert.equal((await call("/settings", alice, "PATCH", {apiKey: "secret"})).status, 400);
@@ -648,6 +669,176 @@ test("original prompt metadata stays local for JSON generation and appears in ta
     assert.equal(works.works[0].task.request.user_prompt, "draw an otter");
     assert.equal((await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", {model: "gpt-image-2", prompt: "x", user_prompt: {apiKey: "invalid"}})).status, 400);
 });
+async function canvasOutput(node: any, channel: string, model: string, prompt: string) {
+    const { project } = await (await call("/projects", alice, "POST", { title: "canvas output" })).json();
+    node.metadata = { ...node.metadata, model: `${channel}::${model}`, prompt, size: "1024x1024", quality: "auto", videoSize: "auto", vquality: "720", seconds: "6", references: [] };
+    const response = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node }] } });
+    assert.equal(response.status, 200);
+    return (await response.json()).project;
+}
+test("canvas acceptance is durable, owner scoped and idempotent; the worker uses saved input", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "output-node", type: "image", title: "output", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { generationId: randomUUID(), status: "loading" } };
+    const project = await canvasOutput(node, imageChannel, "gpt-image-2", "canvas image");
+    const body = { model: "gpt-image-2", prompt: "ignored browser prompt", n: 1, size: "1024x1024" };
+    const canvas_context = { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId, outputIndex: 0 };
+    const before = forwardedRequests.length;
+    assert.equal((await call(`/ai/${imageChannel}/v1/images/generations`, bob, "POST", { ...body, canvas_context })).status, 404);
+    const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { ...body, canvas_context });
+    assert.equal(response.status, 202);
+    assert.equal(forwardedRequests.length, before);
+    const taskId = (await response.json()).canvasTaskId;
+    const accepted = (await db.query("SELECT status,canvas_node_id FROM generation_tasks WHERE id=$1", [taskId])).rows[0];
+    assert.equal(accepted.status, "pending");
+    assert.equal(accepted.canvas_node_id, project.nodes[0].entityId);
+    await Promise.all([executeMediaTask(taskId), executeMediaTask(taskId)]);
+    assert.equal(forwardedRequests.length, before + 1);
+    assert.equal(forwardedRequests.at(-1)!.body.prompt, "canvas image");
+    assert.ok(!("canvas_context" in forwardedRequests.at(-1)!.body));
+    assert.ok(!("canvas_source" in forwardedRequests.at(-1)!.body));
+    const saved = (await (await call(`/projects/${project.id}`)).json()).project;
+    assert.equal(saved.nodes[0].metadata.status, "success");
+    assert.equal(saved.nodes[0].width, 100);
+    const replay = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { ...body, canvas_context });
+    assert.equal(replay.status, 202);
+    assert.equal((await replay.json()).canvasTaskId, taskId);
+    assert.equal(replay.headers.get("X-Generation-Task-Id"), taskId);
+    assert.equal(forwardedRequests.length, before + 1);
+    const renamed = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node: { ...node, title: "edited during generation", position: { x: 42, y: 18 }, width: 240, height: 160 } }] } });
+    assert.equal(renamed.status, 200);
+    const updated = (await renamed.json()).project;
+    assert.equal(updated.nodes[0].metadata.content, saved.nodes[0].metadata.content);
+    assert.equal(updated.nodes[0].width, 240);
+    assert.equal((await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, command: { type: "edit_project", patch: { title: "stale edit" }, graphEdits: [] } })).status, 409);
+});
+test("obsolete completion does not replace a new output or revive a deleted node", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "late-output", type: "image", title: "output", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { generationId: randomUUID(), status: "loading" } };
+    const project = await canvasOutput(node, imageChannel, "gpt-image-2", "late");
+    const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "gpt-image-2", prompt: "late", size: "1024x1024", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    const taskId = (await response.json()).canvasTaskId;
+    await executeMediaTask(taskId);
+    const saved = (await (await call(`/projects/${project.id}`)).json()).project;
+    const replacement = { ...saved.nodes[0], metadata: { ...node.metadata, generationId: randomUUID(), status: "loading" } };
+    const change = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: saved.contentRevision, baseGenerationRevision: saved.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node: replacement }] } });
+    assert.equal(change.status, 200);
+    await db.query("UPDATE generation_tasks SET canvas_attached=false WHERE id=$1", [taskId]);
+    await finishCanvasTask(taskId);
+    const current = (await (await call(`/projects/${project.id}`)).json()).project;
+    assert.equal(current.nodes[0].metadata.generationId, replacement.metadata.generationId);
+    assert.equal(current.nodes[0].metadata.content, undefined);
+    assert.equal((await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: current.contentRevision, baseGenerationRevision: current.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "delete_node", id: node.id }] } })).status, 200);
+    await db.query("UPDATE generation_tasks SET canvas_attached=false WHERE id=$1", [taskId]);
+    await finishCanvasTask(taskId);
+    assert.deepEqual((await (await call(`/projects/${project.id}`)).json()).project.nodes, []);
+});
+test("a live worker lock prevents restart recovery; an abandoned call becomes unknown without resubmission", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "owned-output", type: "image", title: "output", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { generationId: randomUUID(), status: "loading" } };
+    const project = await canvasOutput(node, imageChannel, "gpt-image-2", "worker owner");
+    const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "gpt-image-2", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    const taskId = (await response.json()).canvasTaskId, owner = await db.connect(), before = forwardedRequests.length;
+    try {
+        await owner.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [taskId]);
+        await db.query("UPDATE generation_tasks SET status='running',execution_token=$2 WHERE id=$1", [taskId, randomUUID()]);
+        await executeMediaTask(taskId);
+        assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "running");
+    } finally { await owner.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [taskId]); owner.release(); }
+    await executeMediaTask(taskId);
+    assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "unknown");
+    assert.equal(forwardedRequests.length, before);
+});
+test("canvas video results attach through the worker without a canvas result write", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    videoCreateResponse = { id: "task-canvas-video", status: "queued" };
+    videoQueryResponse = { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } };
+    const node = { id: "video-output", type: "video", title: "video", position: { x: 21, y: 35 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading" } };
+    try {
+        const project = await canvasOutput(node, videoChannel, "seedance-test", "video");
+        const response = await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "seedance-test", content: [{ type: "text", text: "video" }], canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+        assert.equal(response.status, 202);
+        const taskId = (await response.json()).canvasTaskId;
+        await executeMediaTask(taskId); await processVideoTask(taskId);
+        const saved = (await (await call(`/projects/${project.id}`)).json()).project;
+        assert.equal(saved.nodes[0].metadata.status, "success");
+        assert.match(saved.nodes[0].metadata.content, /^\/api\/files\/media_files\//);
+        assert.deepEqual(saved.nodes[0].position, node.position);
+        assert.equal(saved.nodes[0].width, node.width);
+        const revision = saved.contentRevision;
+        await finishCanvasTask(taskId);
+        assert.equal((await (await call(`/projects/${project.id}`)).json()).project.contentRevision, revision);
+    } finally { videoCreateResponse = { id: "task-video", status: "queued" }; videoQueryResponse = { status: "queued" }; }
+});
+test("undoing a deletion restores its server identity and the latest task result without generating again", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "undo-output", type: "image", title: "output", position: { x: 12, y: 24 }, width: 200, height: 100, metadata: { generationId: randomUUID(), status: "loading" } };
+    let project = await canvasOutput(node, imageChannel, "gpt-image-2", "undo result");
+    const entityId = project.nodes[0].entityId;
+    const accepted = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "gpt-image-2", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    const taskId = (await accepted.json()).canvasTaskId;
+    project = (await (await call(`/projects/${project.id}`)).json()).project;
+    const sourceOperationId = randomUUID();
+    const edit = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: sourceOperationId, baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", graphEdits: [{ type: "delete_node", id: node.id }] } });
+    assert.equal(edit.status, 200);
+    project = (await edit.json()).project;
+    await executeMediaTask(taskId);
+    assert.deepEqual((await (await call(`/projects/${project.id}`)).json()).project.nodes, []);
+    const calls = forwardedRequests.length;
+    const undo = { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "restore_edit", sourceOperationId, direction: "undo" } };
+    const restored = await call(`/projects/${project.id}/commands`, alice, "POST", undo);
+    assert.equal(restored.status, 200);
+    project = (await restored.json()).project;
+    assert.equal(project.nodes[0].entityId, entityId);
+    assert.equal(project.nodes[0].metadata.status, "success");
+    assert.equal(project.nodes[0].metadata.generationTaskId, taskId);
+    assert.deepEqual(project.nodes[0].position, node.position);
+    assert.equal((await (await call(`/projects/${project.id}/commands`, alice, "POST", undo)).json()).project.contentRevision, project.contentRevision);
+    const redo = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "restore_edit", sourceOperationId, direction: "redo" } });
+    assert.equal(redo.status, 200);
+    assert.deepEqual((await redo.json()).project.nodes, []);
+    assert.equal(forwardedRequests.length, calls);
+});
+test("undo rejects a later edit of the same node", async () => {
+    let project = await canvasOutput({ id: "undo-conflict", type: "text", title: "original", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: "text" } }, imageChannel, "gpt-image-2", "text");
+    const sourceOperationId = randomUUID();
+    for (const [index, title] of ["first edit", "second edit"].entries()) {
+        const edited = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: index ? randomUUID() : sourceOperationId, baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", graphEdits: [{ type: "put_node", node: { ...project.nodes[0], title } }] } });
+        assert.equal(edited.status, 200); project = (await edited.json()).project;
+    }
+    const result = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "restore_edit", sourceOperationId, direction: "undo" } });
+    assert.equal(result.status, 409);
+    assert.equal((await (await call(`/projects/${project.id}`)).json()).project.nodes[0].title, "second edit");
+});
+test("recovering a saved upstream image response does not call the model again", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "recover-output", type: "image", title: "output", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { generationId: randomUUID(), status: "loading" } };
+    const project = await canvasOutput(node, imageChannel, "gpt-image-2", "recover saved image");
+    const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "gpt-image-2", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    const taskId = (await response.json()).canvasTaskId;
+    await db.query("UPDATE generation_tasks SET status='unknown',upstream_result=$2,error='MEDIA_DOWNLOAD_FAILED' WHERE id=$1", [taskId, JSON.stringify({ data: [{ url: "https://tokenone.test/banana-result.jpg" }] })]);
+    await finishCanvasTask(taskId);
+    assert.equal((await call(`/tasks/${taskId}/resume-result`, bob, "POST", {})).status, 409);
+    assert.equal((await call(`/tasks/${taskId}/resume-result`, alice, "POST", {})).status, 202);
+    const before = forwardedRequests.length;
+    await executeMediaTask(taskId);
+    assert.equal(forwardedRequests.length, before);
+    const saved = (await (await call(`/projects/${project.id}`)).json()).project;
+    assert.equal(saved.nodes[0].metadata.status, "success");
+    assert.equal((await db.query("SELECT upstream_result FROM generation_tasks WHERE id=$1", [taskId])).rows[0].upstream_result, null);
+});
+test("archive validation rejects missing media, temporary URLs and dangling graph references", async () => {
+    const project = { title: "import", nodes: [] as any[], connections: [] as any[], viewport: { x: 0, y: 0, k: 1 }, backgroundMode: "lines", showImageInfo: false };
+    const archive = { app: "infinite-canvas", version: 4, exportedAt: "test", projects: [{ project, files: [] }] };
+    assert.equal((await call("/projects/archive/validate", alice, "POST", archive)).status, 200);
+    assert.equal((await call("/projects/archive/validate", alice, "POST", { ...archive, version: 3 })).status, 400);
+    project.nodes = [{ id: "media", type: "image", title: "media", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { storageKey: "image:missing", content: "/api/files/image_files/image%3Amissing" } }];
+    assert.equal((await call("/projects/archive/validate", alice, "POST", archive)).status, 400);
+    project.nodes[0].metadata = { references: ["https://example.test/public/media/id?signature=secret"] };
+    assert.equal((await call("/projects/archive/validate", alice, "POST", archive)).status, 400);
+    project.nodes[0].metadata = {};
+    project.connections = [{ id: "edge", fromNodeId: "media", toNodeId: "missing" }];
+    assert.equal((await call("/projects/archive/validate", alice, "POST", archive)).status, 400);
+});
 test("server cleanup preserves another project reference and export streams one owned ZIP", async () => {
     const key = `image:${randomUUID()}`, url = `/api/files/image_files/${key}`;
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6swAAAABJRU5ErkJggg==", "base64");
@@ -655,7 +846,7 @@ test("server cleanup preserves another project reference and export streams one 
     const info = await (await call("/files/info", alice, "POST", {url})).json();
     const asset = (await (await call("/assets", alice, "POST", {kind: "image", title: "zip image", coverUrl: url, tags: [], data: {...info, dataUrl: url, url: undefined}})).json()).asset;
     assert.ok(asset?.id);
-    const project = (await (await call("/projects", alice, "POST", {title: "keep image", nodes: [{image: url}]})).json()).project;
+    const project = (await (await call("/projects", alice, "POST", {title: "keep image", nodes: [{ id: "keep-image", type: "image", title: "keep image", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: url, storageKey: key } }]})).json()).project;
     const response = await call("/assets/export"); assert.equal(response.status, 200);
     const archive = unzipSync(new Uint8Array(await response.arrayBuffer()));
     const manifest = JSON.parse(new TextDecoder().decode(archive["assets.json"]));
@@ -703,12 +894,9 @@ test("prompt caching, refresh and pagination run on the server and retain cache 
 });
 test("plugin records and works filtering use server mutations and pagination", async () => {
     const record = {id: "test-plugin", name: "test", version: "1", url: "https://example.test/plugin.js", source: "export default {}", enabled: true};
-    assert.equal((await call("/plugins", alice, "POST", record)).status, 200);
-    await call(`/plugins/${record.id}`, alice, "PATCH", {enabled: false});
-    assert.equal((await (await call("/plugins")).json()).plugins.find((p: any) => p.id === record.id).enabled, false);
+    assert.equal((await call("/plugins", alice, "POST", record)).status, 403);
+    assert.equal((await call(`/plugins/${record.id}`, alice, "PATCH", {enabled: true})).status, 403);
     assert.deepEqual((await (await call("/plugins", bob)).json()).plugins, []);
-    await call(`/plugins/${record.id}`, alice, "DELETE");
-    assert.deepEqual((await (await call("/plugins")).json()).plugins, []);
     const response = await (await call("/works?view=tasks&status=failed&pageSize=1")).json();
     assert.ok(response.works.length <= 1); assert.ok(response.works.every((w: any) => w.task.status === "failed"));
     assert.ok(response.total > 1);
