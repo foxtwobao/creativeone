@@ -94,7 +94,13 @@ function expandGroupResourceNodes(inputNodes: CanvasNodeData[], nodes: CanvasNod
 }
 
 export function getGroupResourceNodes(groupId: string, nodes: CanvasNodeData[]) {
-    return nodes.filter((node) => node.metadata?.groupId === groupId && isResourceNode(node));
+    const seen = new Set<string>();
+    const collect = (id: string): CanvasNodeData[] => {
+        if (seen.has(id)) return [];
+        seen.add(id);
+        return nodes.filter((node) => node.metadata?.groupId === id).flatMap((node) => node.type === CanvasNodeType.Group ? collect(node.id) : isResourceNode(node) ? [node] : []);
+    };
+    return collect(groupId);
 }
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {

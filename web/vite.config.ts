@@ -46,7 +46,12 @@ function localPluginsManifest(): Plugin {
             proxy: { "/api": { target: env.VITE_API_PROXY_TARGET || "http://127.0.0.1:4011", changeOrigin: false } },
         },
         base: process.env.VITE_BASE || "/",
-        plugins: [react(), localPluginsManifest()],
+        plugins: [react(), localPluginsManifest(), {
+            name: "watch-shared",
+            configureServer(server) {
+                server.watcher.add(resolve(webDir, "../shared"));
+            },
+        }],
         resolve: {
             alias: {
                 "@": resolve(webDir, "src"),

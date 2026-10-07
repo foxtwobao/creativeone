@@ -1,3 +1,5 @@
+import pg from "pg";
+import { env } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { db, transaction } from "./db.js";
 import { HttpError } from "./http.js";
@@ -5,6 +7,7 @@ import { downloadRemoteMedia, saveDownloadedMedia } from "./media.js";
 import { ensureKey, modelProvider, upstreamUrl } from "./tokenone.js";
 import { tokenoneError } from "./model-errors.js";
 import { VIDEO_POLL_INTERVAL_MS } from "../../shared/video-tasks.js";
+import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 const active = new Map<string, Promise<void>>();
 
@@ -18,7 +21,14 @@ export function processVideoTask(taskId: string): Promise<void> {
 
 async function poll(taskId: string) {
     const requestId = randomUUID();
+    const owner = new pg.Client({ connectionString: env.DATABASE_URL });
+    let locked = false, disconnected = false;
+    owner.on("error", () => { disconnected = true; });
+    owner.on("end", () => { disconnected = true; });
     try {
+        await owner.connect();
+        locked = (await owner.query("SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked", [taskId])).rows[0].locked;
+        if (!locked) return;
         const task = (await db.query("SELECT * FROM generation_tasks WHERE id=$1 AND capability='video' AND provider=$2 AND status='pending' AND upstream_id IS NOT NULL", [taskId, modelProvider])).rows[0];
         if (!task) return;
         const user = (await db.query("SELECT * FROM users WHERE id=$1", [task.user_id])).rows[0];
@@ -39,20 +49,29 @@ async function poll(taskId: string) {
         if (status === "succeeded") {
             const url = wan ? video.metadata?.url : video.content?.video_url;
             if (typeof url !== "string") throw new HttpError(502, "INVALID_VIDEO_TASK");
-            // Network transfers do not hold a database connection or block status reads.
+            // Only the session lock is held during transfers; no project/user row locks are held.
             media = await downloadRemoteMedia(url, signal, "video/mp4");
         }
+        if (disconnected) return;
+        await owner.query("SELECT 1");
         await transaction(async (client) => {
+            await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [task.user_id]);
             const current = (await client.query("SELECT status FROM generation_tasks WHERE id=$1 FOR UPDATE", [taskId])).rows[0];
             if (current.status !== "pending") return;
             const file = media ? await saveDownloadedMedia(task.user_id, media, client) : undefined;
             const result = { id: task.upstream_id, status: video.status, ...(file ? { file, ...(wan ? { metadata: { url: file.url } } : { content: { video_url: file.url } }) } : {}), ...(status === "failed" ? { error: { message: "视频生成失败，请查看云端任务记录或联系管理员" } } : {}) };
             await client.query("UPDATE generation_tasks SET status=$2,result=$3,error=NULL,updated_at=now() WHERE id=$1", [taskId, status, JSON.stringify(result)]);
-        });
+            await attachCanvasTask(taskId, client);
+        }, owner);
     } catch (error) {
+        if (disconnected || !locked) return;
         const code = error instanceof HttpError ? error.code : "UPSTREAM_RESULT_UNKNOWN";
-        await db.query("UPDATE generation_tasks SET status='unknown',error=$2,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code]);
+        await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code]);
         console.warn(JSON.stringify({ taskId, requestId, code }));
+        await finishCanvasTask(taskId);
+    } finally {
+        if (locked) await owner.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [taskId]).catch(() => undefined);
+        await owner.end();
     }
 }
 

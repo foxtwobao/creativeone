@@ -1,4 +1,3 @@
-import { features } from "@/constant/features";
 import { App, Button, Modal } from "antd";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { useEffect, useState, type ReactNode } from "react";
@@ -6,14 +5,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import { loadUserSettings } from "@/stores/use-config-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { retryCloudSave } from "@/services/cloud-storage";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
 
     const { message } = App.useApp();
     useEffect(() => {
-        void Promise.all([loadUserSettings(), ...(features.canvas ? [useCanvasStore.getState().load()] : [])]).catch((error) => message.error(error.message));
+        void loadUserSettings().catch((error) => message.error(error.message));
     }, [message]);
     const modelLoginRequired = useCloudStore((state) => state.modelLoginRequired);
     const setModelLoginRequired = useCloudStore((state) => state.setModelLoginRequired);

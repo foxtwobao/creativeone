@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { createFile, type MP4BoxBuffer } from "mp4box";
+import { videoMetadata } from "./media-metadata.js";
+export { videoMetadata } from "./media-metadata.js";
 import { db } from "./db.js";
 import { env } from "./config.js";
 import { HttpError } from "./http.js";
@@ -18,23 +19,6 @@ export async function readBytes(response: Response) {
         chunks.push(chunk);
     }
     return Buffer.concat(chunks);
-}
-
-export function videoMetadata(bytes: Buffer) {
-    let metadata: { width?: number; height?: number; durationMs?: number } = {};
-    try {
-        const file = createFile();
-        file.onError = () => {};
-        file.onReady = (info) => {
-            const track = info.videoTracks[0];
-            if (track?.video) metadata = { width: track.video.width, height: track.video.height, durationMs: track.timescale ? Math.round(track.duration / track.timescale * 1000) : undefined };
-        };
-        const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as MP4BoxBuffer;
-        buffer.fileStart = 0;
-        file.appendBuffer(buffer);
-        file.flush();
-    } catch { /* Metadata is optional; a parsing failure must not discard the saved video. */ }
-    return metadata;
 }
 
 export async function downloadRemoteMedia(url: string, signal: AbortSignal, expectedMime?: string) {

@@ -1,18 +1,21 @@
 import { App, Button, Modal } from "antd";
 import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { saveAs } from "file-saver";
 import { cloudSession, logoutCloud } from "@/services/api/cloud";
 import { exportUnsavedChanges, retryCloudSave } from "@/services/cloud-storage";
 import { useCloudStore } from "@/stores/use-cloud-store";
-import { flushCanvasPersistence, hasPendingCanvasPersistence } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasPersistence, hasPendingCanvasPersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 export function CloudAccountBar() {
     const { message, modal } = App.useApp();
+    const { t } = useTranslation();
     const saving = useCloudStore((state) => state.saving);
     const errors = useCloudStore((state) => state.errors);
     const [details, setDetails] = useState(false);
     const [retrying, setRetrying] = useState(false);
+    const pendingCanvas = useCanvasStore((state) => state.pendingCount);
     const failed = Object.keys(errors).length > 0;
     const needsLogin = Boolean(errors.session);
     const leaving = useRef(false);
@@ -52,8 +55,9 @@ export function CloudAccountBar() {
                 {failed ? <>
                     <button onClick={() => setDetails(true)}>保存失败</button>
                     {!needsLogin ? <button disabled={saving > 0 || retrying} onClick={() => void retry()}>{retrying ? "正在重试…" : "重试"}</button> : null}
-                </> : <span role="status">{saving || retrying ? "正在保存…" : "已保存"}</span>}
+                </> : <span role="status">{saving || retrying || pendingCanvas ? "正在保存…" : "已保存"}</span>}
                 {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
+                <a href="https://token.agentone.work/wallet" target="_blank" rel="noopener noreferrer">{t("topNav.recharge")}</a>
                 <button disabled={saving > 0 || retrying} onClick={() => void logout()}>退出</button>
             </div>
         </div>
@@ -62,10 +66,9 @@ export function CloudAccountBar() {
                 {Object.entries(errors).map(([key, error]) => <p key={key}>{error}</p>)}
                 <p className="text-sm text-muted-foreground">未保存的修改仅保留在当前页面，关闭或刷新后会丢失。</p>
                 <div className="flex flex-wrap gap-2">
-                    {needsLogin ? <>
-                        <Button disabled={saving > 0} onClick={async () => { await flushCanvasPersistence(); saveAs(exportUnsavedChanges(), "creativeone-unsaved.json"); }}>导出未保存修改</Button>
-                        <Button danger disabled={saving > 0} onClick={() => modal.confirm({ title: "放弃当前页面未保存的修改？", content: "此操作将放弃所有未保存修改并重新读取云端数据。请先导出需要保留的内容。", okText: "放弃修改并加载云端", cancelText: "取消", onOk: () => { leaving.current = true; window.location.reload(); } })}>放弃修改并加载云端</Button>
-                    </> : <Button loading={retrying} disabled={saving > 0} onClick={() => void retry()}>重试保存</Button>}
+                    <Button disabled={saving > 0} onClick={() => saveAs(exportUnsavedChanges(), "creativeone-unsaved.json")}>导出未保存修改</Button>
+                    {!needsLogin ? <Button loading={retrying} disabled={saving > 0} onClick={() => void retry()}>重试保存</Button> : null}
+                    <Button danger disabled={saving > 0} onClick={() => modal.confirm({ title: "放弃当前页面未保存的修改？", content: "此操作将放弃未保存修改并重新读取云端内容。请先导出需要保留的内容。", okText: "放弃修改并加载云端", cancelText: "取消", onOk: () => { leaving.current = true; window.location.reload(); } })}>重新加载云端</Button>
                 </div>
             </div>
         </Modal>

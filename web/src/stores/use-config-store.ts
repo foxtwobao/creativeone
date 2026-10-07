@@ -88,7 +88,7 @@ export const defaultConfig: AiConfig = {
     videoSize: "1:1",
     background: "",
     count: "1",
-    canvasImageCount: "3",
+    canvasImageCount: "1",
 };
 
 const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "models"]);

@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "[Changelog](/docs/progress/changelog)",
+    "infinite-canvas-plan",
     "local-agent-integration-plan",
     "prompt-chip-input-plan",
     "pending-test",

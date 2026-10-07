@@ -26,6 +26,8 @@ export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeImage = {
+    generationId?: string;
+    generationTaskId?: string;
     id: string;
     status: CanvasNodeStatus;
     errorDetails?: string;
@@ -45,6 +47,8 @@ export type CanvasNodeText = {
 };
 
 export type CanvasNodeMetadata = {
+    generationId?: string;
+    generationTaskId?: string;
     content?: string;
     composerContent?: string;
     prompt?: string;

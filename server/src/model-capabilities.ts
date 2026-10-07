@@ -48,3 +48,8 @@ export function videoRequestCapabilityError(model: string, family: VideoModelTyp
         ratio: ratio === "adaptive" ? "auto" : ratio, seconds, mode: frames.length ? "frames" : "reference",
     }, { images: images.length, videos: videos.length, audios: audios.length });
 }
+
+export function videoDurationCapabilityError(model: string, family: VideoModelType, videoSeconds: number, audioSeconds: number) {
+    const limit = videoModelProfile(model, family).referenceSeconds;
+    return limit !== null && (videoSeconds > limit || audioSeconds > limit) ? `参考视频、参考音频各自总时长不能超过 ${limit} 秒。` : undefined;
+}

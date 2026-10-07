@@ -1,3 +1,5 @@
+import { canvasImageReferencePrompt } from "../../../../shared/canvas-request";
+import { canvasGenerationResult } from "./canvas";
 import axios from "axios";
 
 import i18n from "@/i18n";
@@ -100,7 +102,8 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+export type CanvasGenerationContext = { projectId: string; nodeId: string; generationId: string; outputId?: string; outputIndex?: number };
+type RequestOptions = { signal?: AbortSignal; canvasContext?: CanvasGenerationContext };
 
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
 const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
@@ -634,16 +637,16 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 
 async function requestModelImages(config: ReturnType<typeof resolveModelRequestConfig>, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions, userPrompt = prompt) {
     const family = config.imageType;
-    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const images = await Promise.all(references.map((image) => options?.canvasContext && image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : imageToDataUrl(image)));
     const requestPrompt = withSystemPrompt(config, prompt);
     const body = family === "banana"
         ? bananaImageBody(config.model, requestPrompt, config.size, count, images)
         : grokImageBody(config.model, requestPrompt, config.size, config.quality, count, images);
     const endpoint = family === "banana" || !images.length ? "/images/generations" : "/images/edits";
-    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, endpoint), { ...body, user_prompt: userPrompt }, {
+    const response = await axios.post<ImageApiResponse>(aiApiUrl(config, endpoint), { ...body, user_prompt: userPrompt, ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) }, {
         headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS,
     });
-    return parseImagePayload(response.data);
+    return parseImagePayload(await canvasGenerationResult(response.data, options?.signal));
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
@@ -654,6 +657,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (options?.canvasContext && (script || requestConfig.apiFormat === "gemini")) throw new Error("画布生成仅支持后台配置的图片调用类型，暂不支持脚本与直连协议。");
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -695,6 +699,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 user_prompt: prompt,
                 n,
                 ...params,
+                ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}),
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
@@ -702,7 +707,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 timeout: IMAGE_REQUEST_TIMEOUT_MS,
             },
         );
-        const images = await parseImagePayload(response.data);
+        const images = await parseImagePayload(await canvasGenerationResult(response.data, options?.signal));
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
@@ -716,8 +721,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (settings.error) throw new Error(settings.error);
     }
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const requestPrompt = buildImageReferencePromptText(prompt, references);
+    const requestPrompt = options?.canvasContext ? canvasImageReferencePrompt(prompt, references.length) : buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
+    if (options?.canvasContext && (script || requestConfig.apiFormat === "gemini")) throw new Error("画布生成仅支持后台配置的图片调用类型，暂不支持脚本与直连协议。");
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -752,11 +758,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 
     const params = openAiImageParams(requestConfig);
-    const editBody = { model: requestConfig.model, prompt: withSystemPrompt(requestConfig, requestPrompt), user_prompt: prompt, n, ...params, image_references: references.map((image) => image.dataUrl || image.url || (image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : "")) };
+    const editBody = { model: requestConfig.model, prompt: withSystemPrompt(requestConfig, requestPrompt), user_prompt: prompt, n, ...params, ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}), image_references: references.map((image) => (options?.canvasContext && image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : undefined) || image.dataUrl || image.url || (image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : "")) };
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), editBody, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
-        const images = await parseImagePayload(response.data);
+        const images = await parseImagePayload(await canvasGenerationResult(response.data, options?.signal));
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
