@@ -18,11 +18,11 @@ test("Banana sends ratio in size and lets the model suffix determine resolution"
     expect(bananaImageBody("banana2-2k", "猫", "4:5", 1, []).size).toBe("4:5");
 });
 
-test("Banana JSON references preserve data URLs and ordering in image_urls", () => {
+test("Banana JSON references preserve data URLs and ordering in images", () => {
     const images = ["data:image/jpeg;base64,YQ==", "data:image/png;base64,Yg=="];
     const body = bananaImageBody("banana-pro-4k", "合成", "1:1", 1, images);
-    expect(body.image_urls).toEqual(images);
-    for (const key of ["quality", "resolution", "aspect_ratio", "background", "output_format", "contents"]) expect(body).not.toHaveProperty(key);
+    expect(body.images).toEqual(images);
+    for (const key of ["image_urls", "quality", "resolution", "aspect_ratio", "background", "output_format", "contents"]) expect(body).not.toHaveProperty(key);
 });
 
 test("automatic sizing leaves ratio and resolution to the provider", () => {
