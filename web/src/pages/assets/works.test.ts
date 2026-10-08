@@ -45,5 +45,5 @@ test("task settings retain false and zero, describe actual references and never 
     const values = Object.fromEntries(settings.map((item) => [item.label, item.children]));
     expect(values).toMatchObject({"时长": "4 秒", "宽高比": "1:1", "生成音频": "关闭", "随机种子": "0", "参考图片": "1 个", "参考音频": "1 个", "图片参考方式": "首帧"});
     expect(values["分辨率"]).toBeUndefined();
-    expect(taskSettings({model: "banana", image_urls: ["/a", "/b"]}).find((item) => item.key === "images")?.children).toBe("2 个");
+    expect(taskSettings({model: "banana", images: ["/a", "/b"]}).find((item) => item.key === "images")?.children).toBe("2 个");
 });

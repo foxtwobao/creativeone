@@ -10,7 +10,7 @@ test("image server guard validates quality, pixel dimensions and both JSON/multi
     assert.match(imageRequestCapabilityError("gpt-image-2", "openai", { size: "1025x1024" }), /16/);
     assert.match(imageRequestCapabilityError("gpt-image-2", "openai", { image_references: Array(17).fill("url") }), /16 张/);
     assert.match(imageRequestCapabilityError("gpt-image-2", "openai", {}, 17), /16 张/);
-    assert.equal(imageRequestCapabilityError("banana2-1k", "banana", { image_urls: Array(17).fill("url") }), "");
+    assert.equal(imageRequestCapabilityError("banana2-1k", "banana", { images: Array(17).fill("url") }), "");
 });
 test("Grok guard checks single-image aspect ratio and model-specific edit limits", () => {
     assert.match(imageRequestCapabilityError("grok-imagine-image", "grok", { image: {}, aspect_ratio: "16:9" }), /省略/);

@@ -251,8 +251,8 @@ test("Banana OpenAI requests preserve parameters, image permissions, user Key an
     assert.equal((await call(`/ai/${imageChannel}/v1/chat/completions`, alice, "POST", { model: "banana2-2k" })).status, 403);
     assert.equal((await call(`/ai/${textChannel}/v1/images/generations`, alice, "POST", { model: "banana2-2k" })).status, 403);
     assert.equal(forwardedKeys.length, before);
-    for (const image_urls of [[], ["data:image/png;base64,YQ==", "data:image/jpeg;base64,Yg=="]]) {
-        const body = { model: "banana2-2k", prompt: "猫", size: "16:9", response_format: "url", n: 1, ...(image_urls.length ? { image_urls } : {}) };
+    for (const images of [[], ["data:image/png;base64,YQ=="], ["data:image/png;base64,YQ==", "data:image/jpeg;base64,Yg=="]]) {
+        const body = { model: "banana2-2k", prompt: "猫", size: "16:9", response_format: "url", n: 1, ...(images.length ? { images } : {}) };
         const response = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", body);
         assert.equal(response.status, 200);
         assert.deepEqual(forwardedRequests.at(-1), { url: "https://tokenone.test/v1/images/generations", body });

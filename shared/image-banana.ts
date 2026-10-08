@@ -7,6 +7,6 @@ export function bananaImageBody(model: string, prompt: string, size: string, cou
     return {
         model, prompt, n: count, response_format: "url",
         ...(ratio !== "auto" ? { size: ratio } : {}),
-        ...(images.length ? { image_urls: images } : {}),
+        ...(images.length ? { images } : {}),
     };
 }
