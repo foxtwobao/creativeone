@@ -56,6 +56,7 @@ export function CloudAccountBar() {
                     <button onClick={() => setDetails(true)}>保存失败</button>
                     {!needsLogin ? <button disabled={saving > 0 || retrying} onClick={() => void retry()}>{retrying ? "正在重试…" : "重试"}</button> : null}
                 </> : <span role="status">{saving || retrying || pendingCanvas ? "正在保存…" : "已保存"}</span>}
+                <a href="https://home.agentone.work/">首页</a>
                 {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
                 {cloudSession?.user.admin ? <Link to="/admin/tasks">用户任务</Link> : null}
                 <a href="https://token.agentone.work/wallet" target="_blank" rel="noopener noreferrer">{t("topNav.recharge")}</a>
