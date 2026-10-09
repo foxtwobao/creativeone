@@ -4,17 +4,19 @@ import { features } from "@/constant/features";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import UserLayout from "@/layouts/user-layout";
-const AssetsPage = lazy(() => import("@/pages/assets"));
-const CanvasPage = lazy(() => import("@/pages/canvas"));
-const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
-const ConfigPage = lazy(() => import("@/pages/config"));
-const HomePage = lazy(() => import("@/pages/home"));
-const ImagePage = lazy(() => import("@/pages/image"));
-const NotFound = lazy(() => import("@/pages/not-found"));
-const PromptsPage = lazy(() => import("@/pages/prompts"));
-const VideoPage = lazy(() => import("@/pages/video"));
-const ChannelsPage = lazy(() => import("@/pages/admin/channels"));
-const AdminTasksPage = lazy(() => import("@/pages/admin/tasks"));
+import { lazyWithReload } from "@/lib/lazy-with-reload";
+
+const AssetsPage = lazyWithReload(() => import("@/pages/assets"));
+const CanvasPage = lazyWithReload(() => import("@/pages/canvas"));
+const CanvasProjectPage = lazyWithReload(() => import("@/pages/canvas/project"));
+const ConfigPage = lazyWithReload(() => import("@/pages/config"));
+const HomePage = lazyWithReload(() => import("@/pages/home"));
+const ImagePage = lazyWithReload(() => import("@/pages/image"));
+const NotFound = lazyWithReload(() => import("@/pages/not-found"));
+const PromptsPage = lazyWithReload(() => import("@/pages/prompts"));
+const VideoPage = lazyWithReload(() => import("@/pages/video"));
+const ChannelsPage = lazyWithReload(() => import("@/pages/admin/channels"));
+const AdminTasksPage = lazyWithReload(() => import("@/pages/admin/tasks"));
 
 export const router = createBrowserRouter([
     {
