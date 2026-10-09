@@ -1,4 +1,5 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import { lazyWithReload } from "@/lib/lazy-with-reload";
 
 import { useLocation } from "react-router-dom";
 import { useInterfaceStore } from "@/stores/use-interface-store";
@@ -7,8 +8,8 @@ import { CloudAccountBar } from "@/components/layout/cloud-account-bar";
 import { features } from "@/constant/features";
 import { ClientRootInit } from "@/components/layout/client-root-init";
 
-const AgentPanel = lazy(() => import("@/components/agent/agent-panel").then((module) => ({ default: module.AgentPanel })));
-const AppTopNav = lazy(() => import("@/components/layout/app-top-nav").then((module) => ({ default: module.AppTopNav })));
+const AgentPanel = lazyWithReload(() => import("@/components/agent/agent-panel").then((module) => ({ default: module.AgentPanel })));
+const AppTopNav = lazyWithReload(() => import("@/components/layout/app-top-nav").then((module) => ({ default: module.AppTopNav })));
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
