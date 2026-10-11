@@ -2,6 +2,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { modelErrorMessage, tokenoneError } from "./model-errors.js";
 
+test("Seedance real-person asset rejection preserves the reason and hides provider text", async () => {
+    const code = "seedance_real_person_asset_required";
+    for (const body of [{ code, message: "private provider details" }, { error: { code, message: "private provider details" } }]) {
+        const error = await tokenoneError(Response.json(body, { status: 400 }));
+        assert.equal(error.code, code);
+        assert.equal(error.status, 400);
+        assert.match(modelErrorMessage(error.code)!, /真人认证/);
+        assert.match(modelErrorMessage(error.code)!, /暂不支持认证素材/);
+        assert.doesNotMatch(modelErrorMessage(error.code)!, /private provider|尺寸/);
+    }
+    const unknown = await tokenoneError(Response.json({ error: { message: code } }, { status: 400 }));
+    assert.equal(unknown.code, "TOKENONE_HTTP_400");
+});
+
 test("balance failures preserve the specific reason without exposing provider text", async () => {
     const error = await tokenoneError(Response.json({ code: "INSUFFICIENT_BALANCE", message: "secret provider details" }, { status: 403 }));
     assert.equal(error.code, "INSUFFICIENT_BALANCE");
