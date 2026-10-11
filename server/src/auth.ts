@@ -3,14 +3,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { parse, serialize } from "cookie";
 import * as oidc from "openid-client";
 import { db } from "./db.js";
-import { env, adminSubjects, localOidc, loginSites } from "./config.js";
+import { env, adminSubjects, localOidc, resolveLoginSite } from "./config.js";
 import { HttpError } from "./http.js";
 
 export type User = { id: string; issuer: string; subject: string; email: string; email_verified: boolean; username: string; display_name: string; avatar_url: string };
 declare global { namespace Express { interface Locals { user: User; csrf: string; sessionHash: string; requestId: string; loginReturnTo?: string; } } }
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 function site(req: Request) {
-    const configured = loginSites.get(req.get("Host") || "");
+    const configured = resolveLoginSite(req.get("Host") || "");
     if (!configured) throw new HttpError(400, "UNKNOWN_SITE");
     return configured;
 }

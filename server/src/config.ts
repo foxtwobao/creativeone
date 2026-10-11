@@ -5,7 +5,8 @@ const emptyAsUndefined = (value: unknown) => value === "" ? undefined : value;
 export const env = z.object({
     DATABASE_URL: z.string().min(1),
     APP_ORIGIN: z.url(),
-    APP_ORIGINS: z.string().min(1),
+    APP_ORIGINS: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
+    APP_DOMAIN_SUFFIXES: z.string().default(""),
     HOMEONE_LOGIN_ORIGIN: z.url(),
     IDONE_APP: z.string().regex(/^[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}$/),
     IDONE_ISSUER: z.url(),
@@ -46,7 +47,13 @@ export const adminSubjects = new Set(env.ADMIN_SUBJECTS.split(",").map((value) =
 
 // Match the original Host (including port); never derive origins from forwarded headers.
 export const loginSites = new Map<string, { origin: string }>();
-const origins = z.array(z.string()).nonempty().parse(JSON.parse(env.APP_ORIGINS));
+const origins = env.APP_ORIGINS ? z.array(z.string()).nonempty().parse(JSON.parse(env.APP_ORIGINS)) : [env.APP_ORIGIN];
+const domainSuffixes = env.APP_DOMAIN_SUFFIXES.split(",").map(value => value.trim()).filter(Boolean);
+for (const suffix of domainSuffixes) {
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z](?:[a-z0-9-]*[a-z0-9])?$/.test(suffix) || new URL(`https://${suffix}`).hostname !== suffix) {
+        throw new Error("APP_DOMAIN_SUFFIXES requires lowercase domain names without protocol, port or wildcard");
+    }
+}
 for (const value of [...origins, env.HOMEONE_LOGIN_ORIGIN]) {
     const url = new URL(value);
     if (url.origin !== value || url.username || url.password || url.hostname.includes("*") ||
@@ -60,3 +67,14 @@ for (const origin of origins) {
     loginSites.set(host, { origin });
 }
 if (!origins.includes(env.APP_ORIGIN)) throw new Error("APP_ORIGINS must include APP_ORIGIN");
+
+export function resolveLoginSite(host: string) {
+    const configured = loginSites.get(host);
+    if (configured) return configured;
+    try {
+        const url = new URL(`https://${host}`);
+        if (url.host !== host || url.origin !== `https://${host}` || url.port ||
+            !domainSuffixes.some(suffix => url.hostname === suffix || url.hostname.endsWith(`.${suffix}`))) return;
+        return { origin: url.origin };
+    } catch { return; }
+}

@@ -19,7 +19,7 @@
 
 固定路径沿用本项目现有设计，不改为方案示例中的 `/auth/callback`。Reseller 根据 Site 生成标准访问地址与完整回调，`publicUrl` 取 default Site 的最终地址。当前 lab 的 `https://creative.lab.home.arpa` 与 `https://creativeccpg.lab.home.arpa` 若不符合标准生成规则，分别登记对应 Site 的特殊 origin 覆盖。产品业务 Secret 不提交到目录。
 
-每个 origin 需要同时核对：CreativeONE `APP_ORIGINS`、Reseller `(idoneApp, callbackUrl)` 精确路由、IDONE 同一业务 APP 的精确回调、DNS/TLS 和反向代理。核对完成后再启用，不以域名模板替代精确登记。
+每个 origin 需要同时核对：CreativeONE 精确地址或 `APP_DOMAIN_SUFFIXES` 后缀校验、Reseller `(idoneApp, callbackUrl)` 精确路由、IDONE 同一业务 APP 的精确回调、DNS/TLS 和反向代理。核对完成后再启用，不以域名模板替代精确登记。
 
 ## CreativeONE 配置
 
@@ -31,6 +31,8 @@ IDONE_APP=admin/creativeone
 ```
 
 以上为已部署的 CreativeONE lab 配置；HomeONE 平台配置已启用；默认回调可用，CCPG 回调登记仍需对应项目核对。删除旧 `HOMEONE_SITES`，不保留按域名选 HomeONE 的回退。`APP_ORIGINS` 必须包含 `APP_ORIGIN`，仅接受完整规范 origin，拒绝通配符、路径、凭据、重复和同 Host 不同协议；生产使用 HTTPS，开发仅回环地址允许 HTTP。只读取代理保留的原始 Host（含端口），不信任外来转发头。
+
+新增可选 `APP_DOMAIN_SUFFIXES`（英文逗号分隔的小写可信域名），允许根域及多级子域，以实际 Host 构造标准 HTTPS origin，拒绝非标准端口与伪造域名边界。`APP_ORIGINS` 可省略，默认使用 `APP_ORIGIN`。这是应用自身的放行方式，HomeONE/Reseller 与 IDONE 精确回调仍需核对；以上 lab 配置未因此修改或重新部署。
 
 所有 origins 使用固定 issuer、现有 IDONE Client ID/Secret、Discovery 和管理员 sub。只有合法当前 Host 决定业务回调 origin，本应用不选择 Site/入口 APP，不读取 HomeONE 私有配置，不获取其他入口 Secret，也不维护渠道归属。
 
