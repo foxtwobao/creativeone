@@ -7,7 +7,7 @@ import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.
 import { HttpError } from "./http.js";
 import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser } from "./storage.js";
 import { downloadRemoteMedia } from "./media.js";
-import { tokenoneError } from "./model-errors.js";
+import { tokenoneError, upstreamErrorDetails } from "./model-errors.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 async function imageBytes(payload: any, signal: AbortSignal) {
@@ -111,6 +111,7 @@ export async function executeMediaTask(taskId: string) {
             }, owner);
         };
         let dispatched = false;
+        const saveError = (detail: unknown) => owner.query("UPDATE generation_tasks SET upstream_error=$3 WHERE id=$1 AND execution_token=$2", [taskId, token, JSON.stringify(detail)]);
         try {
             const signal = AbortSignal.timeout(600_000);
             let result = task.upstream_result;
@@ -126,9 +127,9 @@ export async function executeMediaTask(taskId: string) {
                 await owner.query("SELECT 1");
                 dispatched = true;
                 const upstream = await fetch(upstreamUrl(task.path), { method: "POST", headers: { ...request.headers, Authorization: `Bearer ${key.key}` }, body: request.body, redirect: "error", signal });
-                if (!upstream.ok) { const error = await tokenoneError(upstream); await publish("failed", null, error.code); return; }
+                if (!upstream.ok) { const error = await tokenoneError(upstream); await saveError(error.upstreamError); await publish("failed", null, error.code); return; }
                 result = await upstream.json();
-                if (result?.error) { await publish("failed", null, "TOKENONE_GENERATION_FAILED"); return; }
+                if (result?.error) { await saveError(upstreamErrorDetails(result)); await publish("failed", null, "TOKENONE_GENERATION_FAILED"); return; }
                 await db.query("UPDATE generation_tasks SET upstream_result=$3 WHERE id=$1 AND execution_token=$2", [taskId, token, JSON.stringify(result)]);
             } else dispatched = true;
             if (task.capability === "image") {
@@ -138,9 +139,11 @@ export async function executeMediaTask(taskId: string) {
                 const video = result.data || result, id = video.id || video.task_id;
                 if (typeof id !== "string" || !/^[\w-]+$/.test(id)) throw new HttpError(502, "INVALID_VIDEO_TASK");
                 const failed = ["failed", "cancelled", "expired"].includes(video.status);
+                if (failed) await saveError(upstreamErrorDetails(video));
                 await publish(failed ? "failed" : "pending", failed ? { id, status: video.status, error: { message: "视频生成失败" } } : { id, status: "queued" }, failed ? "TOKENONE_GENERATION_FAILED" : null, id);
             }
         } catch (error) {
+            if (error instanceof HttpError && error.upstreamError) await saveError(error.upstreamError);
             await publish(dispatched ? "unknown" : "failed", null, error instanceof HttpError ? error.code : "UPSTREAM_RESULT_UNKNOWN");
         }
     } finally {

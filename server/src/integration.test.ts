@@ -950,6 +950,15 @@ test("admin task filtering paginates hidden records and returns only display fie
     assert.equal(detail.task.results.length, 1); assert.equal(detail.task.results[0].url, undefined);
     assert.ok(detail.task.settings.some((item: any) => item.key === "n"));
     assert.ok(!JSON.stringify(detail).includes("sk-private")); assert.ok(!JSON.stringify(detail).includes("canvas_submission"));
+    await db.query("UPDATE generation_tasks SET error='TOKENONE_HTTP_400',upstream_error=$2 WHERE id=$1", [ids[1], JSON.stringify({ status: 400, code: "InvalidSize", message: "width must be 512" })]);
+    const diagnostic = (await (await call(`/admin/tasks/${ids[1]}`, admin)).json()).task;
+    assert.equal(diagnostic.error, "InvalidSize"); assert.equal(diagnostic.errorMessage, "width must be 512");
+    assert.equal((await call(`/admin/tasks/${ids[1]}`, alice)).status, 403);
+    const publicTask = await (await call(`/tasks/${ids[1]}`, alice)).json();
+    assert.ok(!("upstream_error" in publicTask)); assert.ok(!JSON.stringify(publicTask).includes("width must be 512"));
+    await db.query("UPDATE generation_tasks SET upstream_error=NULL WHERE id=$1", [ids[1]]);
+    const missing = (await (await call(`/admin/tasks/${ids[1]}`, admin)).json()).task;
+    assert.match(missing.errorMessage, /未保存上游错误详情/);
     await db.query("UPDATE generation_tasks SET status='failed',error=NULL,result=$2 WHERE id=$1", [ids[2], JSON.stringify({ status: "failed", error: { message: "provider-private-details" } })]);
     const failedVideo = (await (await call(`/admin/tasks/${ids[2]}`, admin)).json()).task;
     assert.equal(failedVideo.error, "TOKENONE_GENERATION_FAILED"); assert.ok(failedVideo.errorMessage);

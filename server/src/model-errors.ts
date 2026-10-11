@@ -101,12 +101,30 @@ export function modelErrorMessage(code: string): string | undefined {
     return undefined;
 }
 
-// Only known codes leave the backend. Provider messages may contain credentials,
-// internal URLs, HTML or prompts and must not be forwarded or logged verbatim.
+// Only the administrator task endpoint exposes these diagnostics, as plain text.
+export function upstreamErrorDetails(body: any, status?: number): NonNullable<HttpError["upstreamError"]> {
+    let detail = body?.error || body;
+    const message = typeof detail?.message === "string" ? detail.message : typeof detail === "string" ? detail : "";
+    if (typeof message === "string") {
+        try { const parsed = JSON.parse(message.replace(/^status_code=\d{3},\s*/, "")); detail = parsed?.error || parsed || detail; } catch { /* Plain provider message. */ }
+    }
+    const redact = (value: string) => value
+        .replace(/\bBearer\s+[^\s"'<>]+/gi, "Bearer [已隐藏]")
+        .replace(/\bsk-[\w-]+/g, "[已隐藏]")
+        .replace(/((?:api[_-]?key|access[_-]?token|authorization|password|secret)\s*["']?\s*[:=]\s*["']?)[^\s,"'<>}]+/gi, "$1[已隐藏]")
+        .replace(/https?:\/\/[^\s"'<>]+/g, "[链接已隐藏]");
+    return { ...(status ? { status } : {}), ...(typeof detail?.code === "string" ? { code: redact(detail.code) } : {}),
+        message: redact(typeof detail?.message === "string" ? detail.message : typeof detail === "string" ? detail : message || "上游未返回错误说明") };
+}
+
+// Public responses retain known codes and fixed messages; diagnostics stay server-side.
 export async function tokenoneError(response: Response): Promise<HttpError> {
-    const body = await response.json().catch(() => null);
+    const raw = await response.text();
+    let body: any;
+    try { body = JSON.parse(raw); } catch { body = raw; }
+    const failure = (status: number, code: string) => Object.assign(new HttpError(status, code), { upstreamError: upstreamErrorDetails(body, response.status) });
     if (response.status === 403 && body?.error?.type === "permission_error" && body.error.message === "Image generation is not enabled for this group") {
-        return new HttpError(403, "TOKENONE_GENERATION_PERMISSION_DISABLED");
+        return failure(403, "TOKENONE_GENERATION_PERMISSION_DISABLED");
     }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
     // Task plugins may put upstream JSON in error.message with a generic outer code.
@@ -119,13 +137,13 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
     }
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
     if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^composite has invalid channel bindings(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
-        return new HttpError(403, "TOKENONE_GROUP_BINDINGS_INVALID");
+        return failure(403, "TOKENONE_GROUP_BINDINGS_INVALID");
     }
     if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^this endpoint does not support composite groups(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
-        return new HttpError(403, "TOKENONE_COMPOSITE_ENDPOINT_UNSUPPORTED");
+        return failure(403, "TOKENONE_COMPOSITE_ENDPOINT_UNSUPPORTED");
     }
     if (!code && response.status === 403 && typeof body?.error?.message === "string" && /^account balance is negative, please recharge first(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
-        return new HttpError(403, "UPSTREAM_BALANCE_INSUFFICIENT");
+        return failure(403, "UPSTREAM_BALANCE_INSUFFICIENT");
     }
-    return new HttpError(response.status === 401 ? 502 : response.status, code || `TOKENONE_HTTP_${response.status}`);
+    return failure(response.status === 401 ? 502 : response.status, code || `TOKENONE_HTTP_${response.status}`);
 }

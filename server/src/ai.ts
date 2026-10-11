@@ -10,7 +10,7 @@ import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.
 import { HttpError, requireUuid } from "./http.js";
 import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
-import { tokenoneError, modelErrorMessage } from "./model-errors.js";
+import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError } from "./model-capabilities.js";
 import { videoModelProfile, wanModelProfile } from "../../shared/video-models.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
@@ -276,7 +276,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         const upstream = await fetch(upstreamUrl(path), { method: req.method, headers, body, redirect: "error", signal });
         if (!upstream.ok) {
             const error = await tokenoneError(upstream);
-            await db.query("UPDATE generation_tasks SET status='failed',error=$2,updated_at=now() WHERE id=$1", [taskId, error.code]);
+            await db.query("UPDATE generation_tasks SET status='failed',error=$2,upstream_error=$3,updated_at=now() WHERE id=$1", [taskId, error.code, JSON.stringify(error.upstreamError || null)]);
             throw error;
         }
         const contentType = upstream.headers.get("content-type") || "application/json";
@@ -315,7 +315,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         }
         let result: any = await upstream.json();
         if (result?.error && channel.capability !== "video") {
-            await db.query("UPDATE generation_tasks SET status='failed',error='TOKENONE_GENERATION_FAILED',updated_at=now() WHERE id=$1", [taskId]);
+            await db.query("UPDATE generation_tasks SET status='failed',error='TOKENONE_GENERATION_FAILED',upstream_error=$2,updated_at=now() WHERE id=$1", [taskId, JSON.stringify(upstreamErrorDetails(result))]);
             throw new HttpError(422, "TOKENONE_GENERATION_FAILED");
         }
         if (channel.capability === "text") {
@@ -329,6 +329,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             const upstreamId = video.id || video.task_id;
             if (typeof upstreamId !== "string" || !/^[\w-]+$/.test(upstreamId)) throw new HttpError(502, "INVALID_VIDEO_TASK");
             status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : "pending";
+            if (status === "failed") await db.query("UPDATE generation_tasks SET upstream_error=$2 WHERE id=$1", [taskId, JSON.stringify(upstreamErrorDetails(video))]);
             // Persist the billable task before responding; the worker owns all subsequent processing.
             result = status === "failed" ? { id: upstreamId, status: video.status, error: { message: "视频生成失败" } } : { id: upstreamId, status: "queued" };
             await db.query("UPDATE generation_tasks SET upstream_id=$2,status=$3,result=$4,error=NULL,updated_at=now() WHERE id=$1", [taskId, upstreamId, status, JSON.stringify(result)]);

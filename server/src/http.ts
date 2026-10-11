@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { z } from "zod";
 
 export class HttpError extends Error {
+    upstreamError?: { status?: number; code?: string; message: string };
     constructor(public status: number, public code: string, public retryable = false) { super(code); }
 }
 export const requireUuid = (value: unknown) => z.uuid().parse(value);

@@ -48,7 +48,7 @@ adminTasksRouter.get("/admin/tasks", async (req, res) => {
 });
 adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const { rows } = await db.query(`SELECT t.id,t.user_id,t.capability,t.model,t.status,t.canvas_project_id,t.canvas_generation_id,t.created_at,t.updated_at,t.hidden_from_works,t.hidden_from_history,
-        t.request,t.result,t.error,t.upstream_id,p.title AS canvas_title,${userColumns}
+        t.request,t.result,t.error,t.upstream_error,t.upstream_id,p.title AS canvas_title,${userColumns}
         FROM generation_tasks t JOIN users u ON u.id=t.user_id LEFT JOIN canvas_projects p ON p.id=t.canvas_project_id AND p.user_id=t.user_id
         WHERE t.id=$1 AND t.capability IN ('image','video')`, [requireUuid(req.params.id)]);
     const task = rows[0];
@@ -80,7 +80,8 @@ adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const error = task.error || (task.status === "failed" ? "TOKENONE_GENERATION_FAILED" : null);
     res.json({ task: { ...taskSummary(task), upstreamId: task.upstream_id, canvasTitle: task.canvas_title || null,
         prompt: generationPrompt(request), sentPrompt: generationRequestPrompt(request), settings: taskSettings(parameters),
-        error, errorMessage: error ? modelErrorMessage(error) || "任务暂时无法完成" : null,
+        error: task.upstream_error ? task.upstream_error.code || (task.upstream_error.status ? `HTTP ${task.upstream_error.status}` : "UPSTREAM_ERROR") : (error?.startsWith("TOKENONE_HTTP_") ? "UPSTREAM_ERROR_DETAILS_UNAVAILABLE" : error),
+        errorMessage: task.upstream_error?.message || (error?.startsWith("TOKENONE_HTTP_") ? "此任务未保存上游错误详情，无法还原具体原因。" : error ? modelErrorMessage(error) || error : null),
         references: refs.map(media), results: outputs.map(media) } });
 });
 adminTasksRouter.get("/admin/users/:userId/files/:namespace/:key", async (req, res) => {

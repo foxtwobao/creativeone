@@ -135,3 +135,4 @@ ALTER TABLE canvas_project_commands ADD COLUMN IF NOT EXISTS inverse jsonb;
 ALTER TABLE canvas_project_commands ADD COLUMN IF NOT EXISTS undone boolean NOT NULL DEFAULT false;
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_result jsonb;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_error jsonb;

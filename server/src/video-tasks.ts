@@ -5,7 +5,7 @@ import { db, transaction } from "./db.js";
 import { HttpError } from "./http.js";
 import { downloadRemoteMedia, saveDownloadedMedia } from "./media.js";
 import { ensureKey, modelProvider, upstreamUrl } from "./tokenone.js";
-import { tokenoneError } from "./model-errors.js";
+import { tokenoneError, upstreamErrorDetails } from "./model-errors.js";
 import { VIDEO_POLL_INTERVAL_MS } from "../../shared/video-tasks.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
@@ -60,13 +60,13 @@ async function poll(taskId: string) {
             if (current.status !== "pending") return;
             const file = media ? await saveDownloadedMedia(task.user_id, media, client) : undefined;
             const result = { id: task.upstream_id, status: video.status, ...(file ? { file, ...(wan ? { metadata: { url: file.url } } : { content: { video_url: file.url } }) } : {}), ...(status === "failed" ? { error: { message: "视频生成失败，请查看云端任务记录或联系管理员" } } : {}) };
-            await client.query("UPDATE generation_tasks SET status=$2,result=$3,error=NULL,updated_at=now() WHERE id=$1", [taskId, status, JSON.stringify(result)]);
+            await client.query("UPDATE generation_tasks SET status=$2,result=$3,error=NULL,upstream_error=$4,updated_at=now() WHERE id=$1", [taskId, status, JSON.stringify(result), status === "failed" ? JSON.stringify(upstreamErrorDetails(video)) : null]);
             await attachCanvasTask(taskId, client);
         }, owner);
     } catch (error) {
         if (disconnected || !locked) return;
         const code = error instanceof HttpError ? error.code : "UPSTREAM_RESULT_UNKNOWN";
-        await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code]);
+        await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,upstream_error=$3,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code, error instanceof HttpError ? JSON.stringify(error.upstreamError || null) : null]);
         console.warn(JSON.stringify({ taskId, requestId, code }));
         await finishCanvasTask(taskId);
     } finally {

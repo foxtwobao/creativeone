@@ -1,6 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { modelErrorMessage, tokenoneError } from "./model-errors.js";
+import { modelErrorMessage, tokenoneError, upstreamErrorDetails } from "./model-errors.js";
+
+test("admin diagnostics retain unknown upstream reasons without exposing credentials", async () => {
+    const error = await tokenoneError(Response.json({ error: { code: "invalid_request", message: JSON.stringify({ error: { code: "InvalidSize", message: "width must be 512; api_key=private-key Bearer private-token https://user:pass@host/path?token=secret sk-example" } }) } }, { status: 400 }));
+    assert.equal(error.code, "TOKENONE_HTTP_400");
+    assert.equal(error.upstreamError?.code, "InvalidSize");
+    assert.equal(error.upstreamError?.status, 400);
+    assert.match(error.upstreamError!.message, /width must be 512/);
+    assert.doesNotMatch(error.upstreamError!.message, /private-key|private-token|user:pass|token=secret|sk-example/);
+    assert.doesNotMatch(modelErrorMessage(error.code)!, /width/);
+    const plain = await tokenoneError(new Response("provider unavailable", { status: 503 }));
+    assert.equal(plain.upstreamError?.message, "provider unavailable");
+    assert.equal(upstreamErrorDetails({ error: { code: "VideoRejected", message: "audio duration invalid" } }).message, "audio duration invalid");
+});
 
 test("New API task wrappers expose only known structured upstream codes", async () => {
     const code = "seedance_real_person_asset_required";
