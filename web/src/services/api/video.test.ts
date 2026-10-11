@@ -169,7 +169,8 @@ test("Seedance model switching preserves invalid duration and blocks submission 
 test("Seedance supports native 4k and automatic duration without adding a p suffix", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "task" } }); mocks.push(post);
     await api.createVideoGenerationTask({ ...config, model: "video::doubao-seedance-2-0-260128", vquality: "4k", videoSeconds: "-1" }, "prompt");
-    expect(post.mock.calls[0]![1]).toMatchObject({ resolution: "4k", duration: -1 });
+    expect(post.mock.calls[0]![1]).toMatchObject({ resolution: "4k" });
+    expect(post.mock.calls[0]![1]).not.toHaveProperty("duration");
     await expect(api.createVideoGenerationTask({ ...config, model: "video::doubao-seedance-2-5-260628", vquality: "4k" }, "prompt")).rejects.toThrow("分辨率");
 });
 
