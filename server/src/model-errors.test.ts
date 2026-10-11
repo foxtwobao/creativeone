@@ -2,6 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { modelErrorMessage, tokenoneError } from "./model-errors.js";
 
+test("New API task wrappers expose only known structured upstream codes", async () => {
+    const code = "seedance_real_person_asset_required";
+    for (const upstream of [{ code, message: "private" }, { error: { code, message: "private" } }]) {
+        const error = await tokenoneError(Response.json({ code: "fail_to_fetch_task", message: JSON.stringify(upstream) }, { status: 400 }));
+        assert.equal(error.code, code);
+        assert.match(modelErrorMessage(error.code)!, /真人认证/);
+        assert.doesNotMatch(modelErrorMessage(error.code)!, /private/);
+    }
+    for (const message of ["{", "null", code, JSON.stringify({ code: "private", message: code })]) {
+        assert.equal((await tokenoneError(Response.json({ code: "fail_to_fetch_task", message }, { status: 400 }))).code, "TOKENONE_HTTP_400");
+    }
+});
+
 test("Seedance real-person asset rejection preserves the reason and hides provider text", async () => {
     const code = "seedance_real_person_asset_required";
     for (const body of [{ code, message: "private provider details" }, { error: { code, message: "private provider details" } }]) {

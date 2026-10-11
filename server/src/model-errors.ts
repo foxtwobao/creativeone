@@ -109,6 +109,13 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
         return new HttpError(403, "TOKENONE_GENERATION_PERMISSION_DISABLED");
     }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
+    // New API task failures wrap the upstream JSON in a message string.
+    if (body?.code === "fail_to_fetch_task" && typeof body.message === "string") {
+        try {
+            const upstream = JSON.parse(body.message);
+            candidates.push(upstream?.code, upstream?.error?.code);
+        } catch { /* Unknown provider text keeps the generic status message. */ }
+    }
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
     if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^composite has invalid channel bindings(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {
         return new HttpError(403, "TOKENONE_GROUP_BINDINGS_INVALID");
