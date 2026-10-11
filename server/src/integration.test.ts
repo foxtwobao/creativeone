@@ -386,12 +386,16 @@ test("instant completion and temporary query/download failures retain the same W
     try {
         modelFailure = { status: 503, code: "UNAVAILABLE" };
         await processVideoTask(taskId!);
-        assert.equal((await (await call(path)).json() as any).status, "paused");
-        assert.equal((await task()).status, "unknown");
+        assert.equal((await (await call(path)).json() as any).status, "queued");
+        assert.equal((await task()).status, "pending");
+        modelFailure = undefined;
+        videoQueryHandler = async () => { throw new TypeError("fetch failed"); };
+        await processVideoTask(taskId!);
+        assert.equal((await task()).status, "pending");
+        videoQueryHandler = undefined;
         modelFailure = undefined;
         videoDownloadFails = true;
         assert.equal((await call(`${path}/resume`, bob, "POST", {})).status, 404);
-        await call(`${path}/resume`, alice, "POST", {});
         await processVideoTask(taskId!);
         assert.equal((await (await call(path)).json() as any).status, "paused");
         assert.equal((await task()).upstream_id, "task-instant");
@@ -401,7 +405,7 @@ test("instant completion and temporary query/download failures retain the same W
         assert.equal((await call(path)).status, 200);
         assert.deepEqual(await task(), { status: "succeeded", upstream_id: "task-instant", error: null });
         assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
-    } finally { modelFailure = undefined; videoDownloadFails = false; }
+    } finally { modelFailure = undefined; videoQueryHandler = undefined; videoDownloadFails = false; }
 });
 
 test("browser reads never trigger upstream queries and concurrent worker calls save one file", async () => {
@@ -463,9 +467,9 @@ test("late worker responses and errors cannot overwrite an already completed tas
     }
 });
 
-test("the 5-second worker resumes pending tasks on startup without a browser and skips paused tasks", async (t) => {
+test("the 10-second worker resumes pending tasks on startup without a browser and skips paused tasks", async (t) => {
     const originalInterval = globalThis.setInterval;
-    t.mock.method(globalThis, "setInterval", (callback: () => void, ms: number) => { assert.equal(ms, 5000); return originalInterval(callback, ms); });
+    t.mock.method(globalThis, "setInterval", (callback: () => void, ms: number) => { assert.equal(ms, 10000); return originalInterval(callback, ms); });
     videoCreateResponse = { id: "task-background", status: "queued" };
     const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
     const id = created.headers.get("X-Generation-Task-Id")!;

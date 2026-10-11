@@ -1,1 +1,2 @@
 export const VIDEO_POLL_INTERVAL_MS = 5_000;
+export const VIDEO_WORKER_INTERVAL_MS = 10_000;

@@ -6,7 +6,7 @@ import { HttpError } from "./http.js";
 import { downloadRemoteMedia, saveDownloadedMedia } from "./media.js";
 import { ensureKey, modelProvider, upstreamUrl } from "./tokenone.js";
 import { tokenoneError, upstreamErrorDetails } from "./model-errors.js";
-import { VIDEO_POLL_INTERVAL_MS } from "../../shared/video-tasks.js";
+import { VIDEO_WORKER_INTERVAL_MS } from "../../shared/video-tasks.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 const active = new Map<string, Promise<void>>();
@@ -23,6 +23,7 @@ async function poll(taskId: string) {
     const requestId = randomUUID();
     const owner = new pg.Client({ connectionString: env.DATABASE_URL });
     let locked = false, disconnected = false;
+    let querying = false;
     owner.on("error", () => { disconnected = true; });
     owner.on("end", () => { disconnected = true; });
     try {
@@ -35,6 +36,7 @@ async function poll(taskId: string) {
         const key = await ensureKey(user, requestId);
         if (key.group_id !== task.group_id) throw new HttpError(409, "TASK_GROUP_CHANGED");
         const signal = AbortSignal.timeout(600_000);
+        querying = true;
         const response = await fetch(upstreamUrl(`${task.path}/${encodeURIComponent(task.upstream_id)}`), {
             headers: { Authorization: `Bearer ${key.key}` }, redirect: "error", signal,
         });
@@ -43,6 +45,7 @@ async function poll(taskId: string) {
         if (payload?.code !== undefined && payload.code !== 0 && payload.code !== "0") throw new HttpError(502, "INVALID_VIDEO_TASK");
         const video = payload?.data || payload;
         if (typeof video?.status !== "string") throw new HttpError(502, "INVALID_VIDEO_TASK");
+        querying = false;
         const status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : ["succeeded", "completed"].includes(video.status) ? "succeeded" : "pending";
         const wan = task.path === "videos";
         let media: Awaited<ReturnType<typeof downloadRemoteMedia>> | undefined;
@@ -66,6 +69,11 @@ async function poll(taskId: string) {
     } catch (error) {
         if (disconnected || !locked) return;
         const code = error instanceof HttpError ? error.code : "UPSTREAM_RESULT_UNKNOWN";
+        if (querying) {
+            await owner.query("UPDATE generation_tasks SET upstream_error=$2,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, error instanceof HttpError ? JSON.stringify(error.upstreamError || { code, message: error.message }) : JSON.stringify({ message: "上游查询网络异常或响应无法读取，后台将继续查询" })]);
+            console.warn(JSON.stringify({ taskId, requestId, code, retrying: true }));
+            return;
+        }
         await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,upstream_error=$3,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code, error instanceof HttpError ? JSON.stringify(error.upstreamError || null) : null]);
         console.warn(JSON.stringify({ taskId, requestId, code }));
         await finishCanvasTask(taskId);
@@ -86,7 +94,7 @@ export function startVideoWorker() {
         } catch { console.warn(JSON.stringify({ code: "VIDEO_WORKER_DATABASE_ERROR" })); }
         finally { scanning = false; }
     };
-    const timer = setInterval(() => { void scan(); }, VIDEO_POLL_INTERVAL_MS);
+    const timer = setInterval(() => { void scan(); }, VIDEO_WORKER_INTERVAL_MS);
     void scan();
     return async () => { stopped = true; clearInterval(timer); await Promise.allSettled([...active.values()]); };
 }
