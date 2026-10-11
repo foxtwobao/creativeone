@@ -14,14 +14,14 @@ if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error(
 const media = await mkdtemp(join(tmpdir(), "creativeone-api-test-"));
 const adminSubject = randomUUID();
 Object.assign(process.env, {
-    DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
+    DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", APP_ORIGINS: '["http://localhost:3001"]', HOMEONE_LOGIN_ORIGIN: "https://home.test", IDONE_APP: "admin/creativeone", IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
     IDONE_DISCOVERY_URL: "", IDONE_ALLOW_HTTP: "false", MEDIA_DOWNLOAD_HOSTS: "",
     ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "http://enhancer.test", ENHANCER_APP_CREDENTIAL: "app-test-credential", TOKENONE_BASE_URL: "https://tokenone.test",
     SESSION_SECONDS: "604800", LOGIN_SECONDS: "600", MAX_MEDIA_BYTES: "104857600", MAX_JSON_BYTES: "20971520", MEDIA_DIR: media,
 });
 const { app } = await import("./index.js");
 const { db } = await import("./db.js");
-const { env } = await import("./config.js");
+const { env, loginSites } = await import("./config.js");
 const { processVideoTask, startVideoWorker } = await import("./video-tasks.js");
 const { finishCanvasTask } = await import("./canvas-tasks.js");
 let server: Server, base: string;
@@ -81,7 +81,7 @@ globalThis.fetch = async (input, init) => {
     }
     return realFetch(input, init);
 };
-const headers = (id: string) => ({ Cookie: `creativeone=${id}`, Origin: env.APP_ORIGIN, "X-CSRF-Token": `csrf-${id}`, "Content-Type": "application/json" });
+const headers = (id: string) => ({ Host: "localhost:3001", Cookie: `creativeone=${id}`, Origin: "http://localhost:3001", "X-CSRF-Token": `csrf-${id}`, "Content-Type": "application/json" });
 const call = (path: string, id = alice, method = "GET", body?: unknown) => realFetch(`${base}/api${path}`, { method, headers: headers(id), body: body === undefined ? undefined : JSON.stringify(body) });
 function deferred() {
     let resolve!: () => void;
@@ -91,10 +91,11 @@ function deferred() {
 before(async () => {
     for (const id of [admin, alice, bob, unverified]) {
         await db.query("INSERT INTO users VALUES ($1,'https://idone.test',$2,$3,$4,$2,$2,'')", [id, id === admin ? adminSubject : id, `${id}@example.test`, id !== unverified]);
-        await db.query("INSERT INTO sessions VALUES ($1,$2,$3,now()+interval '1 day')", [createHash("sha256").update(id).digest("hex"), id, `csrf-${id}`]);
+        await db.query("INSERT INTO sessions (id_hash,user_id,csrf,expires_at,origin) VALUES ($1,$2,$3,now()+interval '1 day','http://localhost:3001')", [createHash("sha256").update(id).digest("hex"), id, `csrf-${id}`]);
     }
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    loginSites.set(new URL(base).host, { origin: "http://localhost:3001" });
 });
 after(async () => {
     globalThis.fetch = realFetch;
@@ -105,13 +106,15 @@ after(async () => {
 
 test("anonymous requests and forged callback cannot access the application", async () => {
     assert.equal((await realFetch(`${base}/api/channels`)).status, 401);
-    assert.equal((await realFetch(`${base}/api/auth/callback?code=forged&state=forged`)).status, 400);
+    const forged = await realFetch(`${base}/api/auth/callback?code=forged&state=forged`, { redirect: "manual" });
+    assert.equal(forged.status, 400);
+    assert.equal(forged.headers.get("location"), null);
 });
 test("admin role and CSRF protect channel configuration", async () => {
     assert.equal((await call("/admin/groups")).status, 403);
     assert.equal((await call("/admin/groups", admin)).status, 200);
     const body = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, default_model: "gpt-image-2", enabled: true };
-    const missing = await realFetch(`${base}/api/admin/channels/image`, { method: "PUT", headers: { Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const missing = await realFetch(`${base}/api/admin/channels/image`, { method: "PUT", headers: { Host: "localhost:3001", Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     assert.equal(missing.status, 403);
     const image = await call("/admin/channels/image", admin, "PUT", body);
     assert.equal(image.status, 200);
@@ -312,7 +315,7 @@ test("media signing enforces ownership, expiry, signatures and supports unauthen
         const path = `/files/media_files/${key}`;
         assert.equal((await realFetch(`${base}/api${path}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "video/mp4" }, body: "abcdefgh" })).status, 200);
         assert.equal((await call("/files/sign", bob, "POST", { namespace: "media_files", key })).status, 404);
-        assert.equal((await realFetch(`${base}/api/files/sign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ namespace: "media_files", key }) })).status, 401);
+        assert.equal((await realFetch(`${base}/api/files/sign`, { method: "POST", headers: { Host: "localhost:3001", "Content-Type": "application/json" }, body: JSON.stringify({ namespace: "media_files", key }) })).status, 401);
         const signed = await call("/files/sign", alice, "POST", { namespace: "media_files", key });
         assert.equal(signed.status, 200);
         const url = new URL((await signed.json() as any).url);

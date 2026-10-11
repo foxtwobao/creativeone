@@ -12,6 +12,14 @@ CREATE TABLE IF NOT EXISTS login_flows (
     id_hash text PRIMARY KEY, state text NOT NULL, nonce text NOT NULL,
     verifier text NOT NULL, expires_at timestamptz NOT NULL
 );
+-- Existing unbound sessions/flows are rejected; users sign in again.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS origin text;
+ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS origin text;
+ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS return_to text;
+CREATE TABLE IF NOT EXISTS homeone_flows (
+    id_hash text PRIMARY KEY, state text NOT NULL UNIQUE,
+    origin text NOT NULL, return_to text NOT NULL, expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS channels (
     id uuid PRIMARY KEY, name text NOT NULL, capability text NOT NULL
         CHECK (capability IN ('image','text','video','audio')),

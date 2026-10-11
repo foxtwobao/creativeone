@@ -16,6 +16,10 @@ document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","
 
 const root = createRoot(document.getElementById("root")!);
 async function start() {
+    if (new URLSearchParams(window.location.search).has("authError")) {
+        root.render(<LoginPage error="登录未完成或已过期，请重试；若在多个标签页登录，请使用最后发起的页面。" />);
+        return;
+    }
     try {
         await Promise.all([initializeCloud(), appLocaleReady]);
         const [{ AppProviders }, { router }] = await Promise.all([import("@/components/layout/app-providers"), import("@/router")]);
