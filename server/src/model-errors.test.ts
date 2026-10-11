@@ -10,6 +10,11 @@ test("New API task wrappers expose only known structured upstream codes", async 
         assert.match(modelErrorMessage(error.code)!, /真人认证/);
         assert.doesNotMatch(modelErrorMessage(error.code)!, /private/);
     }
+    const prefixed = await tokenoneError(Response.json({ code: "fail_to_fetch_task", message: `status_code=400, ${JSON.stringify({ code, error: { code } })}` }, { status: 400 }));
+    assert.equal(prefixed.code, code);
+    const plugin = await tokenoneError(Response.json({ error: { code: "invalid_request", message: JSON.stringify({ code, error: { code, message: "private" } }) } }, { status: 400 }));
+    assert.equal(plugin.code, code);
+    assert.doesNotMatch(modelErrorMessage(plugin.code)!, /private/);
     for (const message of ["{", "null", code, JSON.stringify({ code: "private", message: code })]) {
         assert.equal((await tokenoneError(Response.json({ code: "fail_to_fetch_task", message }, { status: 400 }))).code, "TOKENONE_HTTP_400");
     }

@@ -109,10 +109,11 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
         return new HttpError(403, "TOKENONE_GENERATION_PERMISSION_DISABLED");
     }
     const candidates = [body?.code, body?.error?.code, body?.error?.type, body?.error];
-    // New API task failures wrap the upstream JSON in a message string.
-    if (body?.code === "fail_to_fetch_task" && typeof body.message === "string") {
+    // Task plugins may put upstream JSON in error.message with a generic outer code.
+    for (const message of [body?.message, body?.error?.message]) {
+        if (typeof message !== "string") continue;
         try {
-            const upstream = JSON.parse(body.message);
+            const upstream = JSON.parse(message.replace(/^status_code=\d{3},\s*/, ""));
             candidates.push(upstream?.code, upstream?.error?.code);
         } catch { /* Unknown provider text keeps the generic status message. */ }
     }
