@@ -58,14 +58,14 @@ test("authorization routes bind PKCE to the session, reject replay, and recover 
             return Response.json({ authorization_url: 'https://gateway.test/_channel/start?flow=opaque', expires_in: 300 });
         };
         const app = express();
-        app.use((req, res, next) => { res.locals.requestId = 'test'; next(); });
+        app.use((req, res, next) => { req.headers.host = 'app.test'; res.locals.requestId = 'test'; next(); });
         app.use('/api/auth/reseller/callback', resellerCallbackRouter);
         app.use('/api', requireUser, csrf, express.json(), resellerRouter);
         app.use((error, req, res, next) => res.status(error.status || 500).json({ error: error.code }));
         const server = app.listen(0, '127.0.0.1');
         await new Promise(resolve => server.once('listening', resolve));
         const base = 'http://127.0.0.1:' + server.address().port;
-        const headers = { Cookie: '__Host-creativeone=session', Origin: 'https://app.test', 'X-CSRF-Token': 'csrf', 'Content-Type': 'application/json' };
+        const headers = { Host: 'app.test', Cookie: '__Host-creativeone=session', Origin: 'https://app.test', 'X-CSRF-Token': 'csrf', 'Content-Type': 'application/json' };
         const call = (path, method = 'GET', body, extra = {}) => realFetch(base + '/api' + path, { method, headers: { ...headers, ...extra }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual' });
         const start = () => call('/model-authorization', 'POST', { returnTo: '/studio', draft: { prompt: 'retain me' } });
         const callback = (state = startBody.state) => call('/auth/reseller/callback?code=one-time&state=' + state);
@@ -101,7 +101,7 @@ test("authorization routes bind PKCE to the session, reject replay, and recover 
         } finally { server.close(); server.closeAllConnections(); }
     `], {
         cwd: new URL("../", import.meta.url), encoding: "utf8",
-        env: { ...process.env, NODE_ENV: "test", DATABASE_URL: "postgresql://unused:unused@localhost/unused", APP_ORIGIN: "https://app.test", IDONE_ISSUER: "https://idone.test", IDONE_DISCOVERY_URL: "", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test", ADMIN_SUBJECTS: "admin", ENHANCER_BASE_URL: "https://reseller.test", ENHANCER_APP_CREDENTIAL: "app-secret", TOKENONE_BASE_URL: "https://model.test" },
+        env: { ...process.env, NODE_ENV: "test", DATABASE_URL: "postgresql://unused:unused@localhost/unused", APP_ORIGIN: "https://app.test", APP_ORIGINS: '["https://app.test"]', HOMEONE_LOGIN_ORIGIN: "https://home.test", IDONE_APP: "admin/creativeone", IDONE_ISSUER: "https://idone.test", IDONE_DISCOVERY_URL: "", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test", ADMIN_SUBJECTS: "admin", ENHANCER_BASE_URL: "https://reseller.test", ENHANCER_APP_CREDENTIAL: "app-secret", TOKENONE_BASE_URL: "https://model.test" },
     });
     assert.equal(result.status, 0, result.stderr);
 });

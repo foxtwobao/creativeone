@@ -1,10 +1,10 @@
 # Import this file from the lab Caddyfile. Vite forwards /api to CreativeOne's backend.
-http://creative.lab.home.arpa {
+http://creative.lab.home.arpa, http://creativeccpg.lab.home.arpa {
     bind 192.168.10.38
     redir https://{host}{uri} 308
 }
 
-creative.lab.home.arpa {
+creative.lab.home.arpa, creativeccpg.lab.home.arpa {
     bind 192.168.10.38
     tls internal
     reverse_proxy 192.168.10.38:3002

@@ -5,6 +5,9 @@ const emptyAsUndefined = (value: unknown) => value === "" ? undefined : value;
 export const env = z.object({
     DATABASE_URL: z.string().min(1),
     APP_ORIGIN: z.url(),
+    APP_ORIGINS: z.string().min(1),
+    HOMEONE_LOGIN_ORIGIN: z.url(),
+    IDONE_APP: z.string().regex(/^[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}$/),
     IDONE_ISSUER: z.url(),
     IDONE_DISCOVERY_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     IDONE_ALLOW_HTTP: z.enum(["true", "false"]).default("false"),
@@ -40,3 +43,20 @@ if (env.IDONE_DISCOVERY_URL) {
     if (discovery.origin !== issuer.origin || discovery.username || discovery.password || discovery.search || discovery.hash) throw new Error("IDONE discovery must use the configured issuer origin");
 }
 export const adminSubjects = new Set(env.ADMIN_SUBJECTS.split(",").map((value) => value.trim()).filter(Boolean));
+
+// Match the original Host (including port); never derive origins from forwarded headers.
+export const loginSites = new Map<string, { origin: string }>();
+const origins = z.array(z.string()).nonempty().parse(JSON.parse(env.APP_ORIGINS));
+for (const value of [...origins, env.HOMEONE_LOGIN_ORIGIN]) {
+    const url = new URL(value);
+    if (url.origin !== value || url.username || url.password || url.hostname.includes("*") ||
+        (url.protocol !== "https:" && !(url.protocol === "http:" && loopback(url) && process.env.NODE_ENV !== "production"))) {
+        throw new Error("APP_ORIGINS and HOMEONE_LOGIN_ORIGIN require exact HTTPS origins (HTTP loopback in development only)");
+    }
+}
+for (const origin of origins) {
+    const host = new URL(origin).host;
+    if (loginSites.has(host)) throw new Error("APP_ORIGINS has duplicate or ambiguous hosts");
+    loginSites.set(host, { origin });
+}
+if (!origins.includes(env.APP_ORIGIN)) throw new Error("APP_ORIGINS must include APP_ORIGIN");
