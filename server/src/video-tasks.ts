@@ -5,7 +5,7 @@ import { db, transaction } from "./db.js";
 import { HttpError } from "./http.js";
 import { downloadRemoteMedia, saveDownloadedMedia } from "./media.js";
 import { ensureKey, modelProvider, upstreamUrl } from "./tokenone.js";
-import { tokenoneError, upstreamErrorDetails } from "./model-errors.js";
+import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { VIDEO_WORKER_INTERVAL_MS } from "../../shared/video-tasks.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
@@ -62,7 +62,7 @@ async function poll(taskId: string) {
             const current = (await client.query("SELECT status FROM generation_tasks WHERE id=$1 FOR UPDATE", [taskId])).rows[0];
             if (current.status !== "pending") return;
             const file = media ? await saveDownloadedMedia(task.user_id, media, client) : undefined;
-            const result = { id: task.upstream_id, status: video.status, ...(file ? { file, ...(wan ? { metadata: { url: file.url } } : { content: { video_url: file.url } }) } : {}), ...(status === "failed" ? { error: { message: "视频生成失败，请查看云端任务记录或联系管理员" } } : {}) };
+            const result = { id: task.upstream_id, status: video.status, ...(file ? { file, ...(wan ? { metadata: { url: file.url } } : { content: { video_url: file.url } }) } : {}), ...(status === "failed" ? { error: { message: modelErrorMessage(undefined, upstreamErrorDetails(video)) || "视频生成失败，请查看云端任务记录或联系管理员" } } : {}) };
             await client.query("UPDATE generation_tasks SET status=$2,result=$3,error=NULL,upstream_error=$4,updated_at=now() WHERE id=$1", [taskId, status, JSON.stringify(result), status === "failed" ? JSON.stringify(upstreamErrorDetails(video)) : null]);
             await attachCanvasTask(taskId, client);
         }, owner);

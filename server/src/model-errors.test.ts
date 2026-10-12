@@ -1,17 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { modelErrorMessage, tokenoneError, upstreamErrorDetails } from "./model-errors.js";
+import { modelErrorMessage, taskErrorMessage, tokenoneError, upstreamErrorDetails } from "./model-errors.js";
 
-test("admin diagnostics retain unknown upstream reasons without exposing credentials", async () => {
+test("unmapped errors expose upstream reasons without exposing credentials", async () => {
     const error = await tokenoneError(Response.json({ error: { code: "invalid_request", message: JSON.stringify({ error: { code: "InvalidSize", message: "width must be 512; api_key=private-key Bearer private-token https://user:pass@host/path?token=secret sk-example" } }) } }, { status: 400 }));
     assert.equal(error.code, "TOKENONE_HTTP_400");
     assert.equal(error.upstreamError?.code, "InvalidSize");
     assert.equal(error.upstreamError?.status, 400);
     assert.match(error.upstreamError!.message, /width must be 512/);
     assert.doesNotMatch(error.upstreamError!.message, /private-key|private-token|user:pass|token=secret|sk-example/);
-    assert.doesNotMatch(modelErrorMessage(error.code)!, /width/);
+    assert.match(modelErrorMessage(error.code, error.upstreamError)!, /InvalidSize.*width must be 512/);
+    assert.doesNotMatch(modelErrorMessage(error.code, error.upstreamError)!, /private-key|private-token|user:pass|token=secret|sk-example/);
     const plain = await tokenoneError(new Response("provider unavailable", { status: 503 }));
-    assert.equal(plain.upstreamError?.message, "provider unavailable");
+    assert.equal(modelErrorMessage(plain.code, plain.upstreamError), "上游服务返回：provider unavailable");
     assert.equal(upstreamErrorDetails({ error: { code: "VideoRejected", message: "audio duration invalid" } }).message, "audio duration invalid");
 });
 
@@ -20,8 +21,8 @@ test("New API task wrappers expose only known structured upstream codes", async 
     for (const upstream of [{ code, message: "private" }, { error: { code, message: "private" } }]) {
         const error = await tokenoneError(Response.json({ code: "fail_to_fetch_task", message: JSON.stringify(upstream) }, { status: 400 }));
         assert.equal(error.code, code);
-        assert.match(modelErrorMessage(error.code)!, /真人认证/);
-        assert.doesNotMatch(modelErrorMessage(error.code)!, /private/);
+        assert.match(modelErrorMessage(error.code, error.upstreamError)!, /真人认证/);
+        assert.doesNotMatch(modelErrorMessage(error.code, error.upstreamError)!, /private/);
     }
     const prefixed = await tokenoneError(Response.json({ code: "fail_to_fetch_task", message: `status_code=400, ${JSON.stringify({ code, error: { code } })}` }, { status: 400 }));
     assert.equal(prefixed.code, code);
@@ -39,7 +40,7 @@ test("Seedance real-person asset rejection preserves the reason and hides provid
         const error = await tokenoneError(Response.json(body, { status: 400 }));
         assert.equal(error.code, code);
         assert.equal(error.status, 400);
-        assert.match(modelErrorMessage(error.code)!, /真人认证/);
+        assert.match(modelErrorMessage(error.code, error.upstreamError)!, /真人认证/);
         assert.match(modelErrorMessage(error.code)!, /暂不支持认证素材/);
         assert.doesNotMatch(modelErrorMessage(error.code)!, /private provider|尺寸/);
     }
@@ -111,11 +112,25 @@ test("upstream authentication failures are not mistaken for an expired app sessi
     assert.equal(error.code, "API_KEY_DISABLED");
 });
 
-test("disabled generation permission has a fixed message and unknown provider text stays private", async () => {
+test("disabled generation permission is mapped and unknown provider text is returned", async () => {
     const error = await tokenoneError(Response.json({ error: { type: "permission_error", message: "Image generation is not enabled for this group" } }, { status: 403 }));
     assert.equal(error.code, "TOKENONE_GENERATION_PERMISSION_DISABLED");
     assert.match(modelErrorMessage(error.code)!, /分组未启用生成权限/);
     const unknown = await tokenoneError(Response.json({ error: { type: "permission_error", message: "private upstream details" } }, { status: 403 }));
     assert.equal(unknown.code, "TOKENONE_HTTP_403");
-    assert.doesNotMatch(modelErrorMessage(unknown.code)!, /private upstream/);
+    assert.match(modelErrorMessage(unknown.code, unknown.upstreamError)!, /private upstream details/);
+});
+
+
+test("failed tasks expose stored reasons even without an error code, active tasks do not", () => {
+    const upstream_error = { code: "VideoRejected", message: "audio duration invalid; api_key=private-key" };
+    for (const status of ["failed", "unknown", "cancelled", "expired"]) {
+        assert.match(taskErrorMessage({ status, error: null, upstream_error })!, /VideoRejected.*audio duration invalid/);
+        assert.doesNotMatch(taskErrorMessage({ status, upstream_error })!, /private-key/);
+    }
+    for (const status of ["pending", "running", "succeeded"]) assert.equal(taskErrorMessage({ status, upstream_error }), undefined);
+    assert.match(taskErrorMessage({ status: "failed", error: "TOKENONE_HTTP_400" })!, /参数/);
+    assert.match(taskErrorMessage({ status: "unknown", error: "UPSTREAM_RESULT_UNKNOWN", upstream_error })!, /避免重复计费/);
+    assert.match(taskErrorMessage({ status: "failed", upstream_error: { code: "seedance_real_person_asset_required", message: "private" } })!, /真人认证/);
+    assert.match(modelErrorMessage("TOKENONE_HTTP_500", { message: "" })!, /暂时无法完成/);
 });

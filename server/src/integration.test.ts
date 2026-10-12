@@ -959,7 +959,7 @@ test("admin task filtering paginates hidden records and returns only display fie
     assert.equal(diagnostic.error, "InvalidSize"); assert.equal(diagnostic.errorMessage, "width must be 512");
     assert.equal((await call(`/admin/tasks/${ids[1]}`, alice)).status, 403);
     const publicTask = await (await call(`/tasks/${ids[1]}`, alice)).json();
-    assert.ok(!("upstream_error" in publicTask)); assert.ok(!JSON.stringify(publicTask).includes("width must be 512"));
+    assert.ok(!("upstream_error" in publicTask)); assert.match(publicTask.error_message, /InvalidSize.*width must be 512/);
     await db.query("UPDATE generation_tasks SET upstream_error=NULL WHERE id=$1", [ids[1]]);
     const missing = (await (await call(`/admin/tasks/${ids[1]}`, admin)).json()).task;
     assert.match(missing.errorMessage, /未保存上游错误详情/);

@@ -37,7 +37,7 @@ const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     const code = error instanceof HttpError ? error.code : status === 400 ? "INVALID_REQUEST" : status === 413 ? "FILE_TOO_LARGE" : "INTERNAL_ERROR";
     // Do not log request bodies, provider responses, cookies, tokens, or error objects.
     console.error(JSON.stringify({ requestId: res.locals.requestId, status, code }));
-    if (!res.headersSent) res.status(status).json({ error: code, message: modelErrorMessage(code), retryable: error instanceof HttpError && error.retryable, requestId: res.locals.requestId });
+    if (!res.headersSent) res.status(status).json({ error: code, message: modelErrorMessage(code, error instanceof HttpError ? error.upstreamError : undefined), retryable: error instanceof HttpError && error.retryable, requestId: res.locals.requestId });
     else res.end();
 };
 app.use(errors);

@@ -10,7 +10,7 @@ import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.
 import { HttpError, requireUuid } from "./http.js";
 import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
-import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
+import { tokenoneError, modelErrorMessage, taskErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError } from "./model-capabilities.js";
 import { videoModelProfile, wanModelProfile } from "../../shared/video-models.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
@@ -71,13 +71,14 @@ aiRouter.post("/tasks/:id/resume-result", async (req, res) => {
     res.status(202).json({ canvasTaskId: id });
 });
 aiRouter.get("/tasks/:id", async (req, res) => {
-    const task = (await db.query("SELECT id,status,result,error,upstream_id,(upstream_result IS NOT NULL) AS result_available FROM generation_tasks WHERE id=$1 AND user_id=$2", [requireUuid(req.params.id), res.locals.user.id])).rows[0];
+    const task = (await db.query("SELECT id,status,result,error,upstream_error,upstream_id,(upstream_result IS NOT NULL) AS result_available FROM generation_tasks WHERE id=$1 AND user_id=$2", [requireUuid(req.params.id), res.locals.user.id])).rows[0];
     if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
-    res.json({ ...task, error_message: task.error ? modelErrorMessage(task.error) : undefined });
+    const { upstream_error, ...publicTask } = task;
+    res.json({ ...publicTask, error_message: taskErrorMessage(task) });
 });
 aiRouter.get("/tasks", async (_req, res) => {
-    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
-    res.json({ tasks: rows.map((task) => ({ ...task, error_message: task.error ? modelErrorMessage(task.error) || "任务暂时无法完成，请查看错误详情或联系管理员。" : undefined })) });
+    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
+    res.json({ tasks: rows.map(({ upstream_error, ...task }) => ({ ...task, error_message: taskErrorMessage({ ...task, upstream_error }) })) });
 });
 aiRouter.delete("/tasks/:id", async (req, res) => {
     const id = requireUuid(req.params.id);
@@ -104,7 +105,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         if (rows.length > 1) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
         const task = rows[0];
         if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
-        if (["succeeded", "failed"].includes(task.status) && task.result) return res.json(task.result);
+        if (["succeeded", "failed"].includes(task.status) && task.result) return res.json(task.status === "failed" ? { ...task.result, error: { message: taskErrorMessage(task) } } : task.result);
         if (task.provider !== modelProvider) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
         if (req.method === "POST") {
             await transaction(async (client) => {
@@ -115,7 +116,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             return res.json({ id: task.upstream_id, status: "queued" });
         }
         return res.json(task.status === "unknown"
-            ? { id: task.upstream_id, status: "paused", error: { message: modelErrorMessage(task.error) || "后台查询或保存暂时失败，任务已暂停，可手动恢复" } }
+            ? { id: task.upstream_id, status: "paused", error: { message: taskErrorMessage(task) || "后台查询或保存暂时失败，任务已暂停，可手动恢复" } }
             : { id: task.upstream_id, status: "queued" });
     } else {
         channel = (await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows[0];
@@ -246,8 +247,8 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     if (["image", "video"].includes(channel.capability) && !req.is("multipart/form-data")) {
         await executeMediaTask(taskId);
         const task = (await db.query("SELECT * FROM generation_tasks WHERE id=$1", [taskId])).rows[0];
-        if (task.result) return res.json(task.result);
-        throw new HttpError(task.status === "failed" ? 422 : 502, task.error || "UPSTREAM_RESULT_UNKNOWN");
+        if (task.result) return res.json(task.status === "failed" ? { ...task.result, error: { message: taskErrorMessage(task) } } : task.result);
+        throw Object.assign(new HttpError(task.status === "failed" ? 422 : 502, task.error || "UPSTREAM_RESULT_UNKNOWN"), { upstreamError: task.upstream_error });
     }
     const signal = AbortSignal.timeout(600_000);
     try {
@@ -316,7 +317,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         let result: any = await upstream.json();
         if (result?.error && channel.capability !== "video") {
             await db.query("UPDATE generation_tasks SET status='failed',error='TOKENONE_GENERATION_FAILED',upstream_error=$2,updated_at=now() WHERE id=$1", [taskId, JSON.stringify(upstreamErrorDetails(result))]);
-            throw new HttpError(422, "TOKENONE_GENERATION_FAILED");
+            throw Object.assign(new HttpError(422, "TOKENONE_GENERATION_FAILED"), { upstreamError: upstreamErrorDetails(result) });
         }
         if (channel.capability === "text") {
             const text = result.output_text || result.choices?.[0]?.message?.content || result.output?.flatMap((item: any) => item.content || []).map((item: any) => item.text || "").join("");
@@ -331,7 +332,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : "pending";
             if (status === "failed") await db.query("UPDATE generation_tasks SET upstream_error=$2 WHERE id=$1", [taskId, JSON.stringify(upstreamErrorDetails(video))]);
             // Persist the billable task before responding; the worker owns all subsequent processing.
-            result = status === "failed" ? { id: upstreamId, status: video.status, error: { message: "视频生成失败" } } : { id: upstreamId, status: "queued" };
+            result = status === "failed" ? { id: upstreamId, status: video.status, error: { message: modelErrorMessage(undefined, upstreamErrorDetails(video)) || "视频生成失败" } } : { id: upstreamId, status: "queued" };
             await db.query("UPDATE generation_tasks SET upstream_id=$2,status=$3,result=$4,error=NULL,updated_at=now() WHERE id=$1", [taskId, upstreamId, status, JSON.stringify(result)]);
             if (!res.destroyed) res.json(result);
             return;

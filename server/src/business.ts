@@ -11,7 +11,7 @@ import { env } from "./config.js";
 import { HttpError, requireUuid } from "./http.js";
 import { readAccountData, changeAccountData, cleanupAccountFiles } from "./account-data.js";
 import { mergeWorks, workSearchText } from "../../shared/works.js";
-import { modelErrorMessage } from "./model-errors.js";
+import { taskErrorMessage } from "./model-errors.js";
 import { readAssets, fileReferences } from "./storage.js";
 import { attachCanvasTask, recoverCanvasResults, recoverUnacceptedCanvasSlots } from "./canvas-tasks.js";
 import { canvasGraphView, persistCanvasGraph } from "./canvas-graph.js";
@@ -311,8 +311,8 @@ businessRouter.get("/assets/export", async (_req, res) => {
 businessRouter.get("/works", async (req, res) => {
     const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().positive().default(10), view: z.enum(["works", "tasks"]).default("works"), kind: z.string().default("all"), status: z.string().default("all"), source: z.string().default("all"), keyword: z.string().default("") }).parse(req.query);
     const assets = await readAssets(res.locals.user.id);
-    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
-    const tasks = rows.map((task) => ({ ...task, created_at: task.created_at.toISOString(), error_message: task.error ? modelErrorMessage(task.error) : undefined }));
+    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
+    const tasks = rows.map(({ upstream_error, ...task }) => ({ ...task, created_at: task.created_at.toISOString(), error_message: taskErrorMessage({ ...task, upstream_error }) }));
     const activeTasks = tasks.filter((task) => ["pending", "running"].includes(task.status)).map(({id,status}) => ({ id, status }));
     const works = mergeWorks(assets, tasks).filter((work) => (query.view === "tasks" ? Boolean(work.task) : work.state === "completed")
         && (query.kind === "all" || work.kind === query.kind)

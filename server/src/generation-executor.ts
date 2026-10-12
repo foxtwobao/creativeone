@@ -7,7 +7,7 @@ import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.
 import { HttpError } from "./http.js";
 import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser } from "./storage.js";
 import { downloadRemoteMedia } from "./media.js";
-import { tokenoneError, upstreamErrorDetails } from "./model-errors.js";
+import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 async function imageBytes(payload: any, signal: AbortSignal) {
@@ -140,7 +140,7 @@ export async function executeMediaTask(taskId: string) {
                 if (typeof id !== "string" || !/^[\w-]+$/.test(id)) throw new HttpError(502, "INVALID_VIDEO_TASK");
                 const failed = ["failed", "cancelled", "expired"].includes(video.status);
                 if (failed) await saveError(upstreamErrorDetails(video));
-                await publish(failed ? "failed" : "pending", failed ? { id, status: video.status, error: { message: "视频生成失败" } } : { id, status: "queued" }, failed ? "TOKENONE_GENERATION_FAILED" : null, id);
+                await publish(failed ? "failed" : "pending", failed ? { id, status: video.status, error: { message: modelErrorMessage(undefined, upstreamErrorDetails(video)) || "视频生成失败" } } : { id, status: "queued" }, failed ? "TOKENONE_GENERATION_FAILED" : null, id);
             }
         } catch (error) {
             if (error instanceof HttpError && error.upstreamError) await saveError(error.upstreamError);
