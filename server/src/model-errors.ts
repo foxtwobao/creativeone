@@ -89,9 +89,14 @@ const messages: Record<string, string> = {
     UPSTREAM_RESULT_UNKNOWN: "暂时无法确认生成结果，请先查看云端任务，确认后再手动重试，避免重复计费。",
 };
 
-export function modelErrorMessage(code: string): string | undefined {
-    if (Object.hasOwn(messages, code)) return messages[code];
-    const status = /^TOKENONE_HTTP_(\d{3})$/.exec(code)?.[1];
+export function modelErrorMessage(code: string | null | undefined, upstream?: HttpError["upstreamError"]): string | undefined {
+    if (code && Object.hasOwn(messages, code)) return messages[code];
+    if (upstream) {
+        const detail = upstreamErrorDetails(upstream);
+        if (detail.code && Object.hasOwn(messages, detail.code)) return messages[detail.code];
+        if (detail.message.trim() && detail.message !== "上游未返回错误说明") return `上游服务返回${detail.code ? `（${detail.code}）` : ""}：${detail.message}`;
+    }
+    const status = /^TOKENONE_HTTP_(\d{3})$/.exec(code || "")?.[1];
     if (status === "401") return "模型服务认证失败，请联系管理员检查 Key 和渠道配置。";
     if (status === "403") return "模型服务拒绝了本次请求，请联系管理员核查账号权限、分组及 Key 状态。";
     if (status === "429") return "模型服务当前请求过多或触发限额，请稍后手动重试。";
@@ -101,7 +106,12 @@ export function modelErrorMessage(code: string): string | undefined {
     return undefined;
 }
 
-// Only the administrator task endpoint exposes these diagnostics, as plain text.
+export function taskErrorMessage(task: { status: string; error?: string | null; upstream_error?: HttpError["upstreamError"] }): string | undefined {
+    if (!["failed", "unknown", "cancelled", "expired"].includes(task.status)) return undefined;
+    return modelErrorMessage(task.error, task.upstream_error) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "生成失败，请查看生成任务详情。");
+}
+
+// Diagnostics are displayed as plain text after credential and URL redaction.
 export function upstreamErrorDetails(body: any, status?: number): NonNullable<HttpError["upstreamError"]> {
     let detail = body?.error || body;
     const message = typeof detail?.message === "string" ? detail.message : typeof detail === "string" ? detail : "";
@@ -117,7 +127,7 @@ export function upstreamErrorDetails(body: any, status?: number): NonNullable<Ht
         message: redact(typeof detail?.message === "string" ? detail.message : typeof detail === "string" ? detail : message || "上游未返回错误说明") };
 }
 
-// Public responses retain known codes and fixed messages; diagnostics stay server-side.
+// Known errors use mapped messages; unknown errors can show redacted upstream details.
 export async function tokenoneError(response: Response): Promise<HttpError> {
     const raw = await response.text();
     let body: any;
@@ -133,7 +143,7 @@ export async function tokenoneError(response: Response): Promise<HttpError> {
         try {
             const upstream = JSON.parse(message.replace(/^status_code=\d{3},\s*/, ""));
             candidates.push(upstream?.code, upstream?.error?.code);
-        } catch { /* Unknown provider text keeps the generic status message. */ }
+        } catch { /* Plain provider text is available through upstreamError. */ }
     }
     const code = candidates.find((value) => typeof value === "string" && Object.hasOwn(messages, value));
     if (!code && response.status === 403 && body?.error?.type === "new_api_error" && typeof body.error.message === "string" && /^composite has invalid channel bindings(?: \(request id: [A-Za-z0-9-]+\))?$/.test(body.error.message)) {

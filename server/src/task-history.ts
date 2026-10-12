@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Router } from "express";
 import { fileReferences, collectDeletedFiles } from "./storage.js";
 import { db } from "./db.js";
-import { modelErrorMessage } from "./model-errors.js";
+import { taskErrorMessage } from "./model-errors.js";
 import { requireUuid } from "./http.js";
 import { generationPrompt, generationRequestSettings } from "../../shared/generation-request.js";
 
@@ -21,7 +21,7 @@ export function taskHistory(task: any) {
         (request[`reference_${kind}s`] ||= []).push({ url: part[`${kind}_url`].url });
     }
     for (const ref of refs) { const match = /^\/api\/files\/image_files\/(.+)$/.exec(ref.dataUrl); if (match) ref.storageKey = decodeURIComponent(match[1]); }
-    return { id: task.id, createdAt: Date.parse(task.created_at), title: prompt.slice(0,12) || task.model, prompt, time: task.created_at, model, config, references: refs, referenceVideos: (request.reference_videos || []).map((ref: any,index: number) => ({ id: String(index), name: `参考视频 ${index+1}`, url: ref.url })), referenceAudios: (request.reference_audios || []).map((ref: any,index: number) => ({ id: String(index), name: `参考音频 ${index+1}`, url: ref.url })), durationMs: Date.parse(task.updated_at)-Date.parse(task.created_at), status, size: task.capability === "video" ? config.videoSize : config.size, quality: config.quality, resolution: config.vquality, seconds: config.videoSeconds, images, imageCount: images.length, successCount: images.length, failCount: status === "failed" ? 1 : 0, video: video ? { id: task.id, ...video } : undefined, task: task.upstream_id ? { id: task.upstream_id, provider: task.path === "videos" ? "wan" : "seedance", model } : undefined, error: task.error ? modelErrorMessage(task.error) || "任务暂时无法完成" : undefined };
+    return { id: task.id, createdAt: Date.parse(task.created_at), title: prompt.slice(0,12) || task.model, prompt, time: task.created_at, model, config, references: refs, referenceVideos: (request.reference_videos || []).map((ref: any,index: number) => ({ id: String(index), name: `参考视频 ${index+1}`, url: ref.url })), referenceAudios: (request.reference_audios || []).map((ref: any,index: number) => ({ id: String(index), name: `参考音频 ${index+1}`, url: ref.url })), durationMs: Date.parse(task.updated_at)-Date.parse(task.created_at), status, size: task.capability === "video" ? config.videoSize : config.size, quality: config.quality, resolution: config.vquality, seconds: config.videoSeconds, images, imageCount: images.length, successCount: images.length, failCount: status === "failed" ? 1 : 0, video: video ? { id: task.id, ...video } : undefined, task: task.upstream_id ? { id: task.upstream_id, provider: task.path === "videos" ? "wan" : "seedance", model } : undefined, error: taskErrorMessage(task) };
 }
 historyRouter.get("/history/:capability", async (req, res) => {
     const { page, keyword, upstreamId } = z.object({ page: z.coerce.number().int().positive().default(1), keyword: z.string().default(""), upstreamId: z.string().optional() }).parse(req.query);
