@@ -2,5 +2,5 @@
   "title": "Development",
   "root": true,
   "defaultOpen": true,
-  "pages": ["local-development", "cloud-backend", "local-tokenone", "canvas-data-structure", "local-codex-canvas"]
+  "pages": ["local-development", "one-integration", "cloud-backend", "local-tokenone", "canvas-data-structure", "local-codex-canvas"]
 }
