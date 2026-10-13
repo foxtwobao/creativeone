@@ -14,6 +14,7 @@ export function StudioInspiration({ onSelect, onUpload }: { onSelect: (prompt: s
     const strip = useRef<HTMLDivElement>(null);
     return <section className="studio-inspiration">
         <header><h2>浏览灵感</h2><div><button className="studio-icon" aria-label="上一组灵感" onClick={() => strip.current?.scrollBy({ left: -320, behavior: "smooth" })}><ChevronLeft size={17} /></button><button className="studio-icon" aria-label="下一组灵感" onClick={() => strip.current?.scrollBy({ left: 320, behavior: "smooth" })}><ChevronRight size={17} /></button><Link to="/prompts" className="studio-chip">灵感广场 <ChevronRight size={13} /></Link></div></header>
+        <p className="mb-3 text-xs text-muted-foreground">部分图片可能因网络原因无法显示，可尝试刷新页面或切换网络。图片未显示时，仍可查看和使用提示词。</p>
         <div className="studio-inspiration-strip" ref={strip}>
             <button className="studio-upload-card" onClick={onUpload}><Plus size={30} strokeWidth={1} /><span>上传参考图</span></button>
             {loading ? Array.from({ length: 5 }, (_, index) => <div key={index} className="studio-card-skeleton" aria-label="正在加载灵感" />) : items.map((item) => <button key={`${item.sourceId}-${item.id}`} className="studio-inspiration-card" onClick={() => onSelect(item.prompt)} title={item.title}><img src={item.coverUrl} alt={item.title} loading="lazy" /><span>{item.title}</span></button>)}
