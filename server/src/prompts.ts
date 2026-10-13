@@ -7,6 +7,7 @@ import { HttpError } from "./http.js";
 import { readAccountData, changeAccountData } from "./account-data.js";
 import { isAllowedMediaUrl } from "./media-hosts.js";
 import { DEFAULT_PROMPT_SOURCES, type PromptSource } from "../../shared/prompt-sources.js";
+import { promptImageProxyUrl } from "../../shared/prompt-image-proxy.js";
 import { normalizePromptItems } from "../../shared/prompt-items.js";
 
 export const promptsRouter = Router();
@@ -81,7 +82,12 @@ promptsRouter.get("/prompts", async (req, res) => {
     const tags = Array.isArray(query.tag) ? query.tag : query.tag ? [query.tag] : [];
     const base = all.filter((item: any) => (query.category === "all" || item.category === query.category) && (!query.keyword || `${item.title} ${item.prompt} ${item.description} ${item.category} ${item.tags.join(" ")}`.toLowerCase().includes(query.keyword.toLowerCase())));
     const items = base.filter((item: any) => !tags.length || tags.some((tag) => item.tags.includes(tag)));
-    res.json({ items: items.slice((query.page-1)*query.pageSize,query.page*query.pageSize), total: items.length, tags: [...new Set(base.flatMap((item: any) => item.tags))], categories: sources.map((source: PromptSource) => source.name) });
+    const imageProxy = env.PROMPT_GITHUB_PROXY_BASE;
+    const pageItems = items.slice((query.page-1)*query.pageSize,query.page*query.pageSize).map(item => ({ ...item,
+        coverUrl: promptImageProxyUrl(item.coverUrl, imageProxy),
+        referenceImageUrls: item.referenceImageUrls.map((url: string) => promptImageProxyUrl(url, imageProxy)),
+    }));
+    res.json({ items: pageItems, total: items.length, tags: [...new Set(base.flatMap((item: any) => item.tags))], categories: sources.map((source: PromptSource) => source.name) });
 });
 export async function refreshDuePromptSources() {
     const users = (await db.query("SELECT DISTINCT user_id FROM prompt_caches WHERE last_success_at IS NOT NULL")).rows;

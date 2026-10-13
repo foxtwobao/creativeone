@@ -24,6 +24,10 @@ export const env = z.object({
     MAX_MEDIA_BYTES: positive.default(104857600),
     MAX_JSON_BYTES: positive.default(20971520),
     MEDIA_DIR: z.string().min(1).default("./data/media"),
+    PROMPT_GITHUB_PROXY_BASE: z.string().default("https://gh-proxy.com/").refine(value => {
+        if (!value) return true;
+        try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash; } catch { return false; }
+    }, "PROMPT_GITHUB_PROXY_BASE must be an HTTPS URL without credentials, query or fragment"),
     MEDIA_DOWNLOAD_HOSTS: z.string().default(""),
     PORT: positive.default(4011),
 }).parse(process.env);
