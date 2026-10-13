@@ -16,6 +16,7 @@
 ## Development and Data
 
 - [Local Development](/docs/development/local-development)
+- [ONE 对接指南](/docs/development/one-integration)
 - [用户页面流量巡检](/docs/development/page-size-audit)
 - [Multi-user Cloud Backend](/docs/development/cloud-backend)
 - [Local TokenONE Integration](/docs/development/local-tokenone)

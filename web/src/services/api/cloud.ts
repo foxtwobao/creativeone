@@ -4,7 +4,7 @@ import type { VideoModelType } from "../../../../shared/video-models";
 
 export type CloudUser = { id: string; username: string; displayName: string; avatarUrl: string; email: string; emailVerified: boolean; admin: boolean };
 export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; model_descriptions: Record<string, string>; is_default: boolean };
-export let cloudSession: { user: CloudUser; csrf: string; modelServiceUrl?: string; channels: CloudChannel[] } | null = null;
+export let cloudSession: { user: CloudUser; csrf: string; maxReferenceImageBytes: number; modelServiceUrl?: string; channels: CloudChannel[] } | null = null;
 const errors: Record<string, string> = {
     ENHANCER_NOT_CONFIGURED: "尚未配置模型服务，当前仅启用登录和数据同步", TOKENONE_NOT_CONFIGURED: "尚未配置 TokenONE 模型服务",
     APP_USER_LOGIN_REQUIRED: "模型服务版本暂不支持当前授权流程，请联系管理员。",
@@ -40,7 +40,7 @@ export async function cloudApi<T>(path: string, init: RequestInit = {}): Promise
     return response.status === 204 ? undefined as T : response.json();
 }
 export async function initializeCloud() {
-    const session = await cloudApi<{ user: CloudUser; csrf: string; modelServiceUrl?: string }>("/auth/me");
+    const session = await cloudApi<{ user: CloudUser; csrf: string; maxReferenceImageBytes: number; modelServiceUrl?: string }>("/auth/me");
     cloudSession = { ...session, channels: [] };
     cloudSession.channels = (await cloudApi<{ channels: CloudChannel[] }>("/channels")).channels;
     useCloudStore.getState().setAuthorizationResume(await cloudApi("/model-authorization"));

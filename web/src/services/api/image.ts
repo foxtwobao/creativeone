@@ -637,7 +637,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 
 async function requestModelImages(config: ReturnType<typeof resolveModelRequestConfig>, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions, userPrompt = prompt) {
     const family = config.imageType;
-    const images = await Promise.all(references.map((image) => options?.canvasContext && image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : imageToDataUrl(image)));
+    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const requestPrompt = withSystemPrompt(config, prompt);
     const body = family === "banana"
         ? bananaImageBody(config.model, requestPrompt, config.size, count, images)
@@ -757,8 +757,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
     }
 
+    const imageReferences = await Promise.all(references.map((image) => imageToDataUrl(image, options)));
     const params = openAiImageParams(requestConfig);
-    const editBody = { model: requestConfig.model, prompt: withSystemPrompt(requestConfig, requestPrompt), user_prompt: prompt, n, ...params, ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}), image_references: references.map((image) => (options?.canvasContext && image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : undefined) || image.dataUrl || image.url || (image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : "")) };
+    const editBody = { model: requestConfig.model, prompt: withSystemPrompt(requestConfig, requestPrompt), user_prompt: prompt, n, ...params, ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}), image_references: imageReferences };
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), editBody, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });

@@ -1,6 +1,7 @@
 import { HttpError } from "./http.js";
 
 const messages: Record<string, string> = {
+    REFERENCE_IMAGE_TOO_LARGE: "参考图超过本站单张大小限制，请压缩或更换图片。",
     seedance_real_person_asset_required: "参考图可能包含真人，需先完成真人认证。当前暂不支持认证素材，请更换参考图。",
     CANVAS_REFERENCE_NOT_READY: "连接的参考节点为空或仍在生成，请等待完成或断开该引用后再生成",
     REFERENCE_DURATION_EXCEEDED: "参考视频或音频的真实总时长超过当前型号限制，请减少素材",

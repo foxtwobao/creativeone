@@ -1,20 +1,26 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, DatePicker, Descriptions, Drawer, Empty, Form, Image, Input, Pagination, Select, Table, Tag } from "antd";
-import type { Dayjs } from "dayjs";
+import { Alert, Button, Card, DatePicker, Descriptions, Drawer, Empty, Form, Image, Input, Pagination, Select, Statistic, Switch, Table, Tag, theme } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
 import { cloudSession } from "@/services/api/cloud";
-import { fetchAdminTask, fetchAdminTasks, fetchAdminUsers } from "@/services/api/admin-tasks";
+import { fetchAdminTask, fetchAdminTasks, fetchAdminTaskStats, fetchAdminUsers } from "@/services/api/admin-tasks";
 import type { AdminTask } from "../../../../../shared/admin-tasks";
 import { taskLabels } from "../../../../../shared/works";
 import { TaskMedia } from "./components/task-media";
 
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
 const statuses: Record<string, string> = { ...taskLabels, pending: "等待生成", running: "生成中", unknown: "结果未知" };
 const statusTag = (status: string) => <Tag color={status === "failed" ? "error" : status === "unknown" ? "warning" : ["pending", "running"].includes(status) ? "processing" : "default"}>{statuses[status] || status}</Tag>;
 const formatTime = (value: string) => new Date(value).toLocaleString("zh-CN");
-type Filters = { user?: { value: string }; range?: [Dayjs, Dayjs]; status?: string; capability?: string; taskId?: string };
+type Filters = { user?: { value: string }; range?: [Dayjs, Dayjs]; status?: string; capability?: string; taskId?: string; includeAdmins?: boolean };
 
 export default function AdminTasksPage() {
     const [form] = Form.useForm<Filters>();
+    const { token } = theme.useToken();
     const [filters, setFilters] = useState("");
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
@@ -28,28 +34,74 @@ export default function AdminTasksPage() {
         queryFn: ({ signal }) => fetchAdminUsers(userKeyword, userPage, signal) });
     const tasks = useQuery({ queryKey: ["admin-tasks", accountId, filters, page, pageSize], enabled: admin,
         queryFn: ({ signal }) => fetchAdminTasks(new URLSearchParams(`${filters}&page=${page}&pageSize=${pageSize}`), signal), refetchOnMount: "always" });
+    const applied = new URLSearchParams(filters);
+    const statsFilters = new URLSearchParams();
+    for (const key of ["userId", "includeAdmins"]) if (applied.has(key)) statsFilters.set(key, applied.get(key)!);
+    const stats = useQuery({ queryKey: ["admin-task-stats", accountId, statsFilters.toString()], enabled: admin,
+        queryFn: ({ signal }) => fetchAdminTaskStats(statsFilters, signal), refetchOnMount: "always" });
     const detail = useQuery({ queryKey: ["admin-task", accountId, taskId], enabled: admin && Boolean(taskId),
         queryFn: ({ signal }) => fetchAdminTask(taskId!, signal), refetchOnMount: "always" });
     const task = detail.data?.task;
     const applyFilters = (values: Filters) => {
         const query = new URLSearchParams();
+        if (values.includeAdmins) query.set("includeAdmins", "true");
         if (values.user) query.set("userId", values.user.value);
         if (values.status) query.set("status", values.status);
         if (values.capability) query.set("capability", values.capability);
         if (values.taskId?.trim()) query.set("taskId", values.taskId.trim());
         if (values.range?.[0] && values.range[1]) {
-            query.set("from", values.range[0].startOf("day").toISOString());
-            query.set("to", values.range[1].add(1, "day").startOf("day").toISOString());
+            query.set("from", dayjs.tz(values.range[0].format("YYYY-MM-DD"), "Asia/Shanghai").toISOString());
+            query.set("to", dayjs.tz(values.range[1].format("YYYY-MM-DD"), "Asia/Shanghai").add(1, "day").toISOString());
         }
+        if (query.toString() === filters && page === 1) void tasks.refetch();
         setFilters(query.toString()); setPage(1);
+    };
+    const showFailures = (period: "today" | "yesterday" | "week") => {
+        const today = dayjs().tz("Asia/Shanghai").startOf("day");
+        const end = period === "yesterday" ? today.subtract(1, "day") : today;
+        const start = period === "week" ? today.subtract(6, "day") : end;
+        const userId = applied.get("userId");
+        const selectedUser = form.getFieldValue("user");
+        const values: Filters = {
+            user: userId ? selectedUser?.value === userId ? selectedUser : { value: userId } : undefined,
+            includeAdmins: applied.get("includeAdmins") === "true", range: [start, end], status: "failed",
+            capability: undefined, taskId: undefined,
+        };
+        form.setFieldsValue(values);
+        applyFilters(values);
     };
     if (!admin) return <div className="p-6"><Alert type="error" title="只有管理员可以查询用户任务" /></div>;
     return <main className="h-full overflow-auto bg-background p-4 sm:p-6"><div className="mx-auto max-w-7xl space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h1 className="text-xl font-semibold">用户任务</h1><p className="mt-1 text-sm text-muted-foreground">查询工作台与画布的图片、视频任务，查看生成成果与失败原因。</p></div>
-            <Button loading={tasks.isFetching} onClick={() => void tasks.refetch()}>刷新列表</Button>
+            <Button loading={tasks.isFetching || stats.isFetching} onClick={() => { void tasks.refetch(); void stats.refetch(); }}>刷新</Button>
         </div>
-        <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <section aria-label="任务统计" className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>任务概览 · 北京时间 · {applied.get("includeAdmins") === "true" ? "包含管理员" : "不含管理员"}{applied.has("userId") ? " · 已筛选用户" : ""}</span>
+                <span>按任务计数，近一周含今天；成功 / 失败按当前状态</span>
+            </div>
+            {stats.error ? <Alert type="error" title={stats.error.message} action={<Button onClick={() => void stats.refetch()}>重试统计</Button>} /> : null}
+            <div className="grid gap-4 lg:grid-cols-3">
+                {([['today', '今日'], ['yesterday', '昨日'], ['week', '近一周']] as const).map(([period, label]) => {
+                    const values = stats.data?.stats.find(item => item.period === period);
+                    return <Card key={period} size="small" title={label}>
+                        <div className="grid grid-cols-4 gap-2">
+                            {([{ key: "images", title: "图片数" }, { key: "videos", title: "视频数" },
+                                { key: "succeeded", title: "成功", color: token.colorSuccess }, { key: "failed", title: "失败", color: token.colorError }] as const).map(metric =>
+                                <Statistic key={metric.key} title={<span className="text-xs">{metric.title}</span>} loading={stats.isFetching}
+                                    formatter={metric.key === "failed" && values && !stats.error ? value => <button type="button"
+                                        aria-label={`查看${label}失败任务`} title={`查询${label}失败任务`}
+                                        className="cursor-pointer rounded-sm border-0 bg-transparent p-0 text-inherit underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline focus-visible:outline-2"
+                                        onClick={() => showFailures(period)}>{Number(value).toLocaleString("zh-CN")}</button> : undefined}
+                                    value={stats.error ? "—" : values?.[metric.key] ?? "—"} styles={{ content: { fontSize: 24, fontVariantNumeric: "tabular-nums", color: "color" in metric ? metric.color : token.colorText } }} />)}
+                        </div>
+                    </Card>;
+                })}
+            </div>
+            <p className="text-xs text-muted-foreground">概览仅跟随用户和管理员筛选；下方日期、类型及状态仅筛选任务列表。</p>
+        </section>
+        <Form form={form} initialValues={{ includeAdmins: false }} layout="vertical" onFinish={applyFilters}>
             <div className="grid gap-x-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Form.Item name="user" label="用户">
                     <Select labelInValue showSearch allowClear filterOption={false} placeholder="搜索用户名、邮箱或用户 ID" loading={users.isFetching}
@@ -59,11 +111,12 @@ export default function AdminTasksPage() {
                         popupRender={(menu) => <>{menu}{users.error ? <div className="p-2"><Button size="small" onClick={() => void users.refetch()}>重试查询用户</Button></div> : null}
                             {(users.data?.total || 0) > 10 ? <div className="p-2" onMouseDown={(event) => event.preventDefault()}><Pagination size="small" simple current={userPage} pageSize={10} total={users.data?.total} onChange={setUserPage} /></div> : null}</>} />
                 </Form.Item>
-                <Form.Item name="range" label="创建时间"><DatePicker.RangePicker className="w-full" placeholder={["开始日期", "结束日期"]} /></Form.Item>
+                <Form.Item name="range" label="创建时间（北京时间）"><DatePicker.RangePicker className="w-full" placeholder={["开始日期", "结束日期"]} /></Form.Item>
                 <Form.Item name="taskId" label="任务 ID"><Input allowClear placeholder="本地任务 ID 或上游任务 ID（精确匹配）" /></Form.Item>
                 <Form.Item name="capability" label="类型"><Select allowClear placeholder="全部类型" options={[{ value: "image", label: "图片" }, { value: "video", label: "视频" }]} /></Form.Item>
                 <Form.Item name="status" label="状态"><Select allowClear placeholder="全部状态" options={Object.entries(statuses).map(([value, label]) => ({ value, label }))} /></Form.Item>
-                <div className="flex items-end gap-2 pb-6"><Button type="primary" htmlType="submit">查询</Button><Button onClick={() => { form.resetFields(); setFilters(""); setPage(1); setUserKeyword(""); setUserPage(1); }}>重置</Button></div>
+                <Form.Item name="includeAdmins" label="包含管理员" valuePropName="checked"><Switch aria-label="包含管理员" /></Form.Item>
+                <div className="flex items-end gap-2 pb-6 sm:col-span-2 lg:col-span-3"><Button type="primary" htmlType="submit">查询</Button><Button onClick={() => { form.resetFields(); setFilters(""); setPage(1); setUserKeyword(""); setUserPage(1); }}>重置</Button></div>
             </div>
         </Form>
         {tasks.error ? <Alert type="error" title={tasks.error.message} action={<Button onClick={() => void tasks.refetch()}>重试</Button>} /> : null}

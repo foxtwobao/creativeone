@@ -8,7 +8,7 @@ import { db, transaction } from "./db.js";
 import { env } from "./config.js";
 import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError, requireUuid } from "./http.js";
-import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
+import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
 import { tokenoneError, modelErrorMessage, taskErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError } from "./model-capabilities.js";
@@ -137,6 +137,8 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         }
     }
     if (req.method === "POST" && ["image", "video"].includes(channel.capability)) {
+        await assertReferenceImages(user.id, req.body);
+        for (const file of req.files as Express.Multer.File[] || []) if (channel.capability === "image" || file.mimetype.startsWith("image/")) assertReferenceImageSize(file.size);
         const error = channel.capability === "image"
             ? imageRequestCapabilityError(req.body.model, channel.image_types![req.body.model], req.body, (req.files as Express.Multer.File[] || []).filter((file) => file.fieldname !== "mask").length)
             : videoRequestCapabilityError(req.body.model, channel.video_types?.[req.body.model] || "seedance", req.body);
@@ -232,6 +234,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             if (channel.capability === "video") await assertVideoDurations(user.id, req.body.model, family as "seedance" | "wan", references, client);
             const expectedPath = channel.capability === "video" ? family === "wan" ? "videos" : "contents/generations/tasks" : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
             if (path !== expectedPath) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
+            await assertReferenceImages(user.id, requestSnapshot, client);
             requestSnapshot = { ...requestSnapshot, user_prompt: savedMetadata.prompt, canvas_source: { node, contentRevision: project.content_revision }, canvas_submission: submission };
         }
         for (const key of fileReferences(requestSnapshot)) if (!(await client.query("SELECT 1 FROM files WHERE user_id=$1 AND key=$2", [user.id, key])).rowCount) throw new HttpError(404, "FILE_NOT_FOUND");

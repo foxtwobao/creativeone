@@ -13,12 +13,14 @@ const signed: { namespace: string; key: string }[] = [];
 const mocks: { mockRestore(): void }[] = [];
 beforeAll(async () => {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => null } });
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://creative.test" } } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://creative.test" }, setTimeout, clearTimeout } });
     globalThis.fetch = (async (input, init) => {
         const path = String(input);
-        if (path === "/api/auth/me") return Response.json({ user: { id: "alice" }, csrf: "csrf" });
+        if (path.startsWith("data:")) return originalFetch(input, init);
+        if (path === "/api/auth/me") return Response.json({ user: { id: "alice" }, csrf: "csrf", maxReferenceImageBytes: 10485760 });
         if (path === "/api/channels") return Response.json({ channels: [] });
         if (path === "/api/model-authorization") return Response.json(null);
+        if (path === "/api/files/info") return Response.json({ bytes: 1024 });
         if (path === "/api/files/sign") {
             const item = JSON.parse(String(init?.body));
             signed.push(item);

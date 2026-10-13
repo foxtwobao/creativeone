@@ -10,3 +10,5 @@ export type AdminTaskDetail = AdminTask & {
     settings: { key: string; label: string; children: string }[];
     references: AdminTaskMedia[]; results: AdminTaskMedia[];
 };
+
+export type AdminTaskStats = { period: "today" | "yesterday" | "week"; images: number; videos: number; succeeded: number; failed: number };
