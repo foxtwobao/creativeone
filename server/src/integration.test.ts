@@ -912,7 +912,7 @@ test("plugin records and works filtering use server mutations and pagination", a
 });
 
 test("admin task endpoints reject ordinary users and support user lookup", async () => {
-    for (const path of ["/admin/users", "/admin/tasks", `/admin/tasks/${randomUUID()}`, `/admin/users/${alice}/files/image_files/image:missing`]) {
+    for (const path of ["/admin/users", "/admin/tasks", "/admin/tasks/stats", `/admin/tasks/${randomUUID()}`, `/admin/users/${alice}/files/image_files/image:missing`]) {
         assert.equal((await call(path)).status, 403);
         assert.equal((await realFetch(`${base}/api${path}`)).status, 401);
     }
@@ -1004,4 +1004,43 @@ test("account switching and logout invalidate stale clients", async () => {
     assert.equal(changed.status, 409);
     assert.equal((await call("/auth/logout", bob, "POST")).status, 200);
     assert.equal((await call("/tasks", bob)).status, 401);
+});
+
+
+test("admin task stats use Shanghai day boundaries and exclude administrators by default", async () => {
+    const owner = randomUUID(), channel = randomUUID();
+    await db.query("INSERT INTO users VALUES ($1,'https://idone.test',$3,$2,true,$3,$3,'')", [owner, `${owner}@example.test`, owner]);
+    const boundary = (await db.query("SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai' AS start")).rows[0].start.getTime();
+    const fixtures = [
+        [owner, "image", "succeeded", boundary],
+        [owner, "video", "failed", boundary - 1],
+        [owner, "image", "running", boundary - 6 * 86400000],
+        [owner, "image", "succeeded", boundary - 6 * 86400000 - 1],
+        [admin, "video", "succeeded", boundary],
+    ] as const;
+    const ids: string[] = [];
+    for (const [user, capability, status, date] of fixtures) {
+        const id = randomUUID(); ids.push(id);
+        await db.query(`INSERT INTO generation_tasks(id,user_id,channel_id,group_id,model,capability,path,status,provider,request,created_at)
+            VALUES($1,$2,$3,'test','stats-fixture',$4,'test',$5,'test','{"n":5}',$6)`, [id, user, channel, capability, status, new Date(date)]);
+    }
+    const stats = (await (await call(`/admin/tasks/stats?userId=${owner}`, admin)).json()).stats;
+    assert.deepEqual(stats, [
+        { period: "today", images: 1, videos: 0, succeeded: 1, failed: 0 },
+        { period: "yesterday", images: 0, videos: 1, succeeded: 0, failed: 1 },
+        { period: "week", images: 2, videos: 1, succeeded: 1, failed: 1 },
+    ]);
+    const excluded = (await (await call(`/admin/tasks/stats?userId=${admin}`, admin)).json()).stats;
+    assert.ok(excluded.every((row: any) => row.images + row.videos === 0));
+    const included = (await (await call(`/admin/tasks/stats?userId=${admin}&includeAdmins=true`, admin)).json()).stats;
+    assert.ok(included[0].videos >= 1);
+    for (const suffix of ["", "&includeAdmins=false"]) {
+        const list = await (await call(`/admin/tasks?taskId=${ids[4]}${suffix}`, admin)).json();
+        assert.equal(list.total, 0); assert.equal(list.tasks.length, 0);
+    }
+    const list = await (await call(`/admin/tasks?taskId=${ids[4]}&includeAdmins=true`, admin)).json();
+    assert.equal(list.total, 1); assert.equal(list.tasks[0].id, ids[4]);
+    const empty = (await (await call(`/admin/tasks/stats?userId=${randomUUID()}`, admin)).json()).stats;
+    assert.ok(empty.every((row: any) => row.images + row.videos + row.succeeded + row.failed === 0));
+    assert.equal((await call("/admin/tasks/stats?includeAdmins=invalid", admin)).status, 400);
 });

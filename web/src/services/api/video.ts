@@ -87,7 +87,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (settings.error) throw new Error(settings.error);
     if (modelVideoTypeOf(config, selectedModel) === "wan") return createWanTask(config, requestConfig, selectedModel, prompt, references, options);
     const [images, videos, audios] = await Promise.all([
-        Promise.all(references.map((image) => options?.canvasContext && image.storageKey ? `/api/files/image_files/${encodeURIComponent(image.storageKey)}` : imageToDataUrl(image))),
+        Promise.all(references.map((image) => imageToDataUrl(image))),
         Promise.all((options?.videos || []).map(async (video) => video.storageKey ? resolveMediaUrl(video.storageKey, video.url) : video.url)),
         Promise.all((options?.audios || []).map(async (audio) => audio.storageKey ? resolveMediaUrl(audio.storageKey, audio.url) : audio.url)),
     ]);
@@ -143,7 +143,8 @@ async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: s
     const { mode, ratio, seconds } = videoSettingsForModel(config, model, references.length);
     const [reference_images, reference_videos, reference_audios] = await Promise.all([
         Promise.all(references.map(async (image, index) => {
-            const key = image.storageKey || (await uploadImage(await imageToDataUrl(image, options), options)).storageKey;
+            const url = await imageToDataUrl(image, options);
+            const key = image.storageKey || (await uploadImage(url, options)).storageKey;
             if (!key) throw new Error("参考图片上传失败");
             return { url: cloudFileUrl("image_files", key), role: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame" };
         })),

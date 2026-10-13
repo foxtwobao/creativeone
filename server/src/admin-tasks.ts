@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { adminSubjects } from "./config.js";
 import { db } from "./db.js";
 import { requireAdmin } from "./auth.js";
 import { HttpError, requireUuid } from "./http.js";
@@ -12,6 +13,7 @@ import type { AdminTask, AdminTaskMedia } from "../../shared/admin-tasks.js";
 export const adminTasksRouter = Router();
 adminTasksRouter.use("/admin/users", requireAdmin);
 adminTasksRouter.use("/admin/tasks", requireAdmin);
+const audience = { userId: z.uuid().optional(), includeAdmins: z.enum(["true", "false"]).default("false").transform(value => value === "true") };
 const pagination = { page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().positive().default(10) };
 const userColumns = "u.id AS owner_id,u.username,u.display_name,u.email";
 const userSummary = (row: any) => ({ id: row.owner_id || row.id, username: row.username, displayName: row.display_name, email: row.email });
@@ -31,20 +33,40 @@ adminTasksRouter.get("/admin/users", async (req, res) => {
     res.json({ users: users.rows.map(userSummary), total: Number(count.rows[0].count) });
 });
 adminTasksRouter.get("/admin/tasks", async (req, res) => {
-    const query = z.object({ ...pagination, userId: z.uuid().optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
+    const query = z.object({ ...pagination, ...audience, from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
         capability: z.enum(["image", "video"]).optional(), status: z.enum(["pending", "running", "succeeded", "failed", "unknown", "cancelled", "expired"]).optional(), taskId: z.string().default("") }).parse(req.query);
     if (query.from && query.to && Date.parse(query.from) > Date.parse(query.to)) throw new HttpError(400, "INVALID_REQUEST");
-    const params = [query.userId || null, query.from || null, query.to || null, query.capability || null, query.status || null, query.taskId];
+    const params = [query.userId || null, query.from || null, query.to || null, query.capability || null, query.status || null, query.taskId, query.includeAdmins, [...adminSubjects]];
     const where = `t.capability IN ('image','video') AND ($1::uuid IS NULL OR t.user_id=$1) AND ($2::timestamptz IS NULL OR t.created_at >= $2)
         AND ($3::timestamptz IS NULL OR t.created_at < $3) AND ($4::text IS NULL OR t.capability=$4) AND ($5::text IS NULL OR t.status=$5)
-        AND ($6='' OR t.id::text=$6 OR t.upstream_id=$6)`;
+        AND ($6='' OR t.id::text=$6 OR t.upstream_id=$6) AND ($7::boolean OR NOT (u.subject=ANY($8::text[])))`;
     const [tasks, count] = await Promise.all([
         db.query(`SELECT t.id,t.capability,t.model,t.status,t.canvas_project_id,t.canvas_generation_id,t.created_at,t.updated_at,t.hidden_from_works,t.hidden_from_history,
             jsonb_build_object('prompt',t.request->'prompt','user_prompt',t.request->'user_prompt','content',t.request->'content') AS request,${userColumns}
-            FROM generation_tasks t JOIN users u ON u.id=t.user_id WHERE ${where} ORDER BY t.created_at DESC,t.id DESC LIMIT $7 OFFSET $8`, [...params, query.pageSize, (query.page-1)*query.pageSize]),
-        db.query(`SELECT count(*) FROM generation_tasks t WHERE ${where}`, params),
+            FROM generation_tasks t JOIN users u ON u.id=t.user_id WHERE ${where} ORDER BY t.created_at DESC,t.id DESC LIMIT $9 OFFSET $10`, [...params, query.pageSize, (query.page-1)*query.pageSize]),
+        db.query(`SELECT count(*) FROM generation_tasks t JOIN users u ON u.id=t.user_id WHERE ${where}`, params),
     ]);
     res.json({ tasks: tasks.rows.map((row) => ({ ...taskSummary(row), prompt: generationPrompt(row.request).slice(0, 120) })), total: Number(count.rows[0].count) });
+});
+adminTasksRouter.get("/admin/tasks/stats", async (req, res) => {
+    const query = z.object(audience).parse(req.query);
+    const { rows } = await db.query(`WITH bounds AS (
+        SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AS today
+    ), periods AS (
+        SELECT 'today' AS period, today AT TIME ZONE 'Asia/Shanghai' AS start_at, (today + interval '1 day') AT TIME ZONE 'Asia/Shanghai' AS end_at, 1 AS position FROM bounds
+        UNION ALL SELECT 'yesterday', (today - interval '1 day') AT TIME ZONE 'Asia/Shanghai', today AT TIME ZONE 'Asia/Shanghai', 2 FROM bounds
+        UNION ALL SELECT 'week', (today - interval '6 days') AT TIME ZONE 'Asia/Shanghai', (today + interval '1 day') AT TIME ZONE 'Asia/Shanghai', 3 FROM bounds
+    ), tasks AS (
+        SELECT t.capability,t.status,t.created_at FROM generation_tasks t JOIN users u ON u.id=t.user_id
+        WHERE t.capability IN ('image','video') AND ($1::uuid IS NULL OR t.user_id=$1)
+            AND ($2::boolean OR NOT (u.subject=ANY($3::text[])))
+            AND t.created_at >= (SELECT min(start_at) FROM periods) AND t.created_at < (SELECT max(end_at) FROM periods)
+    ) SELECT p.period, count(*) FILTER (WHERE t.capability='image') AS images,
+        count(*) FILTER (WHERE t.capability='video') AS videos, count(*) FILTER (WHERE t.status='succeeded') AS succeeded,
+        count(*) FILTER (WHERE t.status='failed') AS failed
+        FROM periods p LEFT JOIN tasks t ON t.created_at >= p.start_at AND t.created_at < p.end_at
+        GROUP BY p.period,p.position ORDER BY p.position`, [query.userId || null, query.includeAdmins, [...adminSubjects]]);
+    res.json({ stats: rows.map(row => ({ period: row.period, images: Number(row.images), videos: Number(row.videos), succeeded: Number(row.succeeded), failed: Number(row.failed) })) });
 });
 adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const { rows } = await db.query(`SELECT t.id,t.user_id,t.capability,t.model,t.status,t.canvas_project_id,t.canvas_generation_id,t.created_at,t.updated_at,t.hidden_from_works,t.hidden_from_history,

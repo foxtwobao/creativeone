@@ -20,6 +20,7 @@ export const env = z.object({
     TOKENONE_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     SESSION_SECONDS: positive.default(604800),
     LOGIN_SECONDS: positive.default(600),
+    MAX_REFERENCE_IMAGE_BYTES: positive.default(10485760),
     MAX_MEDIA_BYTES: positive.default(104857600),
     MAX_JSON_BYTES: positive.default(20971520),
     MEDIA_DIR: z.string().min(1).default("./data/media"),

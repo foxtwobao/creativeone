@@ -1,5 +1,5 @@
 import { createUserStore, createMemoryStore } from "@/services/cloud-storage";
-import { cloudApi, cloudFileUrl } from "@/services/api/cloud";
+import { cloudApi, cloudFileUrl, cloudSession } from "@/services/api/cloud";
 
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
@@ -39,7 +39,14 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     return storeImage(blob, options);
 }
 
+export function assertReferenceImageSize(bytes: number) {
+    if (!cloudSession) throw new Error("请先登录");
+    const limit = cloudSession.maxReferenceImageBytes;
+    if (bytes > limit) throw new Error(`单张参考图不能超过 ${limit / 1024 / 1024} MiB，请压缩或更换图片。`);
+}
+
 async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<UploadedImage> {
+    assertReferenceImageSize(blob.size);
     const storageKey = `image:${nanoid()}`;
     const url = URL.createObjectURL(blob);
     try {
@@ -185,6 +192,7 @@ async function deleteImagePreview(storageKey: string) {
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
+    assertReferenceImageSize(blob.size);
     await store.setItem(storageKey, blob);
     await deleteImagePreview(storageKey);
     await storeImagePreview(storageKey, blob);
@@ -195,9 +203,20 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
-    if (!url || url.startsWith("data:") || url.startsWith("/api/files/")) return url;
+    if (url.startsWith("/api/files/")) {
+        const file = await cloudApi<UploadedImage>("/files/info", { method: "POST", body: JSON.stringify({ url }), signal: options?.signal });
+        assertReferenceImageSize(file.bytes);
+        return url;
+    }
+    if (url.startsWith("data:")) {
+        assertReferenceImageSize((await fetchImageBlob(url, options)).size);
+        return url;
+    }
+    if (!url) return url;
     if (/^https?:/.test(url)) return (await uploadImage(url, options)).url;
-    return blobToDataUrl(await fetchImageBlob(url, options));
+    const blob = await fetchImageBlob(url, options);
+    assertReferenceImageSize(blob.size);
+    return blobToDataUrl(blob);
 }
 
 

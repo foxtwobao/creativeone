@@ -68,6 +68,25 @@ export function fileReferences(value: unknown, references = new Set<string>()): 
     }
     return references;
 }
+export function assertReferenceImageSize(bytes: number) {
+    if (bytes > env.MAX_REFERENCE_IMAGE_BYTES) throw new HttpError(413, "REFERENCE_IMAGE_TOO_LARGE");
+}
+export async function assertReferenceImages(userId: string, value: unknown, client: Pick<typeof db, "query"> = db) {
+    const inline = (item: unknown) => {
+        if (typeof item === "string" && item.startsWith("data:image/")) {
+            const comma = item.indexOf(",");
+            if (comma >= 0) assertReferenceImageSize(item.slice(0, comma).endsWith(";base64")
+                ? Buffer.from(item.slice(comma + 1), "base64").length : Buffer.byteLength(decodeURIComponent(item.slice(comma + 1))));
+        } else if (Array.isArray(item)) item.forEach(inline);
+        else if (item && typeof item === "object") Object.values(item).forEach(inline);
+    };
+    inline(value);
+    const keys = [...fileReferences(value)];
+    if (!keys.length) return;
+    const { rows } = await client.query("SELECT bytes FROM files WHERE user_id=$1 AND key=ANY($2::text[]) AND mime_type LIKE 'image/%'", [userId, keys]);
+    for (const file of rows) assertReferenceImageSize(Number(file.bytes));
+}
+
 export async function saveFile(userId: string, ns: string, key: string, bytes: Buffer, mime: string, client: Pick<typeof db, "query"> = db) {
     if (bytes.length > env.MAX_MEDIA_BYTES) throw new HttpError(413, "FILE_TOO_LARGE");
     if (!/^(image\/(png|jpeg|webp|gif|avif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/octet-stream)$/.test(mime)) throw new HttpError(415, "UNSUPPORTED_MEDIA");
@@ -127,12 +146,15 @@ export async function storedFileInfo(userId: string, url: string, client: Pick<t
 }
 export async function inlineStoredFile(userId: string, url: string) {
     const file = await storedFileInfo(userId, url);
+    if (file.mimeType.startsWith("image/")) assertReferenceImageSize(file.bytes);
     const { rows } = await db.query("SELECT disk_id FROM files WHERE user_id=$1 AND key=$2", [userId, file.storageKey]);
     return `data:${file.mimeType};base64,${(await readFile(resolve(mediaRoot, rows[0].disk_id))).toString("base64")}`;
 }
 storageRouter.post("/files/import", async (req, res) => {
-    const { persistRemoteMedia } = await import("./media.js");
-    const file = await persistRemoteMedia(res.locals.user.id, z.object({ url: z.url() }).parse(req.body).url, AbortSignal.timeout(600_000));
+    const { downloadRemoteMedia, saveDownloadedMedia } = await import("./media.js");
+    const media = await downloadRemoteMedia(z.object({ url: z.url() }).parse(req.body).url, AbortSignal.timeout(600_000));
+    if (media.mimeType.startsWith("image/")) assertReferenceImageSize(media.bytes.length);
+    const file = await saveDownloadedMedia(res.locals.user.id, media);
     res.json(await storedFileInfo(res.locals.user.id, file.url));
 });
 storageRouter.post("/files/info", async (req, res) => res.json(await storedFileInfo(res.locals.user.id, z.object({ url: z.string() }).parse(req.body).url)));
@@ -225,7 +247,11 @@ storageRouter.put("/storage/:namespace/:key", async (req, res) => {
     res.json({ revision });
     void collectDeletedFiles(res.locals.user.id).catch(() => undefined);
 });
-storageRouter.put("/files/:namespace/:key", raw({ type: () => true, limit: env.MAX_MEDIA_BYTES }), async (req, res) => {
+storageRouter.put("/files/:namespace/:key", (req, res, next) => {
+    const image = req.params.namespace === "image_files" || req.is("image/*");
+    if (image && Number(req.get("Content-Length")) > env.MAX_REFERENCE_IMAGE_BYTES) throw new HttpError(413, "REFERENCE_IMAGE_TOO_LARGE");
+    raw({ type: () => true, limit: image ? Math.min(env.MAX_MEDIA_BYTES, env.MAX_REFERENCE_IMAGE_BYTES) : env.MAX_MEDIA_BYTES })(req, res, next);
+}, async (req, res) => {
     const ns = fileNamespace.parse(req.params.namespace), key = requireKey(req.params.key);
     if (!Buffer.isBuffer(req.body)) throw new HttpError(400, "FILE_REQUIRED");
     res.json({ url: await saveFile(res.locals.user.id, ns, key, req.body, (req.get("Content-Type") || "application/octet-stream").split(";")[0]) });
