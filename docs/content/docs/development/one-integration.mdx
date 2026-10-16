@@ -1,13 +1,13 @@
 ---
 title: ONE 对接指南
-description: 业务 ONE 对接 IDONE、HomeONE、Reseller 和 TokenONE 的通用指南
+description: 业务 ONE 对接 Reseller 统一登录、IDONE 和 TokenONE 的通用指南
 ---
 
 # ONE 对接指南
 
 本文面向所有业务 ONE，按系统说明准备资料、配置接口、实现流程和验收要求。各产品的客户端、域名和回调路径使用实际交付值；不要直接复制示例值。
 
-身份与登录协议以 HomeONE 仓库的 `docs/plans/one-auth-implementation/contracts.md` 为准。环境变量名仅为示例，各应用映射到自己的配置；协议字段和已登记回调必须精确一致。
+身份与登录协议以 HomeONE 仓库的 `docs/one-auth/README.md` 和 `docs/one-auth/appone.md` 为准。环境变量名仅为示例，各应用映射到自己的配置；协议字段和已登记回调必须精确一致。
 
 ## 1. 对接 IDONE：标准 OIDC 身份认证
 
@@ -19,7 +19,6 @@ description: 业务 ONE 对接 IDONE、HomeONE、Reseller 和 TokenONE 的通用
 
 ```dotenv
 IDONE_ISSUER=https://idone.example.com
-IDONE_APP=owner/business-app
 IDONE_CLIENT_ID=replace-with-client-id
 IDONE_CLIENT_SECRET=replace-with-client-secret
 IDONE_DISCOVERY_URL=https://idone.example.com/.well-known/openid-configuration
@@ -32,42 +31,43 @@ IDONE_DISCOVERY_URL=https://idone.example.com/.well-known/openid-configuration
 3. 验证 ID Token 签名、issuer、audience、有效期和 nonce；需要 UserInfo 时，使用 Access Token 请求并确认 UserInfo 的 `sub` 与 ID Token 一致。
 4. 使用原始 `(issuer, sub)` 作为业务用户唯一身份，创建业务会话和本地权限；不要使用邮箱合并不同 sub。
 
-每个回调都必须是完整精确字符串，不使用通配符。新接入默认回调路径为 `/auth/callback`；已有产品可保留实际路径，应用发送的 redirect_uri 必须与交付的回调地址一致。接入时只核对 IDONE 已有配置；缺客户端、回调或权限时报告缺项并停止相关入口启用，不擅自修改 IDONE。
+完整回调由平台按应用交付的固定路径和实际发布域名在 IDONE 精确登记，应用不重复维护完整回调列表，不使用通配符。新接入默认回调路径为 `/auth/callback`；已有产品可保留实际路径，应用发送的 redirect_uri 必须与交付的回调地址一致。接入时只核对 IDONE 已有配置；缺客户端、回调或权限时报告缺项并停止相关入口启用，不擅自修改 IDONE。
 
 IDONE 只负责身份认证和原生注册资料；业务角色、业务数据和本地会话由各 ONE 管理。验收应覆盖登录、账号切换、无效令牌、过期、userinfo subject 不一致和跨入口 SSO。
 
-## 2. 对接 HomeONE：统一登录入口
+## 2. 对接 Reseller：统一登录导航
 
-**准备资料**：固定中央登录 origin、业务 APP 的 `owner/name` 和完整业务回调地址。业务 ONE 不选择 Site、不读取 HomeONE 私有配置，也不获取其他入口 Secret。
+**准备资料**：浏览器可达的 Reseller origin、登记的产品 appId、业务 OIDC 启动路径及实际访问域名。业务 ONE 不配置 HomeONE 地址，不维护 Site 映射或调用归属回执。
 
-**业务 ONE 配置示例**：
+**CreativeONE 配置示例**：
 
 ```dotenv
-APP_ORIGIN=https://app.example.com
+APP_ORIGIN=https://creative.example.com
 APP_DOMAIN_SUFFIXES=example.com
-HOMEONE_LOGIN_ORIGIN=https://home.example.com
-IDONE_APP=owner/business-app
+ENHANCER_BASE_URL=https://reseller.example.com
+RESELLER_APP_ID=creativeone
 ```
 
-`APP_DOMAIN_SUFFIXES` 接受英文逗号分隔的小写域名，允许根域及多级子域，只配置完全受信任的域名后缀；动态地址仅标准 HTTPS，不接受额外端口。`APP_ORIGINS` 可省略，默认使用 `APP_ORIGIN`；显式配置时仍须包含主地址，且只接受规范 origin。代理必须保留可信 Host/端口，登录事务和会话绑定实际 origin。所有业务 origin 都跳转同一个 `HOMEONE_LOGIN_ORIGIN`；后缀放行不替代 HomeONE/Reseller 和 IDONE 的回调登记。
+Reseller 地址复用已有 `ENHANCER_BASE_URL`；生产使用规范 HTTPS origin，不含路径、尾斜杠或凭据。产品 appId 不是 IDONE owner/name 或 Client ID。`APP_DOMAIN_SUFFIXES`、可选 `APP_ORIGINS` 只承担应用自身的合法访问地址校验，不代表 Site 配置。当前实现只从已校验的原始 Host 构造外部 origin，不信任客户端转发头；平台仍须登记实际发布域名及 IDONE 精确回调。
 
 **流程**：
 
-1. 业务后端生成并保存 appState、浏览器绑定、origin、有效期和合法业务返回路径。
-2. 跳转固定 HomeONE：
+1. 用户点击登录/注册，业务后端可保存浏览器绑定的本地原页面记录，然后顶层导航：
 
 ```text
-GET <HOMEONE_LOGIN_ORIGIN>/auth/login
-    ?app=<owner/name>
-    &returnTo=<完整业务回调>
-    &appState=<随机事务值>
+GET <ENHANCER_BASE_URL>/auth/enter
+    ?appId=creativeone
+    &sourceOrigin=<当前可信业务 origin>
     [&register=true]
 ```
 
-3. HomeONE 按 `app + returnTo` 精确选择入口 APP 并完成入口 OIDC。成功回调携带 appState；失败携带 `error=homeone_login_failed`。
-4. 业务后端验证 Cookie、origin、期限和一次性消费；成功后启动第 1 节的业务 OIDC。appState 只衔接流程，不是用户身份证明。
+2. Reseller 选择平台入口；平台认证后直接导航到登记的业务 OIDC 启动路径，不携带身份、Token、appState 或返回 URL。
+3. `/api/auth/oidc/start` 独立生成业务 state、nonce 和 PKCE，直接启动 IDONE OIDC。原页面记录缺失或过期也允许启动；没有可信记录时返回 `/studio`。
+4. `/api/auth/callback` 按第 1 节验证业务授权，并检查浏览器 Cookie、origin、固定客户端、issuer、精确 redirect_uri、期限与一次性消费。业务事务固定 300 秒；原页面导航记录保留 600 秒，仅代表导航偏好。
 
-回调拒绝混合、重复、空关键参数、未知参数和重放；失败手动恢复，不循环登录或自动重试付费操作。业务会话 Cookie 使用 host-only、HttpOnly、SameSite=Lax，HTTPS 下启用 Secure；退出只删除当前业务会话。
+交付 `launchPath=/studio`、`oidcStartPath=/api/auth/oidc/start`、`callbackPaths=["/api/auth/callback"]` 与实际 `idoneApp`。前两项不是 IDONE redirect_uri；`idoneApp` 只交平台登记，Secret 始终留在业务后端。普通匿名页面由用户点击登录；独立启动入口自动发起 OIDC，不回跳 Reseller。
+
+业务失败手动重试，不循环登录。会话 Cookie 使用 host-only、HttpOnly、SameSite=Lax，HTTPS 下启用 Secure。已有有效业务会话直接访问业务页面；明确换号先退出。本地退出清除当前会话和未完成事务，不表示平台退出，也不自动启动 OIDC。CreativeONE 实现与真实联调状态见 [交接文档](../../../handoffs/creativeone-one-auth.md)。
 
 ## 3. 对接 Reseller：模型授权与 Key 获取
 
@@ -100,8 +100,8 @@ Content-Type: application/json
 ## 5. 通用联调顺序
 
 1. IDONE：核对客户端、issuer、完整回调和真实 OIDC 登录。
-2. 登录衔接：检查业务端请求参数、appState 浏览器绑定、回调分流、过期和一次性消费，以及业务返回路径恢复。
+2. 登录衔接：检查公开 appId/sourceOrigin、直接 OIDC 启动、300 秒过期和一次性消费、浏览器事务绑定，以及原页面恢复和失败不循环。
 3. Reseller 模型授权：验证用户身份、默认分组、Key 保密、授权取消和一次性回调。
 4. TokenONE：查询模型并完成一次真实调用，验证任务保存、额度错误和素材可达性。
 
-`APP_RETURN_FORBIDDEN` 时先检查应用发送的 app、returnTo 是否与交付值一致；一致仍被拒绝或平台登录不可用时，将错误和请求标识交给平台维护方。模型授权跨域失败时检查业务回调 origin 与 host-only Cookie 的会话绑定。
+平台入口拒绝时核对 appId、sourceOrigin、产品启用状态与登记的 OIDC 启动路径；仍失败时将脱敏错误和请求标识交给平台维护方。模型授权跨域失败时检查业务回调 origin 与 host-only Cookie 的会话绑定。

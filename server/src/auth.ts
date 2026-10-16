@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type ErrorRequestHandler, type RequestHandler } from "express";
+import { Router, type Request, type ErrorRequestHandler, type RequestHandler } from "express";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { parse, serialize } from "cookie";
 import * as oidc from "openid-client";
@@ -8,6 +8,7 @@ import { HttpError } from "./http.js";
 
 export type User = { id: string; issuer: string; subject: string; email: string; email_verified: boolean; username: string; display_name: string; avatar_url: string };
 declare global { namespace Express { interface Locals { user: User; csrf: string; sessionHash: string; requestId: string; loginReturnTo?: string; } } }
+const loginSeconds = 300, navigationSeconds = 600;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 function site(req: Request) {
     const configured = resolveLoginSite(req.get("Host") || "");
@@ -18,7 +19,7 @@ function cookies(req: Request) {
     const secure = site(req).origin.startsWith("https:");
     const name = (suffix = "") => `${secure ? "__Host-" : ""}creativeone${suffix}`;
     return {
-        session: name(), flow: name("-login"), home: name("-homeone"),
+        session: name(), flow: name("-login"), navigation: name("-return"),
         set: (key: string, value: string, maxAge: number) => serialize(key, value, { httpOnly: true, secure, sameSite: "lax", path: "/", maxAge }),
     };
 }
@@ -53,15 +54,19 @@ function getProvider() {
         })
         .catch((error) => { provider = undefined; throw error; });
 }
-export const requireUser: RequestHandler = async (req, res, next) => {
+async function session(req: Request) {
     const sid = parse(req.headers.cookie || "")[cookies(req).session];
-    if (!sid) throw new HttpError(401, "LOGIN_REQUIRED");
+    if (!sid) return;
     const { rows } = await db.query("SELECT u.*, s.csrf FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=$1 AND s.expires_at>now() AND s.origin=$2", [hash(sid), site(req).origin]);
-    if (!rows[0]) throw new HttpError(401, "SESSION_EXPIRED");
-    res.locals.user = rows[0];
-    res.locals.csrf = rows[0].csrf;
-    res.locals.sessionHash = hash(sid);
-    if (req.get("X-Expected-User") && req.get("X-Expected-User") !== rows[0].id) throw new HttpError(409, "ACCOUNT_CHANGED");
+    return rows[0] && { user: rows[0], hash: hash(sid) };
+}
+export const requireUser: RequestHandler = async (req, res, next) => {
+    const current = await session(req);
+    if (!current) throw new HttpError(401, parse(req.headers.cookie || "")[cookies(req).session] ? "SESSION_EXPIRED" : "LOGIN_REQUIRED");
+    res.locals.user = current.user;
+    res.locals.csrf = current.user.csrf;
+    res.locals.sessionHash = current.hash;
+    if (req.get("X-Expected-User") && req.get("X-Expected-User") !== current.user.id) throw new HttpError(409, "ACCOUNT_CHANGED");
     next();
 };
 export const csrf: RequestHandler = (req, res, next) => {
@@ -87,66 +92,61 @@ authRouter.get("/login", async (req, res) => {
     if ([...params.keys()].some((key) => !["returnTo", "register"].includes(key)) ||
         (params.has("register") && !["true", "false"].includes(params.get("register")!))) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
     const returnTo = returnPath(params.get("returnTo") ?? "/studio", origin);
-    const sid = randomBytes(32).toString("base64url"), state = randomBytes(32).toString("base64url");
-    const lifetime = Math.min(env.LOGIN_SECONDS, 600);
-    const previous = parse(req.headers.cookie || "")[jar.home];
-    await db.query("DELETE FROM homeone_flows WHERE expires_at<=now() OR (id_hash=$1 AND origin=$2)", [hash(previous || ""), origin]);
-    await db.query("INSERT INTO homeone_flows (id_hash,state,origin,return_to,expires_at) VALUES ($1,$2,$3,$4,now()+$5*interval '1 second')", [hash(sid), state, origin, returnTo, lifetime]);
     res.locals.loginReturnTo = returnTo;
-    const target = new URL("/auth/login", env.HOMEONE_LOGIN_ORIGIN);
-    target.searchParams.set("app", env.IDONE_APP);
-    target.searchParams.set("returnTo", `${origin}/api/auth/callback`);
-    target.searchParams.set("appState", state);
-    if (params.has("register")) target.searchParams.set("register", params.get("register")!);
+    if (await session(req)) { res.redirect(returnTo); return; }
+    const sid = randomBytes(32).toString("base64url");
+    const previous = parse(req.headers.cookie || "")[jar.navigation];
+    await db.query("DELETE FROM login_returns WHERE expires_at<=now() OR (id_hash=$1 AND origin=$2)", [hash(previous || ""), origin]);
+    await db.query("INSERT INTO login_returns (id_hash,origin,return_to,expires_at) VALUES ($1,$2,$3,now()+$4*interval '1 second')", [hash(sid), origin, returnTo, navigationSeconds]);
+    const target = new URL("/auth/enter", env.ENHANCER_BASE_URL);
+    target.searchParams.set("appId", env.RESELLER_APP_ID);
+    target.searchParams.set("sourceOrigin", origin);
+    if (params.get("register") === "true") target.searchParams.set("register", "true");
     const oldFlow = parse(req.headers.cookie || "")[jar.flow];
     if (oldFlow) await db.query("DELETE FROM login_flows WHERE id_hash=$1 AND origin=$2", [hash(oldFlow), origin]);
-    res.setHeader("Set-Cookie", [jar.set(jar.home, sid, lifetime), jar.set(jar.flow, "", 0)]);
+    res.setHeader("Set-Cookie", [jar.set(jar.navigation, sid, navigationSeconds), jar.set(jar.flow, "", 0)]);
     res.redirect(target.href);
 });
-async function startOidc(req: Request, res: Response, returnTo: string) {
+authRouter.get("/oidc/start", async (req, res) => {
     const { origin } = site(req), jar = cookies(req);
+    if (query(req).size) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
+    const previous = parse(req.headers.cookie || "");
+    const { rows } = await db.query("DELETE FROM login_returns WHERE id_hash=$1 AND origin=$2 RETURNING return_to, expires_at>now() AS valid", [hash(previous[jar.navigation] || ""), origin]);
+    const returnTo = rows[0]?.valid ? returnPath(rows[0].return_to, origin) : "/studio";
+    res.locals.loginReturnTo = returnTo;
+    res.append("Set-Cookie", jar.set(jar.navigation, "", 0));
+    await db.query("DELETE FROM login_flows WHERE expires_at<=now() OR (id_hash=$1 AND origin=$2)", [hash(previous[jar.flow] || ""), origin]);
     const config = await getProvider();
     const flowId = randomBytes(32).toString("base64url");
-    const oidcState = oidc.randomState(), nonce = oidc.randomNonce(), verifier = oidc.randomPKCECodeVerifier();
+    const state = oidc.randomState(), nonce = oidc.randomNonce(), verifier = oidc.randomPKCECodeVerifier();
     const challenge = await oidc.calculatePKCECodeChallenge(verifier);
-    await db.query("DELETE FROM login_flows WHERE expires_at<=now()");
-    await db.query("INSERT INTO login_flows (id_hash,state,nonce,verifier,expires_at,origin,return_to) VALUES ($1,$2,$3,$4,now()+$5*interval '1 second',$6,$7)", [hash(flowId), oidcState, nonce, verifier, env.LOGIN_SECONDS, origin, returnTo]);
-    res.append("Set-Cookie", jar.set(jar.flow, flowId, env.LOGIN_SECONDS));
-    res.redirect(oidc.buildAuthorizationUrl(config, { redirect_uri: `${origin}/api/auth/callback`, scope: "openid profile email", state: oidcState, nonce, code_challenge: challenge, code_challenge_method: "S256" }).href);
-}
+    const redirectUri = `${origin}/api/auth/callback`;
+    const target = oidc.buildAuthorizationUrl(config, { redirect_uri: redirectUri, scope: "openid profile email", state, nonce, code_challenge: challenge, code_challenge_method: "S256" });
+    await db.query("INSERT INTO login_flows (id_hash,state,nonce,verifier,expires_at,origin,return_to,client_id,redirect_uri,issuer) VALUES ($1,$2,$3,$4,now()+$5*interval '1 second',$6,$7,$8,$9,$10)", [hash(flowId), state, nonce, verifier, loginSeconds, origin, returnTo, env.IDONE_CLIENT_ID, redirectUri, env.IDONE_ISSUER]);
+    res.append("Set-Cookie", jar.set(jar.flow, flowId, loginSeconds));
+    res.redirect(target.href);
+});
 authRouter.get("/callback", async (req, res) => {
     const { origin } = site(req), jar = cookies(req);
     const params = query(req);
-    const appState = params.get("appState"), state = params.get("state"), code = params.get("code"), error = params.get("error");
-    if (params.has("returnTo") || ["appState", "state", "code", "error"].some((key) => params.has(key) && !params.get(key)) ||
-        (appState ? state !== null || code !== null : !state || (code === null) === (error === null))) {
-        throw new HttpError(400, "INVALID_LOGIN_REQUEST");
-    }
-    const allowed = appState ? ["appState", "error"] : ["state", "code", "error", "error_description", "error_uri", "iss", "session_state"];
-    if ([...params.keys()].some((key) => !allowed.includes(key)) ||
-        (appState && error !== null && error !== "homeone_login_failed") ||
+    const state = params.get("state"), code = params.get("code"), error = params.get("error");
+    const allowed = ["state", "code", "error", "error_description", "error_uri", "iss", "session_state"];
+    if (!state || (code === null) === (error === null) ||
+        ["state", "code", "error"].some((key) => params.has(key) && !params.get(key)) ||
+        [...params.keys()].some((key) => !allowed.includes(key)) ||
         (params.has("iss") && params.get("iss") !== env.IDONE_ISSUER)) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
-    if (appState) {
-        if (!/^[A-Za-z0-9_-]{32,128}$/.test(appState)) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
-        const sid = parse(req.headers.cookie || "")[jar.home];
-        if (!sid) throw new HttpError(400, "LOGIN_FLOW_MISSING");
-        const { rows } = await db.query("DELETE FROM homeone_flows WHERE id_hash=$1 AND state=$2 AND origin=$3 AND expires_at>now() RETURNING return_to", [hash(sid), appState, origin]);
-        if (!rows[0]) throw new HttpError(400, "LOGIN_FLOW_EXPIRED");
-        res.locals.loginReturnTo = rows[0].return_to;
-        res.append("Set-Cookie", jar.set(jar.home, "", 0));
-        if (error) throw new HttpError(400, "HOMEONE_LOGIN_FAILED");
-        await startOidc(req, res, rows[0].return_to);
-        return;
-    }
     const sid = parse(req.headers.cookie || "")[jar.flow];
     if (!sid) throw new HttpError(400, "LOGIN_FLOW_MISSING");
-    const { rows } = await db.query("DELETE FROM login_flows WHERE id_hash=$1 AND origin=$2 AND state=$3 AND expires_at>now() RETURNING *", [hash(sid), origin, params.get("state")]);
+    const { rows } = await db.query("DELETE FROM login_flows WHERE id_hash=$1 AND origin=$2 AND state=$3 RETURNING *, expires_at>now() AS valid", [hash(sid), origin, params.get("state")]);
     const flow = rows[0];
-    if (!flow) throw new HttpError(400, "LOGIN_FLOW_EXPIRED");
+    if (!flow?.valid) throw new HttpError(400, "LOGIN_FLOW_EXPIRED");
+    if (flow.client_id !== env.IDONE_CLIENT_ID || flow.issuer !== env.IDONE_ISSUER || flow.redirect_uri !== `${origin}/api/auth/callback`) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
+    const callback = new URL(req.originalUrl, origin);
+    if (`${callback.origin}${callback.pathname}` !== flow.redirect_uri) throw new HttpError(400, "INVALID_LOGIN_REQUEST");
     res.locals.loginReturnTo = flow.return_to;
     res.append("Set-Cookie", jar.set(jar.flow, "", 0));
     const config = await getProvider();
-    const tokens = await oidc.authorizationCodeGrant(config, new URL(req.originalUrl, origin), { pkceCodeVerifier: flow.verifier, expectedState: flow.state, expectedNonce: flow.nonce, idTokenExpected: true });
+    const tokens = await oidc.authorizationCodeGrant(config, callback, { pkceCodeVerifier: flow.verifier, expectedState: flow.state, expectedNonce: flow.nonce, idTokenExpected: true });
     const claims = tokens.claims();
     if (!claims || claims.iss !== env.IDONE_ISSUER) throw new HttpError(403, "INVALID_IDENTITY");
     const info = await oidc.fetchUserInfo(config, tokens.access_token, claims.sub);
@@ -169,13 +169,26 @@ authRouter.get("/me", requireUser, (_req, res) => {
 authRouter.post("/logout", requireUser, csrf, async (req, res) => {
     await db.query("DELETE FROM sessions WHERE id_hash=$1", [res.locals.sessionHash]);
     const jar = cookies(req);
-    res.setHeader("Set-Cookie", jar.set(jar.session, "", 0));
+    const previous = parse(req.headers.cookie || ""), { origin } = site(req);
+    await db.query("DELETE FROM login_flows WHERE id_hash=$1 AND origin=$2", [hash(previous[jar.flow] || ""), origin]);
+    await db.query("DELETE FROM login_returns WHERE id_hash=$1 AND origin=$2", [hash(previous[jar.navigation] || ""), origin]);
+    res.setHeader("Set-Cookie", [jar.set(jar.session, "", 0), jar.set(jar.flow, "", 0), jar.set(jar.navigation, "", 0)]);
     res.json({ ok: true });
 });
 
-const loginError: ErrorRequestHandler = (error, req, res, next) => {
-    if (!["/login", "/callback"].includes(req.path) || !res.locals.loginReturnTo) return next(error);
-    const target = new URL(res.locals.loginReturnTo, site(req).origin);
+const loginError: ErrorRequestHandler = async (error, req, res, next) => {
+    if (!["/login", "/oidc/start", "/callback"].includes(req.path) || !resolveLoginSite(req.get("Host") || "")) return next(error);
+    const jar = cookies(req), { origin } = site(req);
+    if (req.path !== "/login") {
+        const sid = parse(req.headers.cookie || "")[jar.flow];
+        await db.query("DELETE FROM login_flows WHERE id_hash=$1 AND origin=$2", [hash(sid || ""), origin]);
+        res.append("Set-Cookie", jar.set(jar.flow, "", 0));
+    }
+    if (!res.locals.loginReturnTo) {
+        res.status(error instanceof HttpError ? error.status : 500).type("html").send('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>登录未完成</title><body><p>登录未完成或已过期，请重新登录。</p><a href="/studio?authError=login">返回登录页</a></body></html>');
+        return;
+    }
+    const target = new URL(res.locals.loginReturnTo, origin);
     target.searchParams.set("authError", "login");
     res.redirect(target.pathname + target.search + target.hash);
 };

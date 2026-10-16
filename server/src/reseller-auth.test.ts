@@ -101,7 +101,7 @@ test("authorization routes bind PKCE to the session, reject replay, and recover 
         } finally { server.close(); server.closeAllConnections(); }
     `], {
         cwd: new URL("../", import.meta.url), encoding: "utf8",
-        env: { ...process.env, NODE_ENV: "test", DATABASE_URL: "postgresql://unused:unused@localhost/unused", APP_ORIGIN: "https://app.test", APP_ORIGINS: '["https://app.test"]', HOMEONE_LOGIN_ORIGIN: "https://home.test", IDONE_APP: "admin/creativeone", IDONE_ISSUER: "https://idone.test", IDONE_DISCOVERY_URL: "", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test", ADMIN_SUBJECTS: "admin", ENHANCER_BASE_URL: "https://reseller.test", ENHANCER_APP_CREDENTIAL: "app-secret", TOKENONE_BASE_URL: "https://model.test" },
+        env: { ...process.env, NODE_ENV: "test", DATABASE_URL: "postgresql://unused:unused@localhost/unused", APP_ORIGIN: "https://app.test", APP_ORIGINS: '["https://app.test"]', IDONE_ISSUER: "https://idone.test", IDONE_DISCOVERY_URL: "", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test", ADMIN_SUBJECTS: "admin", ENHANCER_BASE_URL: "https://reseller.test", ENHANCER_APP_CREDENTIAL: "app-secret", TOKENONE_BASE_URL: "https://model.test" },
     });
     assert.equal(result.status, 0, result.stderr);
 });

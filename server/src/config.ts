@@ -7,19 +7,17 @@ export const env = z.object({
     APP_ORIGIN: z.url(),
     APP_ORIGINS: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
     APP_DOMAIN_SUFFIXES: z.string().default(""),
-    HOMEONE_LOGIN_ORIGIN: z.url(),
-    IDONE_APP: z.string().regex(/^[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}$/),
+    RESELLER_APP_ID: z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/).default("creativeone"),
     IDONE_ISSUER: z.url(),
     IDONE_DISCOVERY_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     IDONE_ALLOW_HTTP: z.enum(["true", "false"]).default("false"),
     IDONE_CLIENT_ID: z.string().min(1),
     IDONE_CLIENT_SECRET: z.string().min(1),
     ADMIN_SUBJECTS: z.string().min(1),
-    ENHANCER_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
+    ENHANCER_BASE_URL: z.url(),
     ENHANCER_APP_CREDENTIAL: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
     TOKENONE_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     SESSION_SECONDS: positive.default(604800),
-    LOGIN_SECONDS: positive.default(600),
     MAX_REFERENCE_IMAGE_BYTES: positive.default(10485760),
     MAX_MEDIA_BYTES: positive.default(104857600),
     MAX_JSON_BYTES: positive.default(20971520),
@@ -59,11 +57,11 @@ for (const suffix of domainSuffixes) {
         throw new Error("APP_DOMAIN_SUFFIXES requires lowercase domain names without protocol, port or wildcard");
     }
 }
-for (const value of [...origins, env.HOMEONE_LOGIN_ORIGIN]) {
+for (const value of [...origins, env.ENHANCER_BASE_URL]) {
     const url = new URL(value);
     if (url.origin !== value || url.username || url.password || url.hostname.includes("*") ||
         (url.protocol !== "https:" && !(url.protocol === "http:" && loopback(url) && process.env.NODE_ENV !== "production"))) {
-        throw new Error("APP_ORIGINS and HOMEONE_LOGIN_ORIGIN require exact HTTPS origins (HTTP loopback in development only)");
+        throw new Error("APP_ORIGINS and ENHANCER_BASE_URL require exact HTTPS origins (HTTP loopback in development only)");
     }
 }
 for (const origin of origins) {

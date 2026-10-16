@@ -14,10 +14,10 @@ if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error(
 const media = await mkdtemp(join(tmpdir(), "creativeone-api-test-"));
 const adminSubject = randomUUID();
 Object.assign(process.env, {
-    DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", APP_ORIGINS: '["http://localhost:3001"]', HOMEONE_LOGIN_ORIGIN: "https://home.test", IDONE_APP: "admin/creativeone", IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
+    DATABASE_URL: database, APP_ORIGIN: "http://localhost:3001", APP_ORIGINS: '["http://localhost:3001"]', IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test",
     IDONE_DISCOVERY_URL: "", IDONE_ALLOW_HTTP: "false", MEDIA_DOWNLOAD_HOSTS: "",
-    ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "http://enhancer.test", ENHANCER_APP_CREDENTIAL: "app-test-credential", TOKENONE_BASE_URL: "https://tokenone.test",
-    SESSION_SECONDS: "604800", LOGIN_SECONDS: "600", MAX_MEDIA_BYTES: "104857600", MAX_JSON_BYTES: "20971520", MEDIA_DIR: media,
+    ADMIN_SUBJECTS: adminSubject, ENHANCER_BASE_URL: "https://enhancer.test", ENHANCER_APP_CREDENTIAL: "app-test-credential", TOKENONE_BASE_URL: "https://tokenone.test",
+    SESSION_SECONDS: "604800", MAX_MEDIA_BYTES: "104857600", MAX_JSON_BYTES: "20971520", MEDIA_DIR: media,
 });
 const { app } = await import("./index.js");
 const { db } = await import("./db.js");
@@ -51,10 +51,10 @@ globalThis.fetch = async (input, init) => {
         promptFetches++;
         return promptFails ? new Response("offline", { status: 503 }) : Response.json(Array.from({length: 25}, (_, i) => ({id: String(i), title: `test prompt ${i}`, prompt: `draw ${i}`, tags: ["test"]})));
     }
-    if (url.startsWith("http://enhancer.test")) {
+    if (url.startsWith("https://enhancer.test")) {
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer app-test-credential");
         if (url.endsWith("/groups")) return Response.json({ app_id: "creativeone", groups: [{ id: "8", name: "应用默认组", status: "active", is_default: true }] });
-        assert.equal(url, "http://enhancer.test/api/apps/keys/ensure");
+        assert.equal(url, "https://enhancer.test/api/apps/keys/ensure");
         const body = JSON.parse(String(init?.body)); ensures.push(body);
         if (denyGroup) return Response.json({ error: "TOKENONE_GROUP_FORBIDDEN" }, { status: 403 });
         return Response.json({ status: "ready", tokenone_user_id: "42", api_key: { id: "701", key: `sk-${body.identity.subject}-8`, group_id: "8", status: "active" } });
