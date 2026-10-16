@@ -34,6 +34,7 @@ export function CloudConfigPanel() {
                     </div>)}
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">各项功能的可用模型由管理员统一配置。</p>
+            <Link to="/pricing" className="mt-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" onClick={() => useConfigStore.getState().setConfigDialogOpen(false)}>查看模型价格<ArrowUpRight size={14} /></Link>
         </section>
         {cloudSession?.user.admin ? <section className="flex flex-wrap items-center justify-between gap-4 border-t border-border/60 pt-6">
             <div className="flex items-start gap-3">

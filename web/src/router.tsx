@@ -17,6 +17,7 @@ const PromptsPage = lazyWithReload(() => import("@/pages/prompts"));
 const VideoPage = lazyWithReload(() => import("@/pages/video"));
 const ChannelsPage = lazyWithReload(() => import("@/pages/admin/channels"));
 const AdminTasksPage = lazyWithReload(() => import("@/pages/admin/tasks"));
+const PricingPage = lazyWithReload(() => import("@/pages/pricing"));
 
 export const router = createBrowserRouter([
     {
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
             { path: "/canvas", element: features.canvas ? <CanvasPage /> : <Navigate to="/studio" replace /> },
             { path: "/canvas/:id", element: features.canvas ? <CanvasProjectPage /> : <Navigate to="/studio" replace /> },
             { path: "/config", element: <ConfigPage /> },
+            { path: "/pricing", element: <PricingPage /> },
             { path: "/admin/channels", element: <ChannelsPage /> },
             { path: "/admin/tasks", element: <AdminTasksPage /> },
             { path: "/tasks", element: <Navigate to="/assets?view=tasks" replace /> },

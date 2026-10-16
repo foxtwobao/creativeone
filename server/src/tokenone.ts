@@ -34,11 +34,13 @@ const enhanceErrors = new Set([
     "APP_WRITES_DISABLED", "TOKENONE_DATABASE_NOT_CONFIGURED", "APP_KEY_ENCRYPTION_NOT_CONFIGURED", "APP_KEY_RECOVERY_UNAVAILABLE",
     "APP_DATABASE_UNAVAILABLE", "APP_SERVICE_UNAVAILABLE", "APP_USER_LOGIN_REQUIRED",
     "APP_USER_AUTHORIZATION_REQUIRED", "IDENTITY_BINDING_CONFLICT", "TOKENONE_USER_DISABLED", "REDIRECT_URI_FORBIDDEN", "AUTHORIZATION_FLOW_INVALID",
+    "BALANCE_UNIT_UNSUPPORTED", "APP_PRICING_GROUP_UNAVAILABLE", "APP_PRICING_UNAVAILABLE",
+    "ANNOUNCEMENT_NOT_FOUND",
 ]);
-export async function enhancer(path: string, requestId: string, body?: unknown) {
+export async function enhancer(path: string, requestId: string, body?: unknown, signal?: AbortSignal) {
     if (!env.ENHANCER_BASE_URL || !env.ENHANCER_APP_CREDENTIAL) throw new HttpError(503, "ENHANCER_NOT_CONFIGURED");
     const response = await fetch(`${env.ENHANCER_BASE_URL.replace(/\/$/, "")}/api/apps${path}`, {
-        method: body ? "POST" : "GET", redirect: "error", cache: "no-store",
+        method: body ? "POST" : "GET", redirect: "error", cache: "no-store", signal,
         headers: { Authorization: `Bearer ${env.ENHANCER_APP_CREDENTIAL}`, "Content-Type": "application/json", "X-Request-Id": requestId },
         body: body ? JSON.stringify(body) : undefined,
     });
