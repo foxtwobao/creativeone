@@ -40,7 +40,9 @@ description: Planned follow-up work
 
 - Reseller 身份与数据：本机已备份并切换至 lab IDONE creativeone 应用，指定 lab 用户已登录且管理员配置已更新，待确认旧业务数据归属；不按邮箱或相同用户名自动合并身份。
 
-- Reseller 账户余额、用量明细与统计：待上游具备契约后另行实现并验收；当前接口明确不可用，不作为模型生成功能的前置条件。
+- Reseller 用量明细与统计：待上游具备契约后另行实现并验收；账户汇总、用量明细和统计接口仍明确不可用，不作为模型生成功能的前置条件。余额与模型价格展示已转入待测清单。
+
+- 确认 Seedance 两款模型当前零任务单价是否符合预期；CreativeOne 按 Reseller 的 `unconfirmed_zero_price` 明确提示待管理员确认，不以零价宣称免费。新增表达式形态或插件专属计价规则由 Reseller 统一适配，CreativeOne 按结构化契约展示。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

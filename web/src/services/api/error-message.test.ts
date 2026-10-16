@@ -6,7 +6,7 @@ test("model service failures never request authorization or invalidate existing 
     const state = useCloudStore.getState();
     state.setModelLoginRequired(false);
     state.setModelAuthorized(true);
-    for (const code of ["APP_SERVICE_UNAVAILABLE", "APP_DATABASE_UNAVAILABLE", "APP_KEY_RECOVERY_UNAVAILABLE"]) {
+    for (const code of ["APP_SERVICE_UNAVAILABLE", "APP_DATABASE_UNAVAILABLE", "APP_KEY_RECOVERY_UNAVAILABLE", "APP_PRICING_GROUP_UNAVAILABLE", "APP_PRICING_UNAVAILABLE", "SCOPE_FORBIDDEN"]) {
         const error = cloudErrorMessage({ error: code, message: "模型服务暂时不可用", requestId: "trace" });
         expect(needsModelAuthorization(error)).toBe(false);
         expect(useCloudStore.getState().modelLoginRequired).toBe(false);

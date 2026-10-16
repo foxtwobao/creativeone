@@ -4,6 +4,11 @@ CREATE TABLE IF NOT EXISTS users (
     display_name text NOT NULL, avatar_url text NOT NULL DEFAULT '',
     UNIQUE (issuer, subject)
 );
+CREATE TABLE IF NOT EXISTS announcement_reads (
+    user_id uuid NOT NULL REFERENCES users(id), provider text NOT NULL,
+    announcement_id text NOT NULL, revision text NOT NULL, read_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, provider, announcement_id, revision)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id_hash text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id),
     csrf text NOT NULL, expires_at timestamptz NOT NULL

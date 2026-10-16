@@ -1,4 +1,5 @@
 import { useCloudStore } from "@/stores/use-cloud-store";
+import { useAnnouncementStore } from "@/stores/use-announcement-store";
 import type { ImageModelType } from "../../../../shared/image-models";
 import type { VideoModelType } from "../../../../shared/video-models";
 
@@ -40,6 +41,9 @@ export async function cloudApi<T>(path: string, init: RequestInit = {}): Promise
     return response.status === 204 ? undefined as T : response.json();
 }
 export async function initializeCloud() {
+    useCloudStore.getState().clearBalance();
+    useAnnouncementStore.getState().reset();
+    cloudSession = null;
     const session = await cloudApi<{ user: CloudUser; csrf: string; maxReferenceImageBytes: number; modelServiceUrl?: string }>("/auth/me");
     cloudSession = { ...session, channels: [] };
     cloudSession.channels = (await cloudApi<{ channels: CloudChannel[] }>("/channels")).channels;
@@ -48,5 +52,8 @@ export async function initializeCloud() {
 export const cloudFileUrl = (namespace: string, key: string) => `/api/files/${namespace}/${encodeURIComponent(key)}`;
 export async function logoutCloud() {
     await cloudApi("/auth/logout", { method: "POST" });
+    useCloudStore.getState().clearBalance();
+    useAnnouncementStore.getState().reset();
+    cloudSession = null;
     window.location.assign("/");
 }

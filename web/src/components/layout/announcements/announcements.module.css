@@ -1,0 +1,16 @@
+.markdown { overflow-wrap: anywhere; font-size: 14px; line-height: 1.85; }
+.markdown > :first-child { margin-top: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown blockquote { margin: 0 0 1em; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 1.4em 0 .6em; color: inherit; font-weight: 600; line-height: 1.5; }
+.markdown h1 { font-size: 22px; }
+.markdown h2 { font-size: 19px; }
+.markdown h3, .markdown h4 { font-size: 16px; }
+.markdown ul { padding-left: 1.5em; list-style: disc; }
+.markdown ol { padding-left: 1.5em; list-style: decimal; }
+.markdown a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.markdown pre { overflow: auto; padding: 12px; background: var(--muted); border-radius: 8px; }
+.markdown code { font-family: ui-monospace, monospace; font-size: .9em; white-space: pre-wrap; }
+.markdown blockquote { padding-left: 14px; color: var(--muted-foreground); border-left: 2px solid var(--border); }
+.markdown table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; margin: 1em 0; }
+.markdown th, .markdown td { padding: 7px 10px; border: 1px solid var(--border); }
+.markdown hr { border-color: var(--border); margin: 1.4em 0; }

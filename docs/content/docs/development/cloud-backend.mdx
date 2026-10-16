@@ -30,9 +30,27 @@ AppONE 新协议已部署 lab 并通过双域名 HTTPS 协议检查，完整账�
 
 ## 账户、用量与历史绑定
 
-Reseller 暂不提供账户余额和用量接口。登录并通过 CSRF 校验后，`POST /api/tokenone/account/summary`、`POST /api/tokenone/usage/query`、`POST /api/tokenone/usage/stats` 统一返回 HTTP 501 / `TOKENONE_ACCOUNT_USAGE_UNAVAILABLE`，不透传上游 404/HTML，不伪造零余额，也不回退旧 Enhance。前端没有对应展示页面或自动请求，生成流程不依赖这些接口。
+`GET /api/account/balance` 从当前有效会话取得身份，服务端调用 Reseller `/api/apps/balance/query`，仅返回十进制字符串金额及 `USD / CNY / QUOTA` 单位。应用凭证需 `balance:read`，查询不要求模型授权，超时为 7 秒，不自动重试。顶部账户栏登录后读取一次，支持手动刷新；失败不显示为零，不影响保存或模型授权，账号变化清除旧结果。新版 Reseller 已将 `balance:read`、`pricing:read` 与用户模型授权快照解耦，需部署该版本才会生效。
+
+`GET /api/model-pricing` 由服务端使用应用凭证读取 Reseller `/api/apps/pricing`，需部署支持该接口的 Reseller，并给应用授予 `pricing:read`、配置默认 COMPOSITE 分组。接口不依赖用户模型授权，不需要额外读取 `/groups`；CreativeOne 不再直接读取 TokenONE 公开价格接口或解析计费表达式，只校验契约并筛选后台启用的功能模型，保留本地分类和描述。
+
+`/pricing` 页面按功能以紧凑行展示 Reseller 返回的单价，各计费项横向排列，同一档位相同单位只标注一次；终端用户不展示分组、成员名称或倍率。本站充值规则为 1 元对应 1 USD 额度，因此页面单价及顶部 USD 余额按 1:1 标为 CNY，金额保留原始字符串精度，不再次乘倍率或套用外汇汇率；API 响应和内存中的上游币种保持原值，原本为 CNY 或 QUOTA 的余额保留其单位。上下文档位与查询时间采用 Reseller 响应；多路径以不同报价分别保留，缺失价格、规则不支持、零任务单价待确认和非法配置分别显示说明。分组不可用或价格服务故障显示中文提示，不触发模型授权；应用凭证失效不会清除用户登录。
+
+价格读取保留调用方原有 10 分钟截止时间，关闭页面取消请求，不自动刷新或重试；Reseller 自行执行其契约规定的上游与操作截止时间。Reseller 的最终契约见其仓库 `docs/APP_PRICING_API.md`；部署、scope 配置及真实联调结果见[待测清单](/docs/progress/pending-test)。
+
+Reseller 仍不提供账户汇总和用量接口。`POST /api/tokenone/account/summary`、`POST /api/tokenone/usage/query`、`POST /api/tokenone/usage/stats` 继续返回 HTTP 501 / `TOKENONE_ACCOUNT_USAGE_UNAVAILABLE`，生成流程不依赖这些接口。
 
 部署前备份 PostgreSQL。新版为旧 Key 绑定与生成任务保留 `legacy-enhance` 命名空间，新绑定按用户、提供方和分组区分。未完成的旧视频任务拒绝跨服务查询；已保存结果保留。默认组改变继续返回 `TASK_GROUP_CHANGED`，Key 结果不明确时交管理员核验，不能删绑定重建。具体备份和回滚要求见[迁移说明](/docs/development/local-tokenone)。
+
+## 应用公告
+
+公告复用 Reseller 地址和应用凭证，无新增环境变量或 scope。`GET /api/announcements` 只接受指南规定的 `limit`、`offset`，服务端读取本应用公告并附上当前用户的已读状态，列表省略正文；`GET /api/announcements/:id` 重新读取详情。两个代理均要求有效业务会话，不发送 identity 或模型 Key。读取沿用应用接口现有 10 分钟调用截止时间并支持取消，不新增轮询、重试或上游内容缓存。
+
+前端在页面加载、打开公告和手动刷新时逐页读取，汇总完整目录后统计未读，避免仅检查第一页漏掉旧公告。顶部入口显示未读数量，有未读新版本时以非阻塞的动态来信提示，可关闭；支持系统的减少动态效果偏好。关闭提醒和查看列表不计已读，成功渲染详情后调用 `PUT /api/announcements/:id/read`。写入要求当前用户会话、CSRF 及详情版本；服务端再次核验公告仍可见且版本一致，才保存阅读记录。
+
+`announcement_reads` 以用户、Reseller 来源、公告 ID 和内容版本联合唯一，阅读时间由服务器生成；重复写入幂等，旧版本不会覆盖其他版本的记录。版本依据标题、正文和发布时间计算，正文/标题修改或重新发布重新视为未读，单独的更新时间变化不影响已读。刷新、退出重登和其他设备可读取同一账号的记录；账号变化或会话错误会清除内存状态并丢弃迟到响应。浏览器不持久化公告或已读数据。
+
+正文使用 CommonMark + GFM 安全组件，禁用 HTML 和图片，仅允许 HTTP(S)/mailto 链接并以安全新标签页打开，代码只作为文本显示。公告下架或移出应用导致详情 404 时提示不可用并刷新列表；服务故障只影响公告区域，不伪装空列表、不触发模型授权。lab 部署与真实联调状态见[待测清单](/docs/progress/pending-test)。
 
 ## 存储与同步边界
 

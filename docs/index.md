@@ -38,6 +38,7 @@
 - [无限画布开放方案](/docs/progress/infinite-canvas-plan)
 - [Reseller 登录会话恢复交接说明](handoffs/reseller-session-recovery.md)
 - [CreativeONE 标准统一登录交接](handoffs/creativeone-one-auth.md)
+- [Reseller 应用模型价格接口方案](handoffs/reseller-app-pricing.md)
 - [Changelog](/docs/progress/changelog)
 - [Pending Tests](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
