@@ -1,10 +1,10 @@
-# CreativeONE 标准统一登录交接
+# CreativeONE 统一登录交接
 
-以 HomeONE 总体方案、跨项目契约第 4 节和业务 ONE 标准任务为准。本次仅修改 CreativeONE 仓库；旧 SSO 实现中可用的 PostgreSQL 事务、OIDC 验证、本地会话与登录页继续复用，域名选择 HomeONE 的配置已取消。首次归属以 HomeONE 文档 `2026-10-11-registration-attribution-without-webhook.md` 和最新跨项目契约第 6 节为准：Reseller 主动读取 IDONE 原生注册资料，归属与开通不依赖 webhook；CreativeONE 无需新增接口或渠道上报。本轮 IDONE 源码、账号、组织、权限、客户端、回调、数据库与部署均不修改，仅核对已有能力。
+依据 HomeONE 仓库 `docs/one-auth/README.md` 与 `docs/one-auth/appone.md`。CreativeONE 只对接 Reseller 公开导航入口与 IDONE 业务 OIDC；本次仅修改本仓库，已部署到 lab 并通过 HTTPS 协议检查；完整账号登录和真实 SSO 尚待验收。
 
 ## 产品登记
 
-交给 Reseller 的产品记录如下。`admin/creativeone` 为现有 lab 文档登记值；其他环境须核对实际 owner/name，不能用 Client ID 替代。
+向平台交付下列产品配置，以及部署实际支持的访问域名。`idoneApp` 使用 IDONE 中实际 owner/name，只用于平台登记，不作为 CreativeONE 运行时配置；不得交付业务 clientSecret。
 
 ```json
 {
@@ -12,64 +12,60 @@
   "name": "CreativeONE",
   "idoneApp": "admin/creativeone",
   "domainLabel": "creative",
-  "launchPath": "/",
+  "launchPath": "/studio",
+  "oidcStartPath": "/api/auth/oidc/start",
   "callbackPaths": ["/api/auth/callback"]
 }
 ```
 
-固定路径沿用本项目现有设计，不改为方案示例中的 `/auth/callback`。Reseller 根据 Site 生成标准访问地址与完整回调，`publicUrl` 取 default Site 的最终地址。当前 lab 的 `https://creative.lab.home.arpa` 与 `https://creativeccpg.lab.home.arpa` 若不符合标准生成规则，分别登记对应 Site 的特殊 origin 覆盖。产品业务 Secret 不提交到目录。
+平台根据实际发布域名登记 Reseller 产品访问地址和 IDONE 精确业务回调。`oidcStartPath` 是浏览器可直接访问的启动路由，不是 redirect_uri；平台认证后直接导航到它，不追加身份或认证结果参数。普通业务页面已有会话时直接进入；匿名访问展示登录/注册按钮，用户点击后前往 Reseller。启动入口则自动发起业务 OIDC，即使浏览器已有业务会话，也以本次业务 OIDC 验证的账号为准。
 
-每个 origin 需要同时核对：CreativeONE 精确地址或 `APP_DOMAIN_SUFFIXES` 后缀校验、Reseller `(idoneApp, callbackUrl)` 精确路由、IDONE 同一业务 APP 的精确回调、DNS/TLS 和反向代理。核对完成后再启用，不以域名模板替代精确登记。
+lab 已检查域名为 `https://creative.lab.home.arpa` 和 `https://creativeccpg.lab.home.arpa`。域名与 Site 的关系由 Reseller 管理，CreativeONE 不交付映射表。此前旧协议的默认入口检查、CCPG `APP_RETURN_FORBIDDEN` 和模拟回跳结果不能作为新协议验收证据；新版本需重新核对产品、origin、启动路径和业务回调。
 
-## CreativeONE 配置
+## 配置与可信 origin
 
 ```dotenv
 APP_ORIGIN=https://creative.lab.home.arpa
 APP_ORIGINS='["https://creative.lab.home.arpa","https://creativeccpg.lab.home.arpa"]'
-HOMEONE_LOGIN_ORIGIN=https://homeone.lab.home.arpa
-IDONE_APP=admin/creativeone
+ENHANCER_BASE_URL=https://tokenonereseller.lab.home.arpa
+RESELLER_APP_ID=creativeone
 ```
 
-以上为已部署的 CreativeONE lab 配置；HomeONE 平台配置已启用；默认回调可用，CCPG 回调登记仍需对应项目核对。删除旧 `HOMEONE_SITES`，不保留按域名选 HomeONE 的回退。`APP_ORIGINS` 必须包含 `APP_ORIGIN`，仅接受完整规范 origin，拒绝通配符、路径、凭据、重复和同 Host 不同协议；生产使用 HTTPS，开发仅回环地址允许 HTTP。只读取代理保留的原始 Host（含端口），不信任外来转发头。
+复用 `ENHANCER_BASE_URL`，不增加第二份 Reseller 地址。它现在也是登录必需配置，必须为浏览器可达的规范 origin，不含路径、尾斜杠、凭据、query 或 fragment。生产使用 HTTPS；开发仅回环允许 HTTP。`RESELLER_APP_ID` 默认 `creativeone`，遵循平台产品标识格式，不使用 IDONE owner/name 或 Client ID。删除旧 `HOMEONE_LOGIN_ORIGIN`、`IDONE_APP`、`LOGIN_SECONDS` 配置。
 
-新增可选 `APP_DOMAIN_SUFFIXES`（英文逗号分隔的小写可信域名），允许根域及多级子域，以实际 Host 构造标准 HTTPS origin，拒绝非标准端口与伪造域名边界。`APP_ORIGINS` 可省略，默认使用 `APP_ORIGIN`。这是应用自身的放行方式，HomeONE/Reseller 与 IDONE 精确回调仍需核对；以上 lab 配置未因此修改或重新部署。
+IDONE issuer、Discovery、Client ID/Secret、管理员 sub 和 `SESSION_SECONDS` 沿用现有配置。仅联调登录与数据同步时可留空 `ENHANCER_APP_CREDENTIAL`、`TOKENONE_BASE_URL`；登录导航不发送任何服务凭据。
 
-所有 origins 使用固定 issuer、现有 IDONE Client ID/Secret、Discovery 和管理员 sub。只有合法当前 Host 决定业务回调 origin，本应用不选择 Site/入口 APP，不读取 HomeONE 私有配置，不获取其他入口 Secret，也不维护渠道归属。
+继续使用已有 `APP_ORIGIN`、可选 `APP_ORIGINS` 和 `APP_DOMAIN_SUFFIXES` 校验访问域名，不新增 Site 配置、完整 callback 列表或渠道查询。`APP_ORIGINS` 留空默认主 origin；显式列表须包含主地址。可信后缀允许根域及多级子域，动态 origin 仅标准 HTTPS。后端只按原始 Host 匹配合法 origin，不信任客户端转发头；外层网关须保留 Host/端口、拒绝非法域名并使用 HTTPS。不得删掉应用校验后直接拼接任意 Host。仓库 Docker 只发布 Nginx 端口，实际部署仍须核对后端网络暴露。
 
-`APP_ORIGIN` 继续用于已有媒体外链与 Reseller 模型授权回调。第二业务域名的模型授权仍存在固定回调限制，见 TODO；本次登录升级不代表第二域名的全部业务能力已通过验收。
+`APP_ORIGIN` 继续用于媒体外链与 Reseller 模型授权回调。第二业务域名的模型授权仍存在固定回调限制，继续保留 TODO；本次不修改模型授权协议或关联项目。
 
-## 登录、会话与错误
+## 路由与事务
 
-1. 登录/注册在服务端保存随机 appState、浏览器绑定、origin、期限及合法业务返回路径，再前往固定 HomeONE `/auth/login`，只发送 `app`、精确 `returnTo`、`appState` 和可选 `register`。
-2. HomeONE 回跳仅接受 appState 与契约错误，校验独立 host-only Cookie 和一次性事务后启动内部 OIDC；这一步不保存用户或业务会话，也不再次进入 HomeONE。
-3. 业务段重新生成 state、nonce 和 S256 PKCE，使用固定客户端；通过 IDONE 签名、issuer、audience、时间和 nonce 校验，并核对 userinfo subject 后，才按原始 issuer/sub 保存用户与本 origin 会话。
-4. 返回路径仅从服务端事务恢复，保留合法 query/fragment；管理员角色仍由本应用检查。两段间切换账号，以业务段结果为准，不混用入口身份；同邮箱不同 sub 不合并。
-5. 非法、混合、重复、关键空值、未知参数、缺失 Cookie、错误 origin、过期和重放就地拒绝，不重定向任意请求目标。只有已验证并消费的事务允许带统一 `authError=login` 返回原页面；失败后手动恢复，不循环授权、不重放生成或收费操作。
+1. `/api/auth/login` 校验可选合法相对 `returnTo` 与注册标记。有有效本地会话时直接返回业务页面；否则在 PostgreSQL `login_returns` 保存浏览器 Cookie 绑定的导航记录，然后导航到 `ENHANCER_BASE_URL/auth/enter?appId=creativeone&sourceOrigin=<当前可信 origin>`，注册追加 `register=true`。原页面和 Cookie 不传给平台。
+2. `/api/auth/oidc/start` 无需前置证明，也不接受认证结果参数。消费同 origin 导航记录；缺失、过期或被其他标签替换时使用 `/studio`。清理当前浏览器旧业务事务，生成新的 state、nonce、S256 PKCE，绑定 origin、固定客户端、issuer、精确 redirect_uri 和返回路径，直接导航 IDONE。
+3. `/api/auth/callback` 仅处理业务 OIDC，拒绝旧 appState、重复参数、关键空值、code/error 混合、错误 issuer、缺少浏览器 Cookie、错误 origin、过期及重放。匹配的事务通过数据库 DELETE RETURNING 一次性消费；固定客户端/issuer/redirect_uri 不符时拒绝。使用原事务 redirect_uri 换码，验证签名、issuer、audience、时效、nonce 及 userinfo subject 后，按 `(issuer, sub)` 保存用户并轮换本 origin 会话。
+4. 有效事务失败时返回保存的业务路径并显示手动重试；无可信返回路径时就地显示错误页及返回登录页链接，不自动跳 Reseller。当前浏览器的失败事务会清理。其他 origin 的事务和会话不受影响。
+5. `/api/auth/logout` 继续要求会话与 CSRF，清除当前 origin 会话、当前浏览器的未完成 OIDC 和导航记录及对应 Cookie。退出后停留登录页，不自动登录，不代表 IDONE 或其他应用退出。切换账号先主动退出，再登录。
 
-Cookie 保持 HttpOnly、SameSite=Lax、host-only；HTTPS 使用 Secure 与 `__Host-` 前缀。会话继续按 origin 验证，已有业务会话不因 HomeONE 配置故障自动退出。退出只删除当前本地会话，不表示全平台退出。
+业务 OIDC 事务固定 **300 秒**，不受旧 `LOGIN_SECONDS` 影响；过期后清理并手动重试。导航偏好记录保留现有默认 **600 秒**，缺失或失效仅丢失原页面恢复；会话仍默认 **604800 秒**。Cookie 使用 HttpOnly、SameSite=Lax、host-only，HTTPS 下启用 Secure 与 `__Host-` 前缀。不同 origins 会话独立；同 origin 多标签共享 Cookie，不保证各标签独立恢复深链接。
 
-多标签页共享同 origin 的流程 Cookie。重新发起会废弃请求 Cookie 所绑定的旧 HomeONE/业务事务并更新 Cookie；并发发起或回跳导致 Cookie 不匹配时拒绝，回原页面手动重试，不承诺并行登录。不同 origins 各自建立会话。
+不再创建或访问 `homeone_flows`。已有数据库中的旧表不迁移、不作为登录凭证，本次不执行旧表删除或业务数据迁移。启动时沿用现有 schema 初始化机制，为业务事务补充绑定字段并建立导航表；旧的未完成事务需要重新发起，用户身份和业务数据不重写。
 
-期限沿用现有值：业务 OIDC 使用 `LOGIN_SECONDS`（默认 600 秒），HomeONE 前置事务使用 `min(LOGIN_SECONDS, 600)`，业务会话使用 `SESSION_SECONDS`（默认 604800 秒）；本次未调整超时、重试或并发边界。代理须保留 Host/端口，并禁用认证 URL 的 query/body 日志；仓库 Nginx 已关闭认证访问和错误日志，部署方仍需核对外层网关。
+## 验证与发布前检查
 
-## 验证结果与待联调
+28 项认证、配置和既有模型授权/用户策略测试通过，使用模拟 PostgreSQL 查询、隔离提供方及真实 `openid-client`、JWT/JWKS 验签。覆盖公开参数、独立启动、导航降级、300 秒固定值、客户端绑定、签名/issuer/audience/过期/nonce/userinfo 拒绝、重放、跨 origin 同一身份、账号切换、已有会话和退出清理。
 
-模拟协议验证使用真实 `openid-client` 校验逻辑、隔离签名 JWT/JWKS 和模拟 PostgreSQL 查询，不访问真实身份服务或模型。签名校验沿用 SDK 的 [enableNonRepudiationChecks](https://github.com/panva/openid-client/blob/main/docs/functions/enableNonRepudiationChecks.md)。
+未执行语法检查、构建、真实浏览器或真实 SSO 联调，未修改关联项目。lab 部署已完成配置更新和 API 重启，由既有 schema 初始化机制补齐登录表结构。后续发布与验收需要：
 
-- 协议与身份测试：固定入口/客户端、独立 state/nonce/PKCE、Host/端口/转发头、深链接、参数拒绝、HomeONE/业务错误、过期/重放、跨域同一身份、同邮箱不同账号、最终账号切换、管理员判定、多标签页失效和本地退出。
-- 无效签名、issuer、audience、过期令牌、nonce 与 userinfo subject 均在创建身份/会话前被拒绝。
-- 21 项测试（含子测试）全部通过：`auth.test.ts` 10 项、`auth-config.test.ts` 3 项、`reseller-auth.test.ts` 1 项、`tokenone-user-policy.test.ts` 7 项。配置与既有模型授权/用户策略回归使用隔离模拟环境；未执行构建、语法检查、真实 PostgreSQL 集成测试、数据库迁移或付费模型调用。
+- 核对 Reseller `/auth/enter`、产品 appId、全部访问 origins 与 `/api/auth/oidc/start` 登记；平台按实际域名核对 IDONE 精确回调。
+- 备份 CreativeONE 配置、PostgreSQL 和媒体，再部署配套代码与配置；旧 HomeONE 协议的已部署状态不等于新版本已上线。
+- 验收默认与渠道入口、注册、公共地址回落、真实 IDONE SSO 自动授权/需要交互两种情况，以及取消、失败、超时、重放、非法 Host/转发头和后端直连边界。
+- 验收同一身份跨 origin 不重复建用户、Cookie 隔离、管理员权限、原页面恢复、账号切换和退出不循环；模型调用、余额与模型授权另行验收。
 
-真实 SSO 尚未完成：需分别验证默认/CCPG/独立域名的入口选择、相同业务客户端与 subject、匿名深链接、已有会话、注册、取消、IDONE/HomeONE 会话失效、浏览器 Cookie、管理员权限与账号切换；lab 真实 PostgreSQL 并发消费已确认只有一次成功。跨 APP 免重复输入依赖 IDONE 原生 SSO 配置，mock 成功不能替代此验证。首次归属、原生用户发现/核验、独立开通和延迟计佣由 Reseller 项目实现与验收，不要求产品上报渠道，不配置或修复 IDONE webhook。
+回滚须配套恢复代码与配置，保留新增业务数据，不按邮箱认领身份，也不直接覆盖当前数据库。生产静态资源部署仍按 TODO 单独验收。
 
-## 部署与回滚
+## lab 部署结果
 
-CreativeONE 已部署到现有 lab Caddy → Vite 3002 → API 4013 链路：配置改用固定中央地址和两个合法业务 origins，原 API 重启，业务客户端与数据归属保持原样；未部署应用容器或修改关联项目。备份包含配置、当前代码、PostgreSQL 自定义归档与媒体，归档目录校验通过；路径、进程及日志记录在本机忽略文件 `server/data/homeone-deployment.json`。
+已备份原配置、Git HEAD、工作区补丁、PostgreSQL 自定义归档及媒体，数据库归档目录校验通过。备份路径、代码版本、工作区状态、进程和日志记录在本机忽略文件 `server/data/appone-deployment.json`。保留 Vite 3002、API 4013、专用数据库 `127.0.0.1:5433/creativeone` 和既有 Caddy 链路，只重启 CreativeONE API；现有 Reseller 地址与 IDONE 业务客户端保持原值，配置删除旧 HomeONE 项并设置产品 `creativeone`。
 
-两站点页面 200、匿名 401、固定中央地址、独立业务 PKCE、错误深链接返回、参数拒绝、跨 origin、过期、重放与真实数据库并发一次消费均通过；验证结果在 `server/data/one-auth-lab-validation.json`，测试事务已清理。继续授权通知由独立测试客户端模拟，没有完成真实用户登录。
-
-此前 HomeONE 平台配置关闭时，两域名登录曾返回 `503 APP_LOGIN_UNAVAILABLE`；最新只读复核已确认 `HOMEONE_PLATFORM_CONFIG_ENABLED=true`。默认业务回调返回 303，进入 IDONE 并使用 S256；CCPG 地址 `https://creativeccpg.lab.home.arpa/api/auth/callback` 返回 `403 APP_RETURN_FORBIDDEN`，尚未被当前运行路由接受。由 HomeONE/Reseller 对应项目核对该特殊域名覆盖及 `(admin/creativeone, 完整回调)` 精确登记；仅只读核对 IDONE 已有回调，缺项时报告，不修改 IDONE。以上仅验证入口协议，没有完成真实身份登录或首次归属/开通/返佣验收，本应用不回退旧映射。
-
-部署前备份代码/镜像版本、配置、PostgreSQL 和媒体；先完成 Reseller/HomeONE 精确路由并只读核对 IDONE 已有原生回调，再替换 CreativeONE 配置并按原方式重启。本轮不修改 IDONE；已有回调不满足时报告缺项并停止相关入口启用。检查健康、默认与渠道登录、深链接和权限后再开放。站点绑定缺失的旧会话/事务需重新登录；不改写 issuer/sub、不自动认领历史数据。
-
-回滚时配套恢复原代码/镜像与配置；已有用户、素材和任务保持原归属，不因登录配置回退重算身份。若数据库需要恢复，先单独保存备份后的新增业务数据，再执行经授权的恢复；不能直接覆盖新增数据。渠道来源登记及对外入口的回滚由对应项目协同处理。
+两个业务域名均通过页面 200、匿名 401、Reseller 新入口 302、平台导航 302、独立 OIDC 302、精确回调与 S256、300 秒安全 Cookie、取消恢复深链接、无导航记录回默认页面、重放 400；伪造 Host 与转发头被后端 400 拒绝。检查使用独立 HTTP Cookie 容器，未进入用户浏览器或创建业务会话。结果保存在 `server/data/appone-lab-validation.json`。完整用户授权、IDONE 回调换码、平台返回启动入口及真实跨应用 SSO 仍需登录验收，以上协议检查不替代这些结果。

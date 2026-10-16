@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 Object.assign(process.env, {
     DATABASE_URL: "postgresql://unused:unused@127.0.0.1:1/unused_test", APP_ORIGIN: "https://creative.test",
-    APP_ORIGINS: '["https://creative.test"]', HOMEONE_LOGIN_ORIGIN: "https://home.test", IDONE_APP: "admin/creativeone",
+    ENHANCER_BASE_URL: "https://reseller.test", APP_ORIGINS: '["https://creative.test"]',
     IDONE_ISSUER: "https://idone.test", IDONE_CLIENT_ID: "test", IDONE_CLIENT_SECRET: "test", ADMIN_SUBJECTS: "test",
     MAX_REFERENCE_IMAGE_BYTES: "10485760",
 });

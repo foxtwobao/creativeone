@@ -16,8 +16,11 @@ CREATE TABLE IF NOT EXISTS login_flows (
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS origin text;
 ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS origin text;
 ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS return_to text;
-CREATE TABLE IF NOT EXISTS homeone_flows (
-    id_hash text PRIMARY KEY, state text NOT NULL UNIQUE,
+ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS client_id text;
+ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS redirect_uri text;
+ALTER TABLE login_flows ADD COLUMN IF NOT EXISTS issuer text;
+CREATE TABLE IF NOT EXISTS login_returns (
+    id_hash text PRIMARY KEY,
     origin text NOT NULL, return_to text NOT NULL, expires_at timestamptz NOT NULL
 );
 CREATE TABLE IF NOT EXISTS channels (

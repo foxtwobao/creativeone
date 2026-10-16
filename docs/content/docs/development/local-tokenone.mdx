@@ -16,13 +16,13 @@ description: Reseller / New API 迁移配置与验收
 
 ## ONE 标准登录接入
 
-当前代码以统一登录契约为准：CreativeONE 所有业务地址共用一个固定 `HOMEONE_LOGIN_ORIGIN` 和固定 IDONE 业务客户端，`APP_ORIGINS` 仅校验合法业务 origin。旧 `HOMEONE_SITES` 已移除，不能继续用于新代码。登记字段、切换步骤和回滚要求见 [ONE 统一登录交接](../../../handoffs/creativeone-one-auth.md)。
+当前代码按 AppONE 新协议实现：登录复用浏览器可达的 `ENHANCER_BASE_URL/auth/enter`，发送 `RESELLER_APP_ID`（默认 `creativeone`）与当前可信 origin；平台返回 `/api/auth/oidc/start` 后，使用固定业务客户端独立完成 IDONE OIDC，回调保持 `/api/auth/callback`。不再配置 HomeONE 地址、运行时 IDONE owner/name 或 appState。业务事务固定 300 秒，原页面导航记录 600 秒。配置与交付见 [ONE 统一登录交接](../../../handoffs/creativeone-one-auth.md)。
 
-lab 保留 Caddy → Vite（3002）→ API（4013）链路及 `creative.lab.home.arpa`、`creativeccpg.lab.home.arpa` 两个业务入口，两段授权沿用 `/api/auth/callback`。这两个 lab 地址若不符合 Reseller 的标准域名生成规则，应作为对应 Site 的特殊覆盖登记；不在 CreativeONE 推导 Site 或指定入口 APP。Vite/Caddy 的合法 Host 支持可继续复用。
+新协议已部署 lab，双域名 HTTPS 导航、独立 OIDC、300 秒 Cookie、取消恢复与重放拒绝检查通过；完整账号登录和真实 SSO 尚待验收。lab 原 Caddy → Vite（3002）→ API（4013）链路和两个业务域名 `creative.lab.home.arpa`、`creativeccpg.lab.home.arpa` 可继续使用，但需平台核对 Reseller 产品、实际来源域名、独立启动入口及 IDONE 精确回调。应用不推导 Site；已有 Host 校验继续保留。
 
-此前 lab 已备份配置、PostgreSQL 和媒体，并对按域名选择不同 HomeONE 的旧流程做过 HTTP 协议检查；相关本机备份记录保留在忽略文件 `server/data/homeone-deployment.json` 与 `server/data/ccpg-deployment.json`。这些检查不代表本次固定中央入口已部署或跨 APP SSO 已通过。本次随后已备份配置、代码、PostgreSQL 自定义归档与媒体，并将本机 `.env` 改为固定中央入口和两业务 origins，重启原 API（4013）；没有修改 IDONE/Reseller/HomeONE 配置。当前部署与验证记录保存于本机忽略文件 `server/data/homeone-deployment.json`、`server/data/one-auth-lab-validation.json`。
+此前 HomeONE appState 协议的备份和协议检查记录保留于本机忽略文件 `server/data/homeone-deployment.json`、`server/data/one-auth-lab-validation.json`。旧默认路由可用、CCPG `APP_RETURN_FORBIDDEN` 及数据库消费结果均不是新协议验收证据。部署前重新备份配置、PostgreSQL 与媒体；仅由对应项目核对平台登记，CreativeONE 不修改关联项目源码或运行配置。
 
-实际 HTTPS 协议检查通过两业务站点页面、匿名鉴权、固定中央跳转、独立业务 PKCE、深链接错误返回、跨 origin、过期与重放拒绝；真实 PostgreSQL 并发消费仅一次成功，测试事务已清理。继续授权通知由独立客户端模拟，不是用户登录或真实 SSO。验收期间 HomeONE 关闭平台配置曾导致跨应用登录 503；最新只读复核确认平台配置已启用，默认业务回调可进入 IDONE，但 CCPG 回调仍返回 `403 APP_RETURN_FORBIDDEN`。需要在 HomeONE/Reseller 对应项目核对特殊域名覆盖和精确路由后继续验收，只读核对 IDONE 已有回调，不修改其配置。归属按最新无 webhook 方案由 Reseller 主动读取原生用户资料处理，CreativeONE 登录协议无需改动或新增渠道上报。保持原业务客户端、issuer/sub 及数据归属，不恢复旧域名选择逻辑。真实账号登录、注册、CCPG 登录方式、跨应用 SSO、管理员、Cookie 与会话失效仍待联调。Reseller 模型授权保持固定 `APP_ORIGIN` 回调，第二业务域名的限制继续保留 TODO。
+真实账号登录、注册、渠道入口、跨应用 SSO、Cookie 隔离、管理员权限、超时与退出仍待联调。模型授权保持固定 `APP_ORIGIN` 回调，第二域名限制继续保留 TODO；新登录协议不替代模型授权与实际模型调用验收。
 
 ## 应用内授权（方案 A）
 
