@@ -3,7 +3,7 @@ import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings
 import { Button, Segmented } from "antd";
 import { useTranslation } from "react-i18next";
 
-import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
+import { buildGenerationConfig, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { buildNodeGenerationContext } from "./canvas-node-generation";
 import { ModelPicker } from "@/components/model-picker";
@@ -106,7 +106,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             </div>
 
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
+                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, mode === "video" ? canvasVideoModelPatch(config, model) : { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
                     <CanvasVideoSettingsPopover config={config} referenceMedia={{ videos: referenceContext?.referenceVideos, audios: referenceContext?.referenceAudios }} referenceImageCount={referenceImageCount} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                 ) : mode === "image" ? (

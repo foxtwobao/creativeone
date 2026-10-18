@@ -5,7 +5,7 @@ description: Planned follow-up work
 
 # TODO
 
-- MiniMax H3 真实联调与金额预估：应用的全部素材模式已接入，见待测清单。需在目标 TokenONE 实例核实知梦 1.2.0、模型启用及价格，并在 CreativeOne 后台将 `MiniMax-H3` 配置为「MiniMax H3」调用类型；核对实际路由、公网素材可达性、生成效果和真实账单。现有 Reseller 价格合同仅返回展示档位，无法区分输出秒价与参考视频秒价及额外图片价，条件文本也不可作为计费表达式执行；待对应项目提供可计算的 H3 计费维度或权威报价接口后接入金额预估。当前显示附加图片数量、15 秒预留及最终账单提示，不硬编码供应商报价。
+- MiniMax H3 真实联调与金额预估：应用的全部素材模式已接入，见待测清单。需在目标 TokenONE 实例核实知梦 1.2.0、模型启用及价格，并在 CreativeOne 后台将 `MiniMax-H3` 配置为「MiniMax H3」调用类型；核对实际路由、公网素材可达性、生成效果和真实账单。新版 Reseller 价格合同已支持独立用量项，CreativeOne 展示适配见待测清单；尚无实际 H3 报价及请求参数到计费用量的权威换算规则，条件文本不可作为计费表达式执行，待对应项目提供实际规则或权威报价接口后接入金额预估。当前显示附加图片数量、15 秒预留及最终账单提示，不硬编码供应商报价。
 
 - WAN3 真实联调：lab 两个公共模型已按用户授权保存临时按秒价，配置和候选列表恢复已转入[待测清单](/docs/progress/pending-test)。需管理员在 CreativeOne 刷新候选并显式启用新型号；实际生成路由、参考素材可达性、输入视频计费用量、账单、重试行为及正式售价仍需确认，不把临时价当作供应商成本或生产售价。本次未改应用启用模型、关联项目源码或运行部署。
 
@@ -46,7 +46,7 @@ description: Planned follow-up work
 
 - Reseller 用量明细与统计：待上游具备契约后另行实现并验收；账户汇总、用量明细和统计接口仍明确不可用，不作为模型生成功能的前置条件。余额与模型价格展示已转入待测清单。
 
-- 确认 Seedance 两款模型当前零任务单价是否符合预期；CreativeOne 按 Reseller 的 `unconfirmed_zero_price` 明确提示待管理员确认，不以零价宣称免费。新增表达式形态或插件专属计价规则由 Reseller 统一适配，CreativeOne 按结构化契约展示。
+- 视频模型价格联调：Reseller 插件报价新契约的 CreativeOne 配套实现已转待测，需安排两端同步发布后，在 lab 验收真实应用价格接口及桌面/窄屏页面，旧响应与新解析不兼容。继续在对应项目核查 Seedance 的 `video_input` 表达式字符串 `"true"` 与 schema 的 `none/video` 不一致，新接口应返回 `schema_condition_mismatch`；H3 实际用量及金额预估仍待权威规则。契约和发布交接见 `docs/handoffs/reseller-app-pricing.md` 第 11 节。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

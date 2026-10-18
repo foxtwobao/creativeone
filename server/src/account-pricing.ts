@@ -7,27 +7,31 @@ import type { ModelPrice, ModelPricing } from "../../shared/account-pricing.js";
 
 const balanceSchema = z.object({ data: z.object({ balance: z.object({ amount: z.string().regex(/^-?\d+\.\d{2}$/), unit: z.enum(["USD", "CNY", "QUOTA"]) }) }) });
 const decimal = z.string().regex(/^\d+(?:\.\d+)?$/);
-const metrics = {
-    input: "输入", output: "输出", cache_read: "缓存读取", cache_write: "缓存写入", image_input: "图片输入",
-    image_cache_read: "图片缓存读取", request: "每次成功请求", duration: "生成时长", usage_tokens: "计费用量",
-} as const;
-const units = { million_tokens: "百万 token", request: "次请求", second: "秒" } as const;
 const reasons = {
-    missing_pricing: "此模型价格暂不可用", unsupported_rule: "当前计费规则暂不支持展示，请前往 TokenONE 查看",
+    missing_pricing: "此模型价格暂不可用", unsupported_rule: "当前暂不能完整展示该计费规则",
+    schema_condition_mismatch: "上游计费条件与用量定义不一致，请联系管理员",
     unconfirmed_zero_price: "上游返回零单价，待管理员确认", invalid_pricing: "模型价格配置无效，请联系管理员",
 } as const;
 const reasonSchema = z.enum(Object.keys(reasons) as [keyof typeof reasons, ...(keyof typeof reasons)[]]);
 const priceSchema = z.object({
-    metric: z.enum(Object.keys(metrics) as [keyof typeof metrics, ...(keyof typeof metrics)[]]), amount: decimal,
-    unit: z.enum(["million_tokens", "request", "second"]),
-}).refine(({ metric, unit }) => unit === (metric === "request" ? "request" : metric === "duration" ? "second" : "million_tokens"));
+    metric: z.enum(["input", "output", "cache_read", "cache_write", "cache_write_1h", "image_input", "image_cache_read", "image_output", "audio_input", "audio_output", "image", "request", "usage"]),
+    usage_key: z.string().refine(value => value.trim().length > 0).optional(), label: z.string().min(1), amount: decimal,
+    unit: z.enum(["million_tokens", "request", "second", "image", "count"]), unit_label: z.string().min(1),
+}).refine(({ metric, usage_key, unit }) => metric === "usage" ? usage_key !== undefined
+    : usage_key === undefined && unit === (metric === "request" || metric === "image" ? metric : "million_tokens"));
+const quoteSource = { source: z.enum(["base", "plugin"]), plugin_key: z.string().min(1).optional(), plugin_name: z.string().min(1).optional() };
+const quoteSchema = z.discriminatedUnion("status", [
+    z.object({ ...quoteSource, status: z.literal("available"), reason: z.undefined().optional(),
+        tiers: z.array(z.object({ condition: z.string(), prices: z.array(priceSchema).min(1) })).min(1) }),
+    z.object({ ...quoteSource, status: z.literal("unavailable"), tiers: z.tuple([]), reason: reasonSchema }),
+]).refine((quote) => quote.source === "base" ? quote.plugin_key === undefined && quote.plugin_name === undefined
+    : quote.status === "unavailable" || Boolean(quote.plugin_key && quote.plugin_name));
 const pricingSchema = z.object({
     app_id: z.string().min(1), group: z.object({ id: z.string().min(1), name: z.string().min(1), multiplier: decimal }),
     currency: z.literal("USD"), queried_at: z.iso.datetime({ offset: true }),
-    models: z.array(z.object({ model: z.string().min(1), reason: reasonSchema.optional(), paths: z.array(z.discriminatedUnion("status", [
-        z.object({ member: z.string().min(1), multiplier: decimal, status: z.literal("available"),
-            tiers: z.array(z.object({ condition: z.string(), prices: z.array(priceSchema).min(1) })).min(1) }),
-        z.object({ member: z.string().min(1), multiplier: decimal.optional(), status: z.literal("unavailable"), tiers: z.tuple([]), reason: reasonSchema }),
+    models: z.array(z.object({ model: z.string().min(1), reason: reasonSchema.optional(), paths: z.array(z.union([
+        z.object({ member: z.string().min(1), multiplier: decimal, reason: z.undefined().optional(), quotes: z.array(quoteSchema).min(1) }),
+        z.object({ member: z.string(), multiplier: decimal.optional(), reason: reasonSchema, quotes: z.tuple([]) }),
     ])) })),
 });
 
@@ -66,10 +70,14 @@ accountPricingRouter.get("/model-pricing", async (_req, res) => {
                 return { model, capability: channel.capability, description: channel.model_descriptions[model] || "",
                     note: !entry?.paths.length ? "此模型价格暂不可用" : undefined,
                     paths: entry?.paths.map((path) => ({ member: path.member, multiplier: path.multiplier,
-                        note: path.status === "unavailable" ? reasons[path.reason] : undefined,
-                        tiers: path.status === "available" ? path.tiers.map((tier) => ({ condition: tier.condition,
-                            metrics: tier.prices.map((price) => ({ label: metrics[price.metric], amount: price.amount, unit: units[price.unit] })),
-                        })) : [],
+                        note: path.reason ? reasons[path.reason] : undefined,
+                        quotes: path.quotes.map((quote) => ({ source: quote.source, pluginKey: quote.plugin_key, pluginName: quote.plugin_name,
+                            note: quote.status === "unavailable" ? reasons[quote.reason] : undefined,
+                            tiers: quote.status === "available" ? quote.tiers.map((tier) => ({ condition: tier.condition,
+                                metrics: tier.prices.map((price) => ({ metric: price.metric, usageKey: price.usage_key, label: price.label,
+                                    amount: price.amount, unit: price.unit, unitLabel: price.unit_label })),
+                            })) : [],
+                        })),
                     })) || [],
                 };
             })),

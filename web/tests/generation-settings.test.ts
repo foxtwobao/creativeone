@@ -31,6 +31,7 @@ beforeAll(async () => {
             { name: "grok-imagine-image-2.0", capability: "image", imageType: "grok" },
             { name: "seedance", capability: "video", videoType: "seedance" },
             { name: "wan3.0-video", capability: "video", videoType: "wan" },
+            { name: "wan3.0-video-prime", capability: "video", videoType: "wan" },
             { name: "MiniMax-H3", capability: "video", videoType: "h3" },
         ],
     }] };
@@ -182,7 +183,7 @@ test("Seedance panel and history preserve automatic duration and 4k", async () =
     expect(taskSettings({ duration: -1, quality: "max" })).toEqual([{ key: "duration", label: "时长", children: "自动" }, { key: "quality", label: "质量", children: "极致" }]);
 });
 
-test("H3 displays 768P and 2K, preserves invalid model switches and requires an explicit reference mode", async () => {
+test("H3 displays 768P and 2K, reports manually entered invalid values and requires an explicit reference mode", async () => {
     const model = "models::MiniMax-H3";
     const selected = { ...config, model, vquality: "768", videoSeconds: "4", videoSize: "16:9", videoMode: "frames" };
     expect(videos.videoSettingsForModel({ ...selected, vquality: "720" }, model).error).toContain("分辨率");
@@ -203,6 +204,125 @@ test("H3 displays 768P and 2K, preserves invalid model switches and requires an 
         expect(markup).toContain("使用推荐参数");
         expect(markup).not.toContain('aria-label="生成音频"');
     }
+});
+
+test("selecting H3 repairs incompatible WAN parameters in one state update and one saved patch", async () => {
+    const { useConfigStore } = await import("@/stores/use-config-store");
+    const { getAccountResource } = await import("@/services/api/account");
+    const { videoRequestBody } = await import("../../shared/video-request");
+    const fetch = globalThis.fetch, previous = useConfigStore.getState().config;
+    const model = "models::MiniMax-H3";
+    const saved: Partial<AiConfig> = { videoModel: "models::wan3.0-video", vquality: "720", videoSeconds: "2", videoSize: "9:16", videoMode: "reference" };
+    const patches: unknown[] = [], states: AiConfig[] = [];
+    let savedPatch!: () => void;
+    const savedRequest = new Promise<void>((resolve) => { savedPatch = resolve; });
+    globalThis.fetch = (async (input, init) => {
+        if (String(input) !== "/api/settings") throw new Error(`Unexpected request: ${input}`);
+        if (init?.method === "PATCH") {
+            const patch = JSON.parse(String(init.body));
+            patches.push(patch); Object.assign(saved, patch); savedPatch();
+        }
+        return Response.json(saved);
+    }) as typeof fetch;
+    useConfigStore.setState({ config: { ...config, ...saved } });
+    const unsubscribe = useConfigStore.subscribe((state) => states.push(state.config));
+    try {
+        useConfigStore.getState().updateConfig("videoModel", model);
+        await savedRequest;
+        expect(await getAccountResource("/settings")).toMatchObject({ videoModel: model, vquality: "768", videoSeconds: "4", videoSize: "9:16", videoMode: "reference" });
+        expect(patches).toEqual([{ videoModel: model, vquality: "768", videoSeconds: "4" }]);
+        expect(states).toHaveLength(1);
+        const selected = states[0]!;
+        expect(videos.videoSettingsForModel(selected, model).error).toBe("");
+        expect(videoRequestBody("MiniMax-H3", "h3", "生成短片", { images: [], videos: [], audios: [] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true })).toEqual({ model: "MiniMax-H3", prompt: "生成短片", duration: 4, resolution: "768P", ratio: "9:16", generation_mode: "frames" });
+        expect(selected.size).toBe(config.size);
+    } finally {
+        unsubscribe(); globalThis.fetch = fetch;
+        useConfigStore.setState({ config: previous });
+    }
+});
+
+test("H3 selection keeps compatible values, repairs unsupported ratios and leaves other model transitions unchanged", async () => {
+    const { videoModelSelectionPatch } = await import("@/stores/use-config-store");
+    const selected = { ...config, videoModel: "models::wan3.0-video", vquality: "2K", videoSeconds: "15", videoSize: "auto" };
+    expect(videoModelSelectionPatch(selected, "models::MiniMax-H3")).toEqual({});
+    for (const videoSeconds of ["-1", "2", "30", "4.5", "invalid", ""]) {
+        expect(videoModelSelectionPatch({ ...selected, videoSeconds, videoSize: "2:3" }, "models::MiniMax-H3")).toEqual({ videoSeconds: "4", videoSize: "16:9" });
+    }
+    expect(videoModelSelectionPatch({ ...selected, videoSeconds: "-1" }, "models::wan3.0-video")).toEqual({});
+    expect(videoModelSelectionPatch(selected, "models::seedance")).toEqual({});
+});
+
+test("canvas H3 selection saves defaults to node fields and the resulting request matches the panel", () => {
+    const node = { id: "node", type: "config", title: "设置", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model: "models::wan3.0-video", seconds: "30", vquality: "1080", videoSize: "3:4", videoMode: "reference", prompt: "生成短片" } };
+    const current = canvas.buildGenerationConfig(config, node, "video");
+    const patch = canvas.canvasVideoModelPatch(current, "models::MiniMax-H3");
+    const next = { ...node, metadata: { ...node.metadata, ...patch } };
+    const selected = canvas.buildGenerationConfig(config, next, "video");
+    expect(patch).toEqual({ model: "models::MiniMax-H3", seconds: "4", vquality: "768" });
+    expect(videos.videoSettingsForModel(selected, selected.model, 3)).toMatchObject({ error: "", ratio: "3:4", seconds: "4", resolution: "768", mode: "reference" });
+    expect(next.metadata.prompt).toBe(node.metadata.prompt);
+    expect(config.vquality).toBe("720");
+});
+
+test("H3 to WAN repairs resolution and ratio in one saved patch while retaining duration and reference mode", async () => {
+    const { useConfigStore } = await import("@/stores/use-config-store");
+    const { getAccountResource } = await import("@/services/api/account");
+    const { videoRequestBody } = await import("../../shared/video-request");
+    const fetch = globalThis.fetch, previous = useConfigStore.getState().config;
+    try {
+        for (const model of ["models::wan3.0-video", "models::wan3.0-video-prime"]) for (const vquality of ["768", "2K"]) {
+            const saved = { ...config, videoModel: "models::MiniMax-H3", vquality, videoSeconds: "15", videoSize: "21:9", videoMode: "reference" };
+            const patches: unknown[] = [], states: AiConfig[] = [];
+            let savedPatch!: () => void;
+            const savedRequest = new Promise<void>((resolve) => { savedPatch = resolve; });
+            globalThis.fetch = (async (input, init) => {
+                if (String(input) !== "/api/settings") throw new Error(`Unexpected request: ${input}`);
+                if (init?.method === "PATCH") {
+                    const patch = JSON.parse(String(init.body));
+                    patches.push(patch); Object.assign(saved, patch); savedPatch();
+                }
+                return Response.json(saved);
+            }) as typeof fetch;
+            useConfigStore.setState({ config: saved });
+            const unsubscribe = useConfigStore.subscribe((state) => states.push(state.config));
+            try {
+                useConfigStore.getState().updateConfig("videoModel", model);
+                await savedRequest;
+                expect(await getAccountResource("/settings")).toMatchObject({ videoModel: model, vquality: "720", videoSize: "1:1", videoSeconds: "15", videoMode: "reference" });
+                expect(patches).toEqual([{ videoModel: model, vquality: "720", videoSize: "1:1" }]);
+                expect(states).toHaveLength(1);
+                const selected = states[0]!;
+                expect(videos.videoSettingsForModel(selected, model, 9, { videos: [{ durationMs: 6000 }], audios: [{}] }).error).toBe("");
+                const body = videoRequestBody(model.split("::")[1]!, "wan", "生成短片", { images: ["https://example.com/image.png"], videos: ["https://example.com/video.mp4"], audios: ["https://example.com/audio.mp3"] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true });
+                expect(body).toMatchObject({ duration: 15, resolution: "720P", ratio: "1:1", metadata: { input: { media: [
+                    { type: "reference_image", url: "https://example.com/image.png" },
+                    { type: "reference_video", url: "https://example.com/video.mp4" },
+                    { type: "reference_audio", url: "https://example.com/audio.mp3" },
+                ] } } });
+                expect(selected.size).toBe(config.size);
+            } finally { unsubscribe(); }
+        }
+    } finally { globalThis.fetch = fetch; useConfigStore.setState({ config: previous }); }
+});
+
+test("WAN return keeps supported values and does not silently replace invalid duration", async () => {
+    const { videoModelSelectionPatch } = await import("@/stores/use-config-store");
+    const selected = { ...config, videoModel: "models::MiniMax-H3", vquality: "720", videoSeconds: "4" };
+    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]) {
+        expect(videoModelSelectionPatch({ ...selected, videoSize }, "models::wan3.0-video")).toEqual({});
+    }
+    expect(videoModelSelectionPatch({ ...selected, videoSeconds: "-1" }, "models::wan3.0-video")).toEqual({});
+});
+
+test("canvas WAN return uses the node's H3 model instead of the workspace model", () => {
+    const workspace = { ...config, videoModel: "models::wan3.0-video" };
+    const node = { id: "node", type: "config", title: "设置", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model: "models::MiniMax-H3", seconds: "4", vquality: "2K", videoSize: "21:9", videoMode: "frames", prompt: "生成短片" } };
+    const patch = canvas.canvasVideoModelPatch(canvas.buildGenerationConfig(workspace, node, "video"), "models::wan3.0-video");
+    expect(patch).toEqual({ model: "models::wan3.0-video", vquality: "720", videoSize: "1:1" });
+    const selected = canvas.buildGenerationConfig(workspace, { ...node, metadata: { ...node.metadata, ...patch } }, "video");
+    expect(videos.videoSettingsForModel(selected, selected.model, 2)).toMatchObject({ error: "", seconds: "4", resolution: "720", ratio: "1:1", mode: "frames" });
+    expect(workspace.vquality).toBe("720");
 });
 
 test("H3 history preserves explicit mode, resolution and duration independently of current preferences", () => {

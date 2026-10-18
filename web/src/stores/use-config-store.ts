@@ -4,7 +4,8 @@ import { cloudSession } from "@/services/api/cloud";
 import { getAccountResource, changeAccountResource } from "@/services/api/account";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import type { ImageModelType } from "../../../shared/image-models";
-import { h3VideoDefaults, type VideoModelType } from "../../../shared/video-models";
+import { h3VideoDefaults, videoModelProfile, type VideoModelType } from "../../../shared/video-models";
+import { parseVideoResolution } from "../../../shared/media-size";
 
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -142,6 +143,22 @@ export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelTyp
     return findChannelModel(config, value)?.model.videoType || "seedance";
 }
 
+export function videoModelSelectionPatch(config: AiConfig, model: string) {
+    const patch: Partial<Pick<AiConfig, keyof typeof h3VideoDefaults>> = {};
+    if (modelVideoTypeOf(config, config.videoModel) === "h3" && modelVideoTypeOf(config, model) === "wan") {
+        const profile = videoModelProfile(model, "wan");
+        if (!profile.resolutions.includes(parseVideoResolution(config.vquality))) patch.vquality = defaultConfig.vquality;
+        if (!profile.ratios.includes(config.videoSize)) patch.videoSize = defaultConfig.videoSize;
+        return patch;
+    }
+    if (modelVideoTypeOf(config, model) !== "h3") return patch;
+    const profile = videoModelProfile(model, "h3"), seconds = Number(config.videoSeconds);
+    if (!profile.resolutions.includes(parseVideoResolution(config.vquality))) patch.vquality = h3VideoDefaults.vquality;
+    if (!Number.isInteger(seconds) || seconds < profile.duration!.min || seconds > profile.duration!.max) patch.videoSeconds = h3VideoDefaults.videoSeconds;
+    if (!profile.ratios.includes(config.videoSize)) patch.videoSize = h3VideoDefaults.videoSize;
+    return patch;
+}
+
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
     if (!capability) return true;
     return modelCapabilityOf(config, value) === capability;
@@ -173,29 +190,32 @@ function isAiConfigReady(config: AiConfig, model: string) {
 let settingsVersion = 0;
 let settingsSaving: Promise<void> = Promise.resolve();
 const pendingSettings = new Map<string, string>();
-function saveSetting(key: string, value: string) {
-    pendingSettings.set(key, value);
+function saveSettings(values: Record<string, string>) {
+    for (const [key, value] of Object.entries(values)) pendingSettings.set(key, value);
     const cloud = useCloudStore.getState(); cloud.begin();
     const action = settingsSaving.catch(() => undefined).then(async () => {
         try {
-            await changeAccountResource("/settings", { [key]: value });
-            if (pendingSettings.get(key) === value) { pendingSettings.delete(key); cloud.setError(`settings/${key}`); }
-        } catch (error) { cloud.setError(`settings/${key}`, error instanceof Error ? error.message : "设置保存失败"); throw error; }
+            await changeAccountResource("/settings", values);
+            for (const [key, value] of Object.entries(values)) if (pendingSettings.get(key) === value) { pendingSettings.delete(key); cloud.setError(`settings/${key}`); }
+        } catch (error) { for (const key of Object.keys(values)) cloud.setError(`settings/${key}`, error instanceof Error ? error.message : "设置保存失败"); throw error; }
         finally { cloud.end(); }
     });
     settingsSaving = action; return action;
 }
-registerCloudRetry(async () => { await settingsSaving.catch(() => undefined); for (const [key, value] of [...pendingSettings]) await saveSetting(key, value); });
+registerCloudRetry(async () => { await settingsSaving.catch(() => undefined); if (pendingSettings.size) await saveSettings(Object.fromEntries(pendingSettings)); });
 
 export const useConfigStore = create<ConfigStore>()((set, get) => ({
     config: applyCloudConfig(defaultConfig),
     isConfigOpen: false,
     shouldPromptContinue: false,
     updateConfig: (key, value) => {
-        if (managedKeys.has(key) || get().config[key] === value) return;
+        if (managedKeys.has(key)) return;
+        const config = get().config;
+        const patch = { [key]: value, ...(key === "videoModel" ? videoModelSelectionPatch(config, value as string) : {}) };
+        if (Object.entries(patch).every(([key, value]) => config[key as keyof AiConfig] === value)) return;
         settingsVersion++;
-        set((state) => ({ config: { ...state.config, [key]: value } }));
-        void saveSetting(key, value as string).catch(() => undefined);
+        set({ config: { ...config, ...patch } });
+        void saveSettings(patch as Record<string, string>).catch(() => undefined);
     },
     isAiConfigReady: (config, model) => isAiConfigReady(config, model),
     openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),

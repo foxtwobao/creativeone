@@ -6,10 +6,11 @@ function runRoutes(checks: string) {
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
         import assert from 'node:assert/strict';
         import express from 'express';
+        import { readFileSync } from 'node:fs';
         const { accountPricingRouter } = await import('./src/account-pricing.ts');
         const { db } = await import('./src/db.ts');
         const user = { issuer: 'https://idone.test', subject: 'verified-sub' };
-        db.query = async () => ({ rows: [{ capability: 'image', models: ['configured', 'missing', 'empty'], model_descriptions: { configured: '配置描述' } }] });
+        db.query = async () => ({ rows: [{ capability: 'video', models: [...catalogue.models.map(model => model.model), 'missing'], model_descriptions: { 'wan3.0-video': '配置描述' } }] });
         const app = express();
         app.use((_req, res, next) => { res.locals.user = user; res.locals.requestId = 'trace'; next(); }, accountPricingRouter);
         app.use((error, _req, res, _next) => res.status(error.status || 500).json({ error: error.code }));
@@ -18,34 +19,7 @@ function runRoutes(checks: string) {
         const realFetch = globalThis.fetch;
         let mode = 'balance';
         const calls = [];
-        const catalogue = {
-            app_id: 'creativeone', group: { id: '366', name: 'app-composite', multiplier: '1.25' }, currency: 'USD', queried_at: '2026-10-16T00:00:00Z',
-            models: [
-                { model: 'configured', paths: [
-                    { member: 'member-first', multiplier: '0.5', status: 'available', tiers: [
-                        { condition: '上下文 ≤ 272000 token', prices: [
-                            { metric: 'output', amount: '6', unit: 'million_tokens' },
-                            { metric: 'input', amount: '1', unit: 'million_tokens' },
-                            { metric: 'cache_read', amount: '0.000000000000000001', unit: 'million_tokens' },
-                        ] },
-                        { condition: '上下文 > 272000 token', prices: [{ metric: 'input', amount: '2', unit: 'million_tokens' }] },
-                    ] },
-                    { member: 'member-second', multiplier: '1.25', status: 'available', tiers: [{ condition: '', prices: [
-                        { metric: 'request', amount: '0.0125', unit: 'request' },
-                        { metric: 'duration', amount: '0.0125', unit: 'second' },
-                        { metric: 'usage_tokens', amount: '10', unit: 'million_tokens' },
-                        { metric: 'image_input', amount: '0', unit: 'million_tokens' },
-                        { metric: 'image_cache_read', amount: '2.5', unit: 'million_tokens' },
-                        { metric: 'cache_write', amount: '1.25', unit: 'million_tokens' },
-                    ] }] },
-                    ...['missing_pricing', 'unsupported_rule', 'unconfirmed_zero_price', 'invalid_pricing'].map(reason => ({
-                        member: reason, status: 'unavailable', tiers: [], reason,
-                    })),
-                ] },
-                { model: 'empty', paths: [], reason: 'missing_pricing' },
-                { model: 'unconfigured', paths: [] },
-            ],
-        };
+        const catalogue = JSON.parse(readFileSync('../shared/fixtures/app-pricing-response.json', 'utf8'));
         globalThis.fetch = async (url, init) => {
             calls.push(String(url));
             assert.equal(init.headers.Authorization, 'Bearer private-app-key');
@@ -72,9 +46,28 @@ function runRoutes(checks: string) {
             if (mode === 'malformed') return Response.json({ data: catalogue });
             const payload = structuredClone(catalogue);
             if (mode === 'empty') payload.models = [];
-            if (mode === 'invalid-amount') payload.models[0].paths[0].tiers[0].prices[0].amount = 'NaN';
-            if (mode === 'invalid-unit') payload.models[0].paths[0].tiers[0].prices[0].unit = 'request';
-            if (mode === 'invalid-tier') payload.models[0].paths[0].tiers = [];
+            const path = payload.models[0]?.paths[0], quote = path?.quotes[0], price = quote?.tiers[0].prices[0];
+            const corruptions = {
+                'invalid-amount': () => { price.amount = 'NaN'; },
+                'negative-amount': () => { price.amount = '-1'; },
+                'number-amount': () => { price.amount = 0.1; },
+                'exponent-amount': () => { price.amount = '1e-10'; },
+                'invalid-unit': () => { price.unit = 'credit'; },
+                'invalid-standard-unit': () => { price.metric = 'input'; delete price.usage_key; },
+                'unexpected-usage-key': () => { price.metric = 'input'; price.unit = 'million_tokens'; },
+                'missing-usage-key': () => { delete price.usage_key; },
+                'empty-usage-key': () => { price.usage_key = ' '; },
+                'old-metric': () => { price.metric = 'duration'; },
+                'invalid-tier': () => { quote.tiers = []; },
+                'empty-prices': () => { quote.tiers[0].prices = []; },
+                'invalid-plugin': () => { delete quote.plugin_key; },
+                'invalid-base': () => { quote.source = 'base'; },
+                'invalid-unavailable': () => { quote.status = 'unavailable'; quote.reason = 'unsupported_rule'; },
+                'invalid-path': () => { path.reason = 'invalid_pricing'; },
+                'empty-quotes': () => { path.quotes = []; },
+                'old-path': () => { delete path.quotes; path.status = 'available'; path.tiers = quote.tiers; },
+            };
+            corruptions[mode]?.();
             return Response.json(payload);
         };
         const get = path => realFetch('http://127.0.0.1:' + server.address().port + path);
@@ -102,52 +95,93 @@ test("balance uses only verified identity and maps upstream credential failures 
     assert.deepEqual(await failed.json(), { error: 'ACCOUNT_BALANCE_UNAVAILABLE' });
 `));
 
-test("pricing reads Reseller once, preserves final amounts and paths, and returns only locally enabled models", () => runRoutes(`
-    const response = await get('/model-pricing?subject=forged&group_id=other');
+test("shared fixture preserves every path, plugin, tier, usage identity and exact amount", () => runRoutes(`
+    const response = await get('/model-pricing?group_id=other');
     assert.equal(response.status, 200);
     assert.equal(calls.length, 1);
     const pricing = await response.json();
-    assert.equal(pricing.group, 'app-composite');
+    assert.equal(pricing.group, catalogue.group.name);
+    assert.equal(pricing.currency, 'USD');
     assert.equal(pricing.compositeRatio, '1.25');
     assert.equal(pricing.queriedAt, catalogue.queried_at);
-    assert.equal(pricing.currency, 'USD');
-    assert.deepEqual(pricing.models.map(model => model.model), ['configured', 'missing', 'empty']);
     assert.equal(pricing.models[0].description, '配置描述');
-    const paths = pricing.models[0].paths;
-    assert.equal(paths[0].member, 'member-first');
-    assert.equal(paths[1].member, 'member-second');
-    assert.equal(paths[0].multiplier, '0.5');
-    assert.deepEqual(paths[0].tiers[0].metrics, [
-        { label: '输出', amount: '6', unit: '百万 token' },
-        { label: '输入', amount: '1', unit: '百万 token' },
-        { label: '缓存读取', amount: '0.000000000000000001', unit: '百万 token' },
-    ]);
-    assert.equal(paths[0].tiers[1].condition, '上下文 > 272000 token');
-    assert.deepEqual(paths[1].tiers[0].metrics.map(metric => [metric.label, metric.amount, metric.unit]), [
-        ['每次成功请求', '0.0125', '次请求'], ['生成时长', '0.0125', '秒'], ['计费用量', '10', '百万 token'],
-        ['图片输入', '0', '百万 token'], ['图片缓存读取', '2.5', '百万 token'], ['缓存写入', '1.25', '百万 token'],
-    ]);
-    assert.deepEqual(paths.slice(2).map(path => path.tiers), [[], [], [], []]);
-    assert.ok(paths.slice(2).every(path => !Object.hasOwn(path, 'multiplier')));
-    assert.match(paths[3].note, /不支持/);
-    assert.match(paths[4].note, /零单价/);
-    assert.match(paths[5].note, /配置无效/);
-    assert.match(pricing.models[1].note, /不可用/);
-    assert.match(pricing.models[2].note, /不可用/);
+    for (const source of catalogue.models) {
+        const model = pricing.models.find(item => item.model === source.model);
+        assert.equal(model.capability, 'video');
+        assert.equal(model.paths.length, source.paths.length);
+        source.paths.forEach((path, index) => {
+            const target = model.paths[index];
+            assert.equal(target.member, path.member);
+            assert.equal(target.multiplier, path.multiplier);
+            assert.equal(target.quotes.length, path.quotes.length);
+            if (path.reason) assert.ok(target.note);
+            path.quotes.forEach((quote, quoteIndex) => {
+                const result = target.quotes[quoteIndex];
+                assert.equal(result.source, quote.source);
+                assert.equal(result.pluginKey, quote.plugin_key);
+                assert.equal(result.pluginName, quote.plugin_name);
+                assert.deepEqual(result.tiers, quote.tiers.map(tier => ({ condition: tier.condition,
+                    metrics: tier.prices.map(price => ({ metric: price.metric, ...(price.usage_key ? { usageKey: price.usage_key } : {}),
+                        label: price.label, amount: price.amount, unit: price.unit, unitLabel: price.unit_label })),
+                })));
+                assert.equal(Boolean(result.note), quote.status === 'unavailable');
+            });
+        });
+    }
+    const find = name => pricing.models.find(model => model.model === name);
+    assert.equal(find('wan3.0-video').paths.length, 2);
+    assert.equal(find('wan3.0-video-prime').paths[0].quotes.length, 3);
+    assert.equal(find('fixture-multi-usage').paths[0].quotes[0].tiers[0].metrics.length, 3);
+    assert.match(find('fixture-enum-conflict').paths[0].quotes[0].note, /条件与用量定义不一致/);
+    assert.match(find('fixture-zero-pending').paths[0].quotes[0].note, /零单价/);
+    assert.match(find('fixture-mixed-plugins').paths[0].quotes[2].note, /不能完整展示/);
+    assert.match(find('fixture-invalid-ratio').paths[0].note, /配置无效/);
+    assert.match(find('fixture-no-path').note, /不可用/);
+    assert.match(find('missing').note, /不可用/);
     assert.ok(!JSON.stringify(pricing).includes('private-app-key'));
+    db.query = async () => ({ rows: [{ capability: 'image', models: ['fixture-image-count'], model_descriptions: {} }] });
+    assert.deepEqual((await (await get('/model-pricing')).json()).models.map(model => [model.model, model.capability]), [['fixture-image-count', 'image']]);
     mode = 'empty';
-    const empty = await (await get('/model-pricing')).json();
-    assert.ok(empty.models.every(model => model.paths.length === 0 && model.note));
+    assert.ok((await (await get('/model-pricing')).json()).models.every(model => !model.paths.length && model.note));
     db.query = async () => ({ rows: [] });
     assert.deepEqual((await (await get('/model-pricing')).json()).models, []);
 `));
 
-test("pricing errors and invalid contracts remain errors without fallback or credential leakage", () => runRoutes(`
+test("missing plugin identity and invalid path member remain local failures", () => runRoutes(`
+    catalogue.models[0].paths[0].quotes.push({ source: 'plugin', status: 'unavailable', tiers: [], reason: 'invalid_pricing' });
+    catalogue.models[0].paths.push({ member: '', quotes: [], reason: 'invalid_pricing' });
+    const response = await get('/model-pricing');
+    assert.equal(response.status, 200);
+    const { paths } = (await response.json()).models[0];
+    assert.equal(paths[0].quotes.length, 4);
+    assert.match(paths[0].quotes[3].note, /配置无效/);
+    assert.equal(paths[0].quotes[3].pluginName, undefined);
+    assert.match(paths.at(-1).note, /配置无效/);
+`));
+
+test("all usage units retain labels and precision without guessing image semantics", () => runRoutes(`
+    const prices = catalogue.models[0].paths[0].quotes[0].tiers[0].prices;
+    prices.splice(0, prices.length, ...['second', 'count', 'image', 'request', 'million_tokens'].map((unit, index) => ({
+        metric: 'usage', usage_key: 'field_' + index, label: '相同标签', unit, unit_label: unit === 'count' ? '个计费单位' : unit, amount: '0.000000000000000001',
+    })));
+    const response = await get('/model-pricing');
+    assert.equal(response.status, 200);
+    const metrics = (await response.json()).models[0].paths[0].quotes[0].tiers[0].metrics;
+    assert.equal(metrics.length, 5);
+    assert.equal(new Set(metrics.map(metric => metric.usageKey)).size, 5);
+    assert.equal(metrics[1].unitLabel, '个计费单位');
+    assert.ok(metrics.every(metric => metric.amount === '0.000000000000000001'));
+`));
+
+test("pricing errors and malformed new contracts remain errors without fallback or credential leakage", () => runRoutes(`
     for (const [fixtureMode, status, error] of [
         ['unauthorized', 502, 'UNAUTHORIZED'], ['scope', 403, 'SCOPE_FORBIDDEN'],
         ['group', 409, 'APP_PRICING_GROUP_UNAVAILABLE'], ['unavailable', 503, 'APP_PRICING_UNAVAILABLE'],
         ['network', 503, 'MODEL_PRICING_UNAVAILABLE'], ['html', 502, 'ENHANCER_FAILED'],
-        ...['malformed', 'invalid-amount', 'invalid-unit', 'invalid-tier'].map(value => [value, 503, 'MODEL_PRICING_UNAVAILABLE']),
+        ...['malformed', 'invalid-amount', 'negative-amount', 'number-amount', 'exponent-amount', 'invalid-unit',
+            'invalid-standard-unit', 'unexpected-usage-key', 'missing-usage-key', 'empty-usage-key', 'old-metric',
+            'invalid-tier', 'empty-prices', 'invalid-plugin', 'invalid-base', 'invalid-unavailable', 'invalid-path',
+            'empty-quotes', 'old-path'].map(value => [value, 503, 'MODEL_PRICING_UNAVAILABLE']),
     ]) {
         mode = fixtureMode;
         const before = calls.length;

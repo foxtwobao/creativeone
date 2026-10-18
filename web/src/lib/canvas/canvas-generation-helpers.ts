@@ -1,4 +1,4 @@
-import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, resolveModelForCapability, videoModelSelectionPatch, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
 import { ensureImagePreview, resolveImageUrl } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -117,6 +117,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
+}
+
+export function canvasVideoModelPatch(config: AiConfig, model: string) {
+    const { videoSeconds, ...patch } = videoModelSelectionPatch({ ...config, videoModel: config.model }, model);
+    return { model, ...patch, ...(videoSeconds === undefined ? {} : { seconds: videoSeconds }) };
 }
 
 export function hasResumableVideoTask(node: CanvasNodeData) {
