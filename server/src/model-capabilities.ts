@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { imageModelProfile, imageCapabilityError, type ImageModelType } from "../../shared/image-models.js";
-import { videoModelProfile, videoCapabilityError, type VideoModelType } from "../../shared/video-models.js";
+import { videoModelProfile, videoCapabilityError, wanAspectRatios, type VideoModelType } from "../../shared/video-models.js";
 
 const imageParams = z.object({
     quality: z.string().optional(), size: z.string().optional(), aspect_ratio: z.string().optional(), resolution: z.string().optional(),
@@ -32,7 +32,7 @@ const wanMedia = z.object({
 const wanMetadata = z.object({ input: z.object({ media: z.array(wanMedia) }).strict() }).strict();
 export const wanRequestSchema = z.object({
     model: z.string(), prompt: z.string().refine((value) => value.trim().length > 0), duration: z.number().int(),
-    resolution: z.enum(["480P", "720P", "1080P"]), ratio: z.enum(["16:9", "9:16", "1:1", "adaptive"]),
+    resolution: z.enum(["480P", "720P", "1080P"]), ratio: z.enum(wanAspectRatios),
     metadata: wanMetadata.optional(),
 }).strict();
 const videoParams = z.object({

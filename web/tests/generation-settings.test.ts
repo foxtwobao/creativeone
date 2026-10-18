@@ -83,7 +83,9 @@ test("video panels and requests derive the same mode, switches, duration and WAN
     expect(videos.videoSettingsForModel({ ...config, videoGenerateAudio: "false", videoWatermark: "true" }, "models::seedance", 3)).toMatchObject({ mode: "reference", forcedReference: true, generateAudio: false, watermark: true, seconds: "6" });
     expect(videos.videoSettingsForModel(config, "models::seedance", 2).mode).toBe("frames");
     expect(videos.videoSettingsForModel({ ...config, vquality: "1080" }, "models::wan3.0-video")).toMatchObject({ resolution: "1080", audioOptions: false });
-    expect(videos.videoSettingsForModel({ ...config, videoSize: "4:3" }, "models::wan3.0-video").error).toContain("宽高比");
+    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]) expect(videos.videoSettingsForModel({ ...config, videoSize }, "models::wan3.0-video").error).toBe("");
+    expect(new Set(videos.videoSettingsForModel(config, "models::wan3.0-video").ratios.map((item) => item.value))).toEqual(new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]));
+    expect(videos.videoSettingsForModel({ ...config, videoSize: "21:9" }, "models::wan3.0-video").error).toContain("宽高比");
 });
 
 test("history restores submitted image resolution, automatic size, transparency and actual WAN reference mode", () => {
@@ -107,6 +109,9 @@ test("canvas video panel exposes audio and watermark, removes W/H and shows effe
     expect(wan).not.toContain("由模型决定");
     expect(wan).toContain("480p");
     expect(wan).toContain("1080p");
+    expect(wan).toContain(">4:3<");
+    expect(wan).toContain(">3:4<");
+    expect(wan).not.toContain(">21:9<");
     expect(wan).toContain('min="2"');
     expect(wan).toContain('max="30"');
 });
