@@ -26,7 +26,7 @@ export function videoSettingsForModel(config: AiConfig, model: string, imageCoun
     const profile = videoModelProfile(modelOptionName(model), kind);
     const wan = kind === "wan" ? wanModelProfile(modelOptionName(model)) : null;
     const ratio = config.videoSize || "auto";
-    const resolution = profile.fixedResolution || parseVideoResolution(config.vquality);
+    const resolution = parseVideoResolution(config.vquality || "720");
     const mode = resolveVideoMode(config.videoMode, imageCount);
     const seconds = config.videoSeconds || "6";
     const refs = { images: imageCount, videos: media.videos?.length || 0, audios: media.audios?.length || 0,
@@ -38,9 +38,9 @@ export function videoSettingsForModel(config: AiConfig, model: string, imageCoun
         profile, wan, ratio, resolution, mode, error, seconds, framesAdaptive,
         ratios: videoRatioOptions.filter((item) => profile.ratios.includes(item.value) && (!framesAdaptive || item.value === "auto")),
         resolutions: profile.resolutions.map((value) => ({ value, label: videoResolutionLabel(value) })),
-        // WAN's documented duration limits remain unknown; retain the existing editor range.
         secondsRange: profile.duration || videoSecondsRange,
         autoSeconds: profile.duration?.auto || false,
+        automaticDuration: profile.duration?.auto === true && seconds === "-1",
         generateAudio: profile.audioOptions && boolConfig(config.videoGenerateAudio, true),
         watermark: profile.audioOptions && boolConfig(config.videoWatermark, false),
         audioOptions: profile.audioOptions,

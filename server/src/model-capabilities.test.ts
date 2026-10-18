@@ -31,10 +31,36 @@ test("Seedance frame roles cannot bypass scene rules", () => {
     assert.match(videoRequestCapabilityError(seed20, "seedance", { content: [{ type: "audio_url", role: "reference_audio" }] }), /搭配/);
     assert.equal(videoRequestCapabilityError(seed25, "seedance", { content: [{ type: "audio_url", role: "reference_audio" }] }), "");
 });
-test("WAN fixed resolution and media restrictions remain independent of undocumented duration bounds", () => {
-    assert.equal(videoRequestCapabilityError("wan3.0-video-prime-720p", "wan", { seconds: "30", aspect_ratio: "adaptive" }), "");
-    assert.match(videoRequestCapabilityError("wan3.0-image-720p", "wan", { seconds: "6" }), /至少一张/);
-    assert.match(videoRequestCapabilityError("wan3.0-image-720p", "wan", { seconds: "6", reference_images: [{}], reference_videos: [{}] }), /不支持参考视频/);
-    assert.match(videoRequestCapabilityError("wan3.0-video-720p", "wan", { seconds: "6", reference_images: Array(11).fill({}) }), /10/);
-    assert.match(videoRequestCapabilityError("my-wan-720p", "wan", { seconds: "6" }), /尚未配置/);
+test("WAN public models validate duration, resolution and media combinations", () => {
+    const request = { model: "wan3.0-video", prompt: "  镜头前移  ", duration: 2, resolution: "480P", ratio: "adaptive" };
+    const media = (types: string[]) => ({ input: { media: types.map((type) => ({ type, url: "https://example.com/ref" })) } });
+    for (const model of ["wan3.0-video", "wan3.0-video-prime"]) {
+        for (const duration of [2, 30]) assert.equal(videoRequestCapabilityError(model, "wan", { ...request, model, duration }), "");
+        for (const duration of [-1, 1, 31]) assert.match(videoRequestCapabilityError(model, "wan", { ...request, model, duration }), /2–30/);
+    }
+    for (const resolution of ["480P", "720P", "1080P"]) assert.equal(videoRequestCapabilityError(request.model, "wan", { ...request, resolution }), "");
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, resolution: "4K" }), /公共格式/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, seconds: "2" }), /公共格式/);
+    assert.match(videoRequestCapabilityError("wan3.0-video-720p", "wan", request), /公共模型/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["last_frame"]) }), /首尾帧/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["first_frame", "reference_video"]) }), /不能混用/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["first_frame", "reference_image"]) }), /首尾帧/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(Array(11).fill("reference_image")) }), /10/);
+    assert.equal(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["first_frame", "last_frame"]) }), "");
+    assert.equal(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["reference_image", "reference_video", "reference_audio"]) }), "");
+});
+
+test("canvas and workbench construct the same WAN public request and preserve reference order", async () => {
+    const { videoRequestBody } = await import("../../shared/video-request.js");
+    const { canvasRequestBody } = await import("../../shared/canvas-request.js");
+    const references = { images: ["https://example.com/one", "https://example.com/one"], videos: ["https://example.com/video"], audios: ["https://example.com/audio"] };
+    const params = { seconds: "6", ratio: "auto", resolution: "720", mode: "reference", generateAudio: false, watermark: false };
+    const direct = videoRequestBody("wan3.0-video", "wan", "  镜头前移  ", references, params);
+    const canvas = canvasRequestBody("wan3.0-video", "video", "wan", { prompt: "  镜头前移  ", seconds: "6", videoSize: "auto", vquality: "720", videoMode: "reference" }, references);
+    assert.deepEqual(direct, canvas);
+    assert.deepEqual(direct, { model: "wan3.0-video", prompt: "  镜头前移  ", duration: 6, resolution: "720P", ratio: "adaptive", metadata: { input: { media: [
+        { type: "reference_image", url: references.images[0] }, { type: "reference_image", url: references.images[1] },
+        { type: "reference_video", url: references.videos[0] }, { type: "reference_audio", url: references.audios[0] },
+    ] } } });
+    assert.equal(videoRequestCapabilityError("wan3.0-video", "wan", direct), "");
 });

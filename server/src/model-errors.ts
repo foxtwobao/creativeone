@@ -65,7 +65,7 @@ const messages: Record<string, string> = {
     APP_SERVICE_UNAVAILABLE: "模型服务暂时不可用，请稍后重试；如持续失败，请联系管理员。",
     TASK_GROUP_CHANGED: "应用默认分组已变更，暂不能查询原分组的视频任务，请联系管理员处理。",
     VIDEO_MODEL_TYPE_REQUIRED: "请为每个视频模型选择调用类型。",
-    INVALID_WAN_MODEL: "WAN 模型名须包含 480p、720p 或 1080p 分辨率后缀。",
+    INVALID_WAN_MODEL: "WAN 请选择 wan3.0-video 或 wan3.0-video-prime 公共模型。",
     WAN_REFERENCE_VIDEO_UNSUPPORTED: "当前 WAN 图生模型不支持参考视频。",
     WAN_REFERENCE_IMAGE_REQUIRED: "WAN 图生模型需要至少一张参考图片。",
     VIDEO_ENDPOINT_MISMATCH: "视频模型与调用协议不匹配，请检查后台模型类型配置。",

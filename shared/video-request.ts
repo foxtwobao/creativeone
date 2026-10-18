@@ -3,9 +3,14 @@ import { videoModelProfile, type VideoModelType } from "./video-models.js";
 export function videoRequestBody(model: string, family: VideoModelType, prompt: string, references: { images: string[]; videos: string[]; audios: string[] }, params: { seconds: string; ratio: string; resolution: string; mode: string; generateAudio: boolean; watermark: boolean }) {
     const { images, videos, audios } = references;
     const { seconds, ratio, resolution, mode, generateAudio, watermark } = params;
-    if (family === "wan") return { model, prompt, seconds, aspect_ratio: ratio === "auto" ? "adaptive" : ratio,
-        reference_images: images.map((url, index) => ({ url, role: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame" })),
-        reference_videos: videos.map((url) => ({ url })), reference_audios: audios.map((url) => ({ url })) };
+    if (family === "wan") {
+        const media = [
+            ...images.map((url, index) => ({ type: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame", url })),
+            ...videos.map((url) => ({ type: "reference_video", url })), ...audios.map((url) => ({ type: "reference_audio", url })),
+        ];
+        return { model, prompt, duration: Number(seconds), resolution: `${resolution}P`, ratio: ratio === "auto" ? "adaptive" : ratio,
+            ...(media.length ? { metadata: { input: { media } } } : {}) };
+    }
     const duration = seconds === "-1" ? {} : { duration: Number(seconds) };
     return { model, content: [{ type: "text", text: prompt },
         ...images.map((url, index) => ({ type: "image_url", image_url: { url }, role: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame" })),

@@ -38,6 +38,7 @@ let videoCreateResponse: any = { id: "task-video", status: "queued" };
 let videoQueryResponse: any = { status: "queued" };
 let videoDownloadFails = false;
 let videoDownloads = 0;
+let videoContentHandler: (() => Response) | undefined;
 const fixture = createFile();
 fixture.addTrack({ type: "avc1", width: 960, height: 960, timescale: 1000, media_duration: 4000, duration: 4000 });
 const videoBytes = new Uint8Array(fixture.getBuffer().buffer);
@@ -72,6 +73,13 @@ globalThis.fetch = async (input, init) => {
         forwardedKeys.push(new Headers(init?.headers).get("Authorization") || "");
         forwardedRequests.push({ url, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
         if (modelFailure) return Response.json({ code: modelFailure.code, message: "private upstream details" }, { status: modelFailure.status });
+        if (/\/v1\/videos\/[^/]+\/content$/.test(url)) {
+            videoDownloads++;
+            assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer sk-${alice}-8`);
+            assert.equal(init?.redirect, "error");
+            if (videoContentHandler) return videoContentHandler();
+            return new Response(videoBytes, { status: videoDownloadFails ? 503 : 200, headers: { "Content-Type": "video/mp4" } });
+        }
         if (url.endsWith("/v1/videos") || url.endsWith("/doubao/api/v3/contents/generations/tasks")) return Response.json(videoCreateResponse);
         if (/\/(?:videos|contents\/generations\/tasks)\/task-[\w-]+$/.test(url)) return videoQueryHandler ? videoQueryHandler() : Response.json({ id: url.split("/").pop(), ...videoQueryResponse });
         if (forwardedRequests.at(-1)?.body?.model === "banana2-2k") return Response.json({ data: [{ url: "https://tokenone.test/banana-result.jpg" }] });
@@ -284,8 +292,8 @@ test("Grok edits preserve JSON references and model-specific parameters", async 
 });
 
 test("video model configuration exposes types and rejects mismatched protocols before upstream calls", async () => {
-    const config = { models: ["seedance-test", "wan3.0-video-720p", "wan3.0-image-prime-480p"], default_model: "seedance-test", enabled: true,
-        video_types: { "seedance-test": "seedance", "wan3.0-video-720p": "wan", "wan3.0-image-prime-480p": "wan" } };
+    const config = { models: ["seedance-test", "wan3.0-video", "wan3.0-video-prime"], default_model: "seedance-test", enabled: true,
+        video_types: { "seedance-test": "seedance", "wan3.0-video": "wan", "wan3.0-video-prime": "wan" } };
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: {} })).status, 400);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: { ...config.video_types, extra: "wan" } })).status, 400);
     const response = await call("/admin/channels/video", admin, "PUT", config);
@@ -295,14 +303,19 @@ test("video model configuration exposes types and rejects mismatched protocols b
     assert.deepEqual(channels.find((item: any) => item.id === videoChannel).video_types, config.video_types);
     const before = forwardedRequests.length;
     assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "seedance-test" })).status, 403);
-    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "wan3.0-video-720p" })).status, 403);
-    const wan = { model: "wan3.0-image-prime-480p", prompt: "图1", seconds: "5", aspect_ratio: "1:1", reference_images: [{ url: "https://example.test/image.jpg" }] };
+    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "wan3.0-video" })).status, 403);
+    const wan = { model: "wan3.0-video-prime", prompt: "图1", duration: 5, resolution: "480P", ratio: "1:1" };
+    const media = (items: unknown[]) => ({ input: { media: items } });
     for (const body of [
-        { ...wan, reference_videos: [{ url: "https://example.test/video.mp4" }] },
-        { ...wan, input: { media: [{ type: "video", url: "https://example.test/video.mp4" }] } },
-        { ...wan, reference_images: [{ url: "data:image/png;base64,YQ==" }] },
-        { ...wan, reference_images: Array(11).fill(wan.reference_images[0]) },
+        { ...wan, seconds: "5" }, { ...wan, duration: 1 }, { ...wan, duration: 31 },
+        { ...wan, duration: -1 }, { ...wan, resolution: "4K" }, { ...wan, ratio: "4:3" },
+        { ...wan, reference_images: [{ url: "https://example.test/image.jpg" }] },
+        { ...wan, metadata: media([{ type: "first_frame", url: "data:image/png;base64,YQ==" }]) },
+        { ...wan, metadata: media(Array(11).fill({ type: "reference_image", url: "https://example.test/a.jpg" })) },
+        { ...wan, metadata: media([{ type: "last_frame", url: "https://example.test/a.jpg" }]) },
+        { ...wan, metadata: media([{ type: "first_frame", url: "https://example.test/a.jpg" }, { type: "reference_audio", url: "https://example.test/a.mp3" }]) },
     ]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body)).status, 400);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["wan3.0-video-720p"], default_model: "wan3.0-video-720p", enabled: true, video_types: { "wan3.0-video-720p": "wan" } })).status, 400);
     assert.equal(forwardedRequests.length, before);
 });
 
@@ -340,7 +353,7 @@ test("media signing enforces ownership, expiry, signatures and supports unauthen
 
 test("WAN and Seedance task IDs remain isolated by protocol and user, with locally persisted results", async () => {
     videoCreateResponse = { id: "task-shared", status: "queued" };
-    const body = { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "16:9" };
+    const body = { model: "wan3.0-video", prompt: "猫", duration: 5, resolution: "720P", ratio: "16:9" };
     const wan = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body);
     assert.equal(wan.status, 200);
     assert.equal(forwardedRequests.at(-1)?.url, "https://tokenone.test/v1/videos");
@@ -350,7 +363,7 @@ test("WAN and Seedance task IDs remain isolated by protocol and user, with local
     assert.equal(forwardedRequests.at(-1)?.url, "https://tokenone.test/doubao/api/v3/contents/generations/tasks");
     const wanPath = `/ai/${videoChannel}/v1/videos/task-shared`;
     assert.equal((await call(wanPath, bob)).status, 404);
-    videoQueryResponse = { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
+    videoQueryResponse = { status: "completed" };
     await processVideoTask(wan.headers.get("X-Generation-Task-Id")!);
     const completed = await (await call(wanPath)).json() as any;
     assert.match(completed.metadata.url, /^\/api\/files\/media_files\//);
@@ -373,9 +386,9 @@ test("WAN and Seedance task IDs remain isolated by protocol and user, with local
 
 test("instant completion and temporary query/download failures retain the same WAN task without resubmission", async () => {
     videoCreateResponse = { id: "task-instant", status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
-    videoQueryResponse = { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } };
+    videoQueryResponse = { status: "completed" };
     const downloads = videoDownloads;
-    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "猫", duration: 5, resolution: "720P", ratio: "adaptive" });
     assert.equal(created.status, 200);
     assert.deepEqual(await created.json(), { id: "task-instant", status: "queued" });
     assert.equal(videoDownloads, downloads);
@@ -413,7 +426,7 @@ test("browser reads never trigger upstream queries and concurrent worker calls s
         const endpoint = wan ? "videos" : "contents/generations/tasks";
         videoCreateResponse = { id: `task-concurrent-${wan}`, status: "queued" };
         const created = await call(`/ai/${videoChannel}/v1/${endpoint}`, alice, "POST", wan
-            ? { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" }
+            ? { model: "wan3.0-video", prompt: "猫", duration: 5, resolution: "720P", ratio: "adaptive" }
             : { model: "seedance-test", content: [{ type: "text", text: "猫" }] });
         const id = created.headers.get("X-Generation-Task-Id")!;
         const arrived = deferred(), gate = deferred();
@@ -422,7 +435,7 @@ test("browser reads never trigger upstream queries and concurrent worker calls s
         const files = Number((await db.query("SELECT count(*) FROM files")).rows[0].count);
         videoQueryHandler = async () => {
             queries++; arrived.resolve(); await gate.promise;
-            return Response.json(wan ? { status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } } : { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } });
+            return Response.json(wan ? { status: "completed" } : { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } });
         };
         try {
             const path = `/ai/${videoChannel}/v1/${endpoint}/${videoCreateResponse.id}`;
@@ -448,7 +461,7 @@ test("browser reads never trigger upstream queries and concurrent worker calls s
 test("late worker responses and errors cannot overwrite an already completed task", async () => {
     for (const late of ["pending", "http-error", "transport-error"]) {
         videoCreateResponse = { id: `task-late-${late}`, status: "queued" };
-        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "猫", duration: 5, resolution: "720P", ratio: "adaptive" });
         const id = created.headers.get("X-Generation-Task-Id")!;
         const arrived = deferred(), release = deferred();
         videoQueryHandler = async () => {
@@ -471,7 +484,7 @@ test("the 10-second worker resumes pending tasks on startup without a browser an
     const originalInterval = globalThis.setInterval;
     t.mock.method(globalThis, "setInterval", (callback: () => void, ms: number) => { assert.equal(ms, 10000); return originalInterval(callback, ms); });
     videoCreateResponse = { id: "task-background", status: "queued" };
-    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video-720p", prompt: "猫", seconds: "5", aspect_ratio: "adaptive" });
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "猫", duration: 5, resolution: "720P", ratio: "adaptive" });
     const id = created.headers.get("X-Generation-Task-Id")!;
     const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
     let stop = async () => {};
@@ -481,7 +494,7 @@ test("the 10-second worker resumes pending tasks on startup without a browser an
         stop = startVideoWorker(); await arrived.promise; await processVideoTask(id); await stop();
         assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "pending");
         arrived = deferred();
-        videoQueryHandler = async () => { arrived.resolve(); return Response.json({ status: "completed", metadata: { url: "https://tokenone.test/video-result.mp4" } }); };
+        videoQueryHandler = async () => { arrived.resolve(); return Response.json({ status: "completed" }); };
         stop = startVideoWorker(); await arrived.promise; await processVideoTask(id); await stop();
         const task = (await db.query("SELECT status,result FROM generation_tasks WHERE id=$1", [id])).rows[0];
         assert.equal(task.status, "succeeded"); assert.equal(task.result.file.width, 960);
@@ -494,8 +507,77 @@ test("the 10-second worker resumes pending tasks on startup without a browser an
     } finally { await stop(); videoQueryHandler = undefined; }
 });
 
+test("WAN nested references are owner scoped, signed only upstream and restored from the durable snapshot", async () => {
+    const previousOrigin = env.APP_ORIGIN;
+    const request = { model: "wan3.0-video", prompt: "  参考图1和视频1  ", duration: 30, resolution: "1080P", ratio: "16:9" };
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const image = `/api/files/image_files/image:${randomUUID()}`, video = `/api/files/media_files/file:${randomUUID()}`, audio = `/api/files/media_files/file:${randomUUID()}`;
+        for (const [url, bytes, mime] of [[image, jpegBytes, "image/jpeg"], [video, videoBytes, "video/mp4"], [audio, new Uint8Array([1, 2, 3]), "audio/mpeg"]] as const) {
+            assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": mime }, body: bytes })).status, 200);
+        }
+        const withMedia = (items: unknown[]) => ({ ...request, metadata: { input: { media: items } } });
+        const before = forwardedRequests.length;
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, bob, "POST", withMedia([{ type: "reference_image", url: image }]))).status, 404);
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", withMedia([{ type: "reference_image", url: video }]))).status, 400);
+        assert.equal(forwardedRequests.length, before);
+        const items = [{ type: "reference_image", url: image }, { type: "reference_video", url: video }, { type: "reference_audio", url: audio }, { type: "reference_video", url: video }];
+        videoCreateResponse = { id: "task-nested-media", status: "queued" };
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", withMedia(items));
+        assert.equal(created.status, 200);
+        const forwarded = forwardedRequests.at(-1)!.body;
+        assert.equal(forwarded.prompt, request.prompt);
+        assert.deepEqual(forwarded.metadata.input.media.map((ref: any) => ref.type), items.map((ref) => ref.type));
+        assert.equal(forwarded.metadata.input.media[1].url, forwarded.metadata.input.media[3].url);
+        for (const ref of forwarded.metadata.input.media) {
+            const signed = new URL(ref.url);
+            assert.equal(signed.origin, env.APP_ORIGIN);
+            assert.equal((await realFetch(`${base}${signed.pathname}${signed.search}`, { method: "HEAD" })).status, 200);
+        }
+        const task = (await db.query("SELECT request FROM generation_tasks WHERE id=$1", [created.headers.get("X-Generation-Task-Id")])).rows[0];
+        assert.deepEqual(task.request.metadata.input.media, items);
+        const { fileReferences } = await import("./storage.js");
+        assert.equal(fileReferences(task.request).size, 3);
+        const history = await (await call("/history/video?upstreamId=task-nested-media")).json();
+        assert.equal(history.logs[0].config.vquality, "1080");
+        assert.equal(history.logs[0].config.videoMode, "reference");
+        assert.equal(history.logs[0].config.videoSeconds, "30");
+        assert.equal(history.logs[0].references[0].url, image);
+        assert.equal(history.logs[0].referenceVideos[0].url, video);
+        assert.equal(history.logs[0].referenceAudios[0].url, audio);
+        await db.query("UPDATE generation_tasks SET status='failed' WHERE upstream_id='task-nested-media'");
+    } finally { env.APP_ORIGIN = previousOrigin; }
+});
+
+test("WAN content errors pause saving and resume the same task without another generation", async () => {
+    for (const [index, content] of [
+        () => Response.json({ error: "not media" }),
+        () => new Response(null, { status: 302, headers: { Location: "https://foreign.test/file" } }),
+        () => new Response(new Uint8Array(), { headers: { "Content-Type": "video/mp4" } }),
+    ].entries()) {
+        videoCreateResponse = { id: `task-content-error-${index}`, status: "queued" };
+        videoQueryResponse = { status: "completed", metadata: { url: "https://foreign.test/do-not-fetch" } };
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "猫", duration: 2, resolution: "480P", ratio: "adaptive" });
+        const id = created.headers.get("X-Generation-Task-Id")!;
+        const path = `/ai/${videoChannel}/v1/videos/${videoCreateResponse.id}`;
+        const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
+        const files = Number((await db.query("SELECT count(*) FROM files")).rows[0].count);
+        try {
+            videoContentHandler = content;
+            await processVideoTask(id);
+            assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "unknown");
+            assert.equal(Number((await db.query("SELECT count(*) FROM files")).rows[0].count), files);
+            videoContentHandler = undefined;
+            assert.equal((await call(`${path}/resume`, alice, "POST", {})).status, 200);
+            await processVideoTask(id);
+            assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "succeeded");
+            assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
+        } finally { videoContentHandler = undefined; }
+    }
+});
+
 test("model descriptions are admin-managed, preserved verbatim and never change upstream model IDs", async () => {
-    const model = "wan3.0-video-720p";
+    const model = "wan3.0-video";
     const description = "团队常用型号\n请先确认参考素材";
     const body = { models: [model], video_types: { [model]: "wan" }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
     assert.equal((await call("/admin/channels/video", alice, "PUT", body)).status, 403);
@@ -508,7 +590,7 @@ test("model descriptions are admin-managed, preserved verbatim and never change 
     assert.deepEqual(visible.model_descriptions, { [model]: description });
     assert.deepEqual(visible.models, [model]);
     videoCreateResponse = { id: "display-task", status: "queued" };
-    assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model, prompt: "猫", seconds: "5", aspect_ratio: "adaptive" })).status, 200);
+    assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model, prompt: "猫", duration: 5, resolution: "720P", ratio: "adaptive" })).status, 200);
     assert.equal((forwardedRequests.at(-1)?.body as any).model, model);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...body, model_descriptions: {} })).status, 200);
     const cleared = (await (await call("/channels", alice)).json() as any).channels.find((item: any) => item.capability === "video");
@@ -678,7 +760,7 @@ test("original prompt metadata stays local for JSON generation and appears in ta
 });
 async function canvasOutput(node: any, channel: string, model: string, prompt: string) {
     const { project } = await (await call("/projects", alice, "POST", { title: "canvas output" })).json();
-    node.metadata = { ...node.metadata, model: `${channel}::${model}`, prompt, size: "1024x1024", quality: "auto", videoSize: "auto", vquality: "720", seconds: "6", references: [] };
+    node.metadata = { ...node.metadata, model: `${channel}::${model}`, prompt, size: "1024x1024", quality: "auto", videoSize: "auto", vquality: "720", seconds: "6", references: node.metadata.references || [] };
     const response = await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node }] } });
     assert.equal(response.status, 200);
     return (await response.json()).project;
@@ -755,8 +837,39 @@ test("a live worker lock prevents restart recovery; an abandoned call becomes un
     assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "unknown");
     assert.equal(forwardedRequests.length, before);
 });
+test("canvas WAN signs authoritative nested frame media and downloads through public content", async () => {
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const previousOrigin = env.APP_ORIGIN;
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const key = `image:${randomUUID()}`, url = `/api/files/image_files/${key}`;
+        assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "image/jpeg" }, body: jpegBytes })).status, 200);
+        const node = { id: "wan-output", type: "video", title: "video", position: { x: 0, y: 0 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading", references: [key] } };
+        const project = await canvasOutput(node, videoChannel, "wan3.0-video", "frame video");
+        const response = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "ignored browser prompt", duration: 6, resolution: "480P", ratio: "adaptive", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+        assert.equal(response.status, 202);
+        const taskId = (await response.json()).canvasTaskId;
+        videoCreateResponse = { id: "task-canvas-wan", status: "queued" };
+        videoQueryResponse = { status: "completed" };
+        await executeMediaTask(taskId);
+        const forwarded = forwardedRequests.at(-1)!;
+        assert.equal(forwarded.url, "https://tokenone.test/v1/videos");
+        assert.equal(forwarded.body.prompt, "frame video");
+        assert.equal(forwarded.body.resolution, "720P");
+        assert.equal(forwarded.body.metadata.input.media[0].type, "first_frame");
+        assert.match(forwarded.body.metadata.input.media[0].url, /^https:\/\/creativeone.test\/api\/public\/media\//);
+        const snapshot = (await db.query("SELECT request FROM generation_tasks WHERE id=$1", [taskId])).rows[0].request;
+        assert.equal(snapshot.metadata.input.media[0].url, `/api/files/image_files/${encodeURIComponent(key)}`);
+        await processVideoTask(taskId);
+        const saved = (await (await call(`/projects/${project.id}`)).json()).project.nodes.find((item: any) => item.id === node.id);
+        assert.equal(saved.metadata.status, "success");
+        assert.ok(saved.metadata.storageKey);
+    } finally { env.APP_ORIGIN = previousOrigin; }
+});
+
 test("canvas video results attach through the worker without a canvas result write", async () => {
     const { executeMediaTask } = await import("./generation-executor.js");
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["seedance-test", "wan3.0-video"], default_model: "seedance-test", enabled: true, video_types: { "seedance-test": "seedance", "wan3.0-video": "wan" } })).status, 200);
     videoCreateResponse = { id: "task-canvas-video", status: "queued" };
     videoQueryResponse = { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } };
     const node = { id: "video-output", type: "video", title: "video", position: { x: 21, y: 35 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading" } };

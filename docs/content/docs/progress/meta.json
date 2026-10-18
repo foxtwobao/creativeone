@@ -5,6 +5,7 @@
   "pages": [
     "[Changelog](/docs/progress/changelog)",
     "infinite-canvas-plan",
+    "wan3-integration-plan",
     "local-agent-integration-plan",
     "prompt-chip-input-plan",
     "pending-test",

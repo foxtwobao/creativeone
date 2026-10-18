@@ -526,21 +526,21 @@ function GenerationSettings({ showModel = true, referenceImageCount, media }: { 
     const config = useEffectiveConfig();
     const model = config.videoModel || config.model;
     const settings = videoSettingsForModel(config, model, referenceImageCount, media);
-    const { wan, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, framesAdaptive } = settings;
+    const { wan, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = settings;
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     return <div className="studio-settings">
         <h3>视频生成设置</h3>
         {error ? <p role="alert" className="text-xs text-muted-foreground">{error}</p> : null}
         {showModel ? <div><span>视频模型</span><ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} /></div> : null}
-        <div><span>分辨率</span>{wan ? <span>{wan.resolution}p（由模型决定）</span> : <Select aria-label="视频分辨率" value={resolution} options={resolutions} onChange={(value) => updateConfig("vquality", value)} />}</div>
+        <div><span>分辨率</span><Select aria-label="视频分辨率" value={resolution} options={resolutions} onChange={(value) => updateConfig("vquality", value)} /></div>
         <div><span>宽高比</span><Select aria-label="视频宽高比" value={ratio} options={videoSizeOptions.filter((item) => ratios.some((option) => option.value === item.value))} onChange={(value) => updateConfig("videoSize", value)} /></div>
-        <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={secondsRange.min} max={secondsRange.max} disabled={seconds === "-1"} precision={0} value={seconds === "-1" ? null : Number(seconds)} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div>
+        <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} changeOnBlur={false} precision={0} value={automaticDuration ? null : Number(seconds)} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div>
         {autoSeconds ? <div><span>自动时长</span><Switch aria-label="自动时长" checked={seconds === "-1"} onChange={(value) => updateConfig("videoSeconds", value ? "-1" : "6")} /></div> : null}
         {framesAdaptive ? <p className="text-xs text-muted-foreground">首尾帧生成沿用首帧比例，请选择自动宽高比。</p> : null}
         <div><span>参考模式</span><Select aria-label="视频参考模式" value={mode} options={videoModeOptions.map((item) => ({ ...item, disabled: forcedReference && item.value === "frames" }))} onChange={(value) => updateConfig("videoMode", value)} /></div>
-        {!wan ? <><div><span>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(value) => updateConfig("videoGenerateAudio", String(value))} /></div>
-        <div><span>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div></> : <p className="text-xs text-muted-foreground">参考视频时长参与计费；图生专用模型不支持参考视频。</p>}
+        {settings.audioOptions ? <><div><span>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(value) => updateConfig("videoGenerateAudio", String(value))} /></div>
+        <div><span>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div></> : wan ? <p className="text-xs text-muted-foreground">参考视频时长参与计费。</p> : null}
         {forcedReference ? <p className="pt-2 text-xs text-muted-foreground">超过两张图片，已使用参考图模式。</p> : null}
     </div>;
 }

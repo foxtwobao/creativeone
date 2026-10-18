@@ -18,13 +18,14 @@ export function taskSettings(request: Record<string, any>) {
         children: key === "duration" && Number(value) === -1 ? "自动" : typeof value === "boolean" ? value ? "开启" : "关闭" : `${values[key]?.[String(value)] || value}${["seconds", "duration"].includes(key) ? " 秒" : key === "n" ? " 张" : ""}`,
     }));
     const content = Array.isArray(request.content) ? request.content : [];
-    const images = request.image_references || request.image_urls || request.images || (request.image ? [request.image] : undefined) || request.reference_images || content.filter((part: any) => part.type === "image_url");
+    const media = request.metadata?.input?.media || [];
+    const images = request.image_references || request.image_urls || request.images || (request.image ? [request.image] : undefined) || (media.length ? media.filter((part: any) => ["first_frame", "last_frame", "reference_image"].includes(part.type)) : content.filter((part: any) => part.type === "image_url"));
     for (const [key, label, refs] of [
         ["images", "参考图片", images],
-        ["videos", "参考视频", request.reference_videos || content.filter((part: any) => part.type === "video_url")],
-        ["audios", "参考音频", request.reference_audios || content.filter((part: any) => part.type === "audio_url")],
+        ["videos", "参考视频", media.filter((part: any) => part.type === "reference_video").concat(content.filter((part: any) => part.type === "video_url"))],
+        ["audios", "参考音频", media.filter((part: any) => part.type === "reference_audio").concat(content.filter((part: any) => part.type === "audio_url"))],
     ] as const) if (refs?.length) items.push({ key, label, children: `${refs.length} 个` });
-    const roles = (request.reference_images || content).map((part: any) => part.role);
+    const roles = [...media, ...content].map((part: any) => part.role || part.type);
     if (roles.includes("reference_image")) items.push({ key: "mode", label: "图片参考方式", children: "参考图" });
     else if (roles.includes("first_frame") || roles.includes("last_frame")) items.push({ key: "mode", label: "图片参考方式", children: roles.includes("last_frame") ? roles.includes("first_frame") ? "首尾帧" : "尾帧" : "首帧" });
     return items;

@@ -212,9 +212,9 @@ function getVideoConfig() {
         maxReferenceImages: settings.profile.maxImages,
         maxReferenceVideos: settings.profile.maxVideos,
         maxReferenceAudios: settings.profile.maxAudios,
-        resolutionOptions: settings.wan ? [{ value: settings.resolution, label: `${settings.resolution}p` }] : settings.resolutions,
-        referenceVideo: settings.wan?.referenceVideo ?? true,
-        fixedResolution: Boolean(settings.wan),
+        resolutionOptions: settings.resolutions,
+        referenceVideo: settings.profile.maxVideos !== 0,
+        fixedResolution: false,
         modeOptions: [
             { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
             { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
@@ -228,7 +228,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     if (!model || !selectableModelsByCapability(configStore.config, "video").includes(model)) throw new Error("请选择已配置的视频模型");
     const settings = videoSettingsForModel(configStore.config, model);
     if (settings.wan) {
-        if (typeof input.resolution === "string" && parseVideoResolution(input.resolution) !== settings.resolution) throw new Error("WAN 分辨率由模型决定，请选择对应分辨率的模型");
+        if (typeof input.resolution === "string" && !settings.resolutions.some((item) => item.value === parseVideoResolution(input.resolution))) throw new Error("WAN 请选择 480P、720P 或 1080P 分辨率");
         if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("WAN 仅支持 16:9、9:16、1:1 和自适应比例");
         if (input.generateAudio != null || input.watermark != null) throw new Error("WAN 暂不提供生成音频或水印开关");
     }

@@ -36,6 +36,7 @@
 ## Project Progress
 
 - [无限画布开放方案](/docs/progress/infinite-canvas-plan)
+- [WAN3 统一协议接入方案](/docs/progress/wan3-integration-plan)
 - [Reseller 登录会话恢复交接说明](handoffs/reseller-session-recovery.md)
 - [CreativeONE 标准统一登录交接](handoffs/creativeone-one-auth.md)
 - [Reseller 应用模型价格接口方案](handoffs/reseller-app-pricing.md)
