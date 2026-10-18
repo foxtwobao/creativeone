@@ -4,6 +4,7 @@ import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { fetchModelPricing } from "@/services/api/account-pricing";
 import { cloudSession } from "@/services/api/cloud";
 import type { ModelPricing } from "../../../../shared/account-pricing";
+import { ModelPriceQuotes } from "./model-price-quotes";
 
 const capabilities = [["image", "图片"], ["text", "文本"], ["video", "视频"], ["audio", "音频"]] as const;
 
@@ -34,7 +35,7 @@ export default function PricingPage() {
                     {cloudSession?.modelServiceUrl ? <a className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={`${cloudSession.modelServiceUrl}/pricing`} target="_blank" rel="noopener noreferrer">TokenONE<ArrowUpRight size={13} /></a> : null}
                 </div>
             </header>
-            <p className="mb-5 text-xs leading-5 text-muted-foreground">单价以 CNY 展示，充值额度与人民币按 1:1 对应。按次指每次成功请求，不按图片张数计费；按用量计费的总价取决于请求参数和最终用量。</p>
+            <p className="mb-5 text-xs leading-5 text-muted-foreground">单价以 CNY 展示，充值额度与人民币按 1:1 对应。按次、按张、按秒和 token 分别按所示单位计费；总费用取决于请求参数与最终用量，以实际账单为准。</p>
             {loading ? <p role="status" className="py-12 text-center text-sm text-muted-foreground">正在读取模型价格…</p> : error ? <Alert type="warning" showIcon title="模型价格暂不可用" description={error} /> : pricing ? <>
                 {capabilities.map(([capability, title]) => {
                     const models = pricing.models.filter((model) => model.capability === capability);
@@ -45,22 +46,7 @@ export default function PricingPage() {
                                 <div className="min-w-0"><h3 className="!mb-0 break-all text-[13px] font-medium leading-5">{model.model}</h3>{model.description ? <p title={model.description} className="!mb-0 mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">{model.description}</p> : null}</div>
                                 <div className="min-w-0 space-y-1.5 text-xs leading-5">
                                     {model.note ? <p className="!mb-0 text-muted-foreground">{model.note}</p> : null}
-                                    {model.paths.map((path, index) => <div key={index} className="flex min-w-0 items-start gap-2">
-                                        {model.paths.length > 1 ? <span className="shrink-0 text-muted-foreground">报价 {index + 1}</span> : null}
-                                        {path.note ? <p className="!mb-0 text-muted-foreground">{path.note}</p> : <div className="min-w-0 space-y-1.5">{path.tiers.map((tier, tierIndex) => {
-                                            const unit = tier.metrics.every((metric) => metric.unit === tier.metrics[0]?.unit) ? tier.metrics[0]?.unit : undefined;
-                                            return <div key={tierIndex} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                                                {tier.condition ? <span className="text-muted-foreground">{tier.condition}</span> : null}
-                                                <dl className="!mb-0 flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
-                                                    {tier.metrics.map((metric) => <div key={metric.label} className="flex min-w-0 flex-wrap items-baseline gap-x-1">
-                                                        <dt className="text-muted-foreground">{metric.label}</dt>
-                                                        <dd className="!mb-0 break-all font-medium tabular-nums">{metric.amount}{!unit ? <span className="ml-1 font-normal text-muted-foreground">CNY / {metric.unit}</span> : null}</dd>
-                                                    </div>)}
-                                                </dl>
-                                                {unit ? <span className="whitespace-nowrap text-muted-foreground">CNY / {unit}</span> : null}
-                                            </div>;
-                                        })}</div>}
-                                    </div>)}
+                                    <ModelPriceQuotes paths={model.paths} />
                                 </div>
                             </article>)}
                         </div>

@@ -1,0 +1,845 @@
+{
+  "app_id": "fixture-app",
+  "group": {
+    "id": "1",
+    "name": "fixture-composite",
+    "multiplier": "1.25"
+  },
+  "currency": "USD",
+  "queried_at": "2026-10-18T00:00:00Z",
+  "models": [
+    {
+      "model": "wan3.0-video",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0125",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "alibaba",
+              "plugin_name": "Alibaba Bailian"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0125",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "rolldek",
+              "plugin_name": "RollDek"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0125",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "zhimeng",
+              "plugin_name": "Zhimeng"
+            }
+          ]
+        },
+        {
+          "member": "fixture-second",
+          "multiplier": "0.5",
+          "quotes": [
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.005",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.01",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.015",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "alibaba",
+              "plugin_name": "Alibaba Bailian"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.005",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.01",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.015",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "rolldek",
+              "plugin_name": "RollDek"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.005",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.01",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.015",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "zhimeng",
+              "plugin_name": "Zhimeng"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "wan3.0-video-prime",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.05",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "alibaba",
+              "plugin_name": "Alibaba Bailian"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.05",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "rolldek",
+              "plugin_name": "RollDek"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "输出视频分辨率 = \"480P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 = \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.0375",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                },
+                {
+                  "condition": "输出视频分辨率 ≠ \"480P\" 且 输出视频分辨率 ≠ \"720P\"",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "视频生成单价",
+                      "amount": "0.05",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "zhimeng",
+              "plugin_name": "Zhimeng"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-multi-usage",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "额外参考图片",
+                      "amount": "0.00375",
+                      "unit": "count",
+                      "unit_label": "张图片",
+                      "usage_key": "extra_images"
+                    },
+                    {
+                      "metric": "usage",
+                      "label": "生成视频时长",
+                      "amount": "0.125",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "output_seconds"
+                    },
+                    {
+                      "metric": "usage",
+                      "label": "参考视频时长",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "reference_seconds"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-token-dimensions",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "audio_input",
+                      "label": "音频输入",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "audio_output",
+                      "label": "音频输出",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "output",
+                      "label": "输出",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "cache_write",
+                      "label": "五分钟缓存写入",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "cache_write_1h",
+                      "label": "一小时缓存写入",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "cache_read",
+                      "label": "缓存读取",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "image_input",
+                      "label": "图片输入",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "image_cache_read",
+                      "label": "图片缓存读取",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "image_output",
+                      "label": "图片输出",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    },
+                    {
+                      "metric": "input",
+                      "label": "输入",
+                      "amount": "0.0000000000000125",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-request",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "request",
+                      "label": "每次成功请求",
+                      "amount": "0.0125",
+                      "unit": "request",
+                      "unit_label": "次请求"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-image-count",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "image",
+                      "label": "图片数量",
+                      "amount": "0.25",
+                      "unit": "image",
+                      "unit_label": "张图片"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-task-tokens",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "任务 Token",
+                      "amount": "10",
+                      "unit": "million_tokens",
+                      "unit_label": "百万 token",
+                      "usage_key": "tokens"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-enum-conflict",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "unavailable",
+              "tiers": [],
+              "reason": "schema_condition_mismatch"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-zero-pending",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "unavailable",
+              "tiers": [],
+              "reason": "unconfirmed_zero_price"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-explicit-free",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "request",
+                      "label": "每次成功请求",
+                      "amount": "0",
+                      "unit": "request",
+                      "unit_label": "次请求"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-mixed-plugins",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "seconds",
+                      "amount": "0.025",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "fast",
+              "plugin_name": "Fast"
+            },
+            {
+              "source": "plugin",
+              "status": "available",
+              "tiers": [
+                {
+                  "condition": "",
+                  "prices": [
+                    {
+                      "metric": "usage",
+                      "label": "seconds",
+                      "amount": "0.05",
+                      "unit": "second",
+                      "unit_label": "秒",
+                      "usage_key": "seconds"
+                    }
+                  ]
+                }
+              ],
+              "plugin_key": "slow",
+              "plugin_name": "Slow"
+            },
+            {
+              "source": "plugin",
+              "status": "unavailable",
+              "tiers": [],
+              "plugin_key": "unknown",
+              "plugin_name": "Unknown",
+              "reason": "unsupported_rule"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-missing",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "multiplier": "1.25",
+          "quotes": [
+            {
+              "source": "base",
+              "status": "unavailable",
+              "tiers": [],
+              "reason": "missing_pricing"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "fixture-no-path",
+      "paths": [],
+      "reason": "missing_pricing"
+    },
+    {
+      "model": "fixture-invalid-ratio",
+      "paths": [
+        {
+          "member": "fixture-member",
+          "quotes": [],
+          "reason": "invalid_pricing"
+        }
+      ]
+    }
+  ]
+}

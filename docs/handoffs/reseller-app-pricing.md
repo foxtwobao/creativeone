@@ -1,6 +1,6 @@
 # Reseller 应用模型价格接口方案
 
-状态：Reseller 已交付实现，最终契约以 `/home/hulei/projects/tokenone_reseller/docs/APP_PRICING_API.md` 为准。CreativeOne 已按该契约切换价格读取并删除本地表达式解析，部署与真实联调见待测清单；下文保留原交接方案，不作为最新实施状态。用户明确要求 **TokenONE / New API 不改代码、不新增接口、不构建或部署修改版本**。
+状态：CreativeOne 已按 Reseller 最新 `CREATIVEONE_PRICING_HANDOFF.md` 和 `APP_PRICING_API.md` 直接迁移插件报价合同，实施与发布交接见第 11 节。下文第 1–10 节保留此前方案与诊断背景，不作为最新合同或部署状态。未修改、构建或部署关联项目。
 
 ## 1. 目标与最小范围
 
@@ -163,3 +163,55 @@ lab 已给 creativeone 增加 `balance:read`，可能遇到此比较问题；不
 - 上游路径数组为空时返回模型级 `missing_pricing`；路径存在但全部不可展示时，仍按原顺序保留各路径及具体失败原因。
 - 添加/移除 `balance:read`、`pricing:read` 后，已有模型 ensure 和进行中的授权回调正常；撤销、默认组变化及模型权限变化仍按原规则处理。
 - 全程使用价格读取和测试 fixture，不需要发起付费模型调用。最终交付列出尚未支持的规则，不承诺任意表达式均可结构化。
+
+## 10. 视频模型价格诊断与下一步交接
+
+### 已确认的问题
+
+只读获取 lab 的 New API `/api/pricing` 和 Reseller `/api/apps/pricing`，两者均返回 HTTP 200；结合 CreativeOne 当前启用的模型核对如下。结果属于 lab，不代表其他部署环境。
+
+| 模型 / 环节 | 实际结果 | 原因 |
+| --- | --- | --- |
+| WAN3 普通版、Prime | New API 各含 alibaba、rolldek、zhimeng 三份插件规则；Reseller 返回 `unsupported_rule` 和空档位 | `internal/server/application_pricing.go` 对任何非空 `billing_plugin_variants` 直接拒绝，未进入表达式解析 |
+| Seedance 2.0 / 2.5 | Reseller 分别返回 6 / 2 档非零单价，单位是百万计费 token | 已能解析条件价格；源表达式判断 `video_input == "true"`，schema 却声明 `none/video`，存在语义不一致 |
+| MiniMax H3 | 本次 lab 的应用目录及已启用视频模型中未出现 | 无实际报价可核验，不能宣称 H3 价格已支持或配置正确 |
+| CreativeOne 契约校验 | 漏接 `cache_write_1h`、`image_output`、`audio_input`、`audio_output`、`image` 及 `image` 单位 | 任一模型包含这些合法字段都会使整份目录校验失败；本项目已补齐，仍严格校验金额和单位 |
+
+New API 的 `web/src/features/pricing/lib/plugin-pricing.ts`、`lib/dynamic-price.ts` 和 `components/model-details.tsx` 按插件分别解析、展示。Reseller 的 `internal/costs/display.go` 则还会把所有秒用量归成 `duration`；同档位出现两个秒用量时因 metric 重复而拒绝，数量类 usage 也未被展示适配接受。H3 所需的输出秒数、参考视频秒数、额外图片数不能用当前合同完整表达。
+
+Seedance 还有展示策略差异：New API 的 `lib/billing-expression/task-display.ts` 会排除 schema 未声明的枚举值对应的等值分支，Reseller 保留表达式原始条件。因此模型广场能显示不等于源规则已经一致。应在对应项目核查实际计费用量及规则配置，不能在 CreativeOne 把 `"true"` 擅自翻译成 `video`，也不能从示例时长猜算每秒价。
+
+### Reseller 待实施方案
+
+1. **逐插件输出报价。** 沿用默认应用分组和原路径，使用每个插件自己的表达式、usage schema 及展示名称转换价格，响应保留插件标识。不能绕过插件规则选模型基础价，也不能取第一项或最低价；即使当前 WAN 三份表达式相同，也须保留来源。某插件不能完整解析时保留该插件的失败原因，其余插件的完整报价可单独展示。
+2. **保留用量项身份。** 复用现有 AST 提取和精确运算，将底层已有的 `usage:<字段名>`、schema 描述和单位传到展示合同，明确区分生成时长、参考视频时长和按任务计量的额外图片数。同单位不合并；图片 token 和图片数量不混用。可计算阈值或派生用量必须有权威定义，不能只交给调用方一段条件文案推算。
+3. **保持完整条件语义。** 以 New API 同一份源规则核对分辨率、参考素材和分时条件。枚举与表达式不一致时明确诊断，由源配置负责修复；不偷偷重写值或丢掉附加收费项。未知表达式仍明确不可展示，不用部分价格冒充完整报价。
+4. **同步发布合同。** 明确插件报价层次、用量字段身份、显示标签、单位及失败原因，并提供脱敏响应 fixture。已有精确金额字符串、每条路径只乘一次最终倍率、应用鉴权和查询范围保持不变。合同中的所有合法计费项必须在 CreativeOne 有验收样例，避免两端字段列表再次落后。
+
+CreativeOne 在合同交付后按“模型 → 报价路径 → 插件 → 条件与用量项”展示，不新增表达式解析器。沿用隐藏分组和倍率的页面设计，用插件名称区分报价来源；金额预估需另行取得可计算用量规则或权威报价接口，不能从展示文本反推。当前已补齐的五项仅解决现有合同接收问题，**尚未恢复 WAN 插件价格，也未实现 H3 金额预估**。
+
+### 验收要求
+
+- 使用同一份脱敏价格目录，对照 New API 模型广场与 Reseller 的插件、条件、单位和最终倍率；由 CreativeOne 消费同一响应 fixture 验证展示。
+- WAN 普通版与 Prime 覆盖所有插件及 480P / 720P / 1080P；插件价格不同或其中一份不支持时仍能准确区分，不能以当前相同价格作为合并依据。
+- Seedance 两款覆盖分辨率和参考视频条件，修正源规则后重新核对可达档位；按百万 token 展示，不伪造秒价。DeepSeek 分时价格仍完整保留。
+- H3 取得实际规则后覆盖两种分辨率、生成与参考视频两种秒价、5 / 6 / 9 张参考图的附加数量 0 / 1 / 4；额外图片费用不再乘生成时长。预留用量与最终账单分开验收。
+- CreativeOne 覆盖现有合同全部 14 种 metric、图片数量与图片 token 的单位区分、小额金额精度、多路径、上游失败原因和凭证隔离。
+
+本节只记录只读诊断与交接方案，未修改、构建或部署 Reseller / New API，也未调用收费生成。
+
+
+## 11. CreativeOne 配套迁移与发布交接
+
+本次以 `/home/hulei/projects/tokenone_reseller/docs/CREATIVEONE_PRICING_HANDOFF.md` 及同目录 `APP_PRICING_API.md` 为准。原样复制 `examples/app-pricing-response.json` 至 `shared/fixtures/app-pricing-response.json`，用于两端同源验收；该文件中的应用、分组、倍率及合成模型仅用于测试。
+
+- `server/src/account-pricing.ts` 直接读取 `paths[].quotes[]`，分别处理路径 reason、报价 status/reason 和无路径模型。严格校验标准 metric 的单位、usage_key 的条件存在性、有效插件身份、非空档位及精确金额；不接收旧 duration/usage_tokens 或旧路径结构。
+- `shared/account-pricing.ts` 保留独立报价、metric、usageKey、单位代码与上游显示标签；不把两个秒用量合并，也不根据数量描述猜算价格。
+- 价格页按路径与插件分别展示所有档位，沿用隐藏分组与倍率的设计。金额及标签均按文本显示，单个不可用报价保留原因；没有身份的失败插件显示“未知插件”。沿用本站充值额度 CNY 展示口径，不修改金额或追加汇率换算。
+- `unsupported_rule` 表示当前不能完整展示规则；`schema_condition_mismatch` 表示上游条件与用量定义不一致，不宣称上游没有定价。真实 HTTP 或合同结构错误仍整体报错，不拿零价替代。
+
+验证：5 项后端接口测试及 5 项前端组件渲染测试通过。共用 fixture 覆盖 WAN 两款全部插件和分辨率、不同倍率路径、多用量、标准计费项、零价与失败项；额外用例覆盖五种 usage 单位、同标签不同 usage_key、缺失插件身份、非法金额/单位/结构和文本转义。未执行构建或语法检查。
+
+发布要求：此合同直接替换，无旧版兼容分支。由用户安排 Reseller 与 CreativeOne 后端、前端配套发布，再在 lab 入口验收真实账号价格页、刷新、窄屏布局和上游失败提示。本次未部署，不将样例验证描述为真实应用联调通过。
+
+H3：多用量 fixture 只证明展示合同可以表达独立计费项，不是实际 H3 报价。5/6/9 张参考图对应附加用量、参考视频预留与结算仍需权威规则及账单验证，不据展示文案反推金额。
