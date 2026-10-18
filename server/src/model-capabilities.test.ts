@@ -35,11 +35,13 @@ test("WAN public models validate duration, resolution and media combinations", (
     const request = { model: "wan3.0-video", prompt: "  镜头前移  ", duration: 2, resolution: "480P", ratio: "adaptive" };
     const media = (types: string[]) => ({ input: { media: types.map((type) => ({ type, url: "https://example.com/ref" })) } });
     for (const model of ["wan3.0-video", "wan3.0-video-prime"]) {
+        for (const ratio of ["16:9", "9:16", "1:1", "4:3", "3:4", "adaptive"]) assert.equal(videoRequestCapabilityError(model, "wan", { ...request, model, ratio }), "");
         for (const duration of [2, 30]) assert.equal(videoRequestCapabilityError(model, "wan", { ...request, model, duration }), "");
         for (const duration of [-1, 1, 31]) assert.match(videoRequestCapabilityError(model, "wan", { ...request, model, duration }), /2–30/);
     }
     for (const resolution of ["480P", "720P", "1080P"]) assert.equal(videoRequestCapabilityError(request.model, "wan", { ...request, resolution }), "");
     assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, resolution: "4K" }), /公共格式/);
+    assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, ratio: "21:9" }), /公共格式/);
     assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, seconds: "2" }), /公共格式/);
     assert.match(videoRequestCapabilityError("wan3.0-video-720p", "wan", request), /公共模型/);
     assert.match(videoRequestCapabilityError(request.model, "wan", { ...request, metadata: media(["last_frame"]) }), /首尾帧/);

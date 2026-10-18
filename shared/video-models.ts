@@ -1,6 +1,7 @@
 export const videoModelTypes = ["seedance", "wan"] as const;
 export type VideoModelType = (typeof videoModelTypes)[number];
 export const videoModelTypeLabels: Record<VideoModelType, string> = { seedance: "Seedance", wan: "WAN 3" };
+export const wanAspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "adaptive"] as const;
 
 type VideoCapabilities = {
     resolutions: string[]; ratios: string[];
@@ -11,7 +12,7 @@ type VideoCapabilities = {
 };
 export const videoTypePresets: Record<VideoModelType, VideoCapabilities> = {
     seedance: { resolutions: ["480", "720", "1080"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9", "auto"], duration: null, maxImages: null, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: true, framesAdaptive: false, explicitReferenceTask: false },
-    wan: { resolutions: [], ratios: ["16:9", "9:16", "1:1", "auto"], duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
+    wan: { resolutions: [], ratios: wanAspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
 };
 // https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh
 // https://doc.tokenone.work/web/#/688394820/172712494

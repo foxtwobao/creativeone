@@ -100,8 +100,16 @@ test("Seedance submits three images as references with the displayed audio switc
 
 test("WAN rejects a preserved unsupported ratio before submitting or uploading references", async () => {
     const post = spyOn(axios, "post"); mocks.push(post);
-    await expect(api.createVideoGenerationTask({ ...config, videoSize: "4:3" }, "prompt")).rejects.toThrow("宽高比");
+    await expect(api.createVideoGenerationTask({ ...config, videoSize: "21:9" }, "prompt")).rejects.toThrow("宽高比");
     expect(post).not.toHaveBeenCalled();
+});
+
+test("WAN preserves 4:3 and 3:4 and maps the automatic ratio to adaptive", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "wan-ratio" } }); mocks.push(post);
+    for (const videoSize of ["4:3", "3:4", "auto"]) {
+        await api.createVideoGenerationTask({ ...config, videoSize }, "prompt");
+        expect(post.mock.calls.at(-1)![1]).toMatchObject({ ratio: videoSize === "auto" ? "adaptive" : videoSize });
+    }
 });
 
 test("WAN rejects inherited automatic duration and submits only after a manual duration change", async () => {

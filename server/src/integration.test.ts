@@ -308,7 +308,7 @@ test("video model configuration exposes types and rejects mismatched protocols b
     const media = (items: unknown[]) => ({ input: { media: items } });
     for (const body of [
         { ...wan, seconds: "5" }, { ...wan, duration: 1 }, { ...wan, duration: 31 },
-        { ...wan, duration: -1 }, { ...wan, resolution: "4K" }, { ...wan, ratio: "4:3" },
+        { ...wan, duration: -1 }, { ...wan, resolution: "4K" }, { ...wan, ratio: "21:9" },
         { ...wan, reference_images: [{ url: "https://example.test/image.jpg" }] },
         { ...wan, metadata: media([{ type: "first_frame", url: "data:image/png;base64,YQ==" }]) },
         { ...wan, metadata: media(Array(11).fill({ type: "reference_image", url: "https://example.test/a.jpg" })) },

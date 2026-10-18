@@ -229,7 +229,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const settings = videoSettingsForModel(configStore.config, model);
     if (settings.wan) {
         if (typeof input.resolution === "string" && !settings.resolutions.some((item) => item.value === parseVideoResolution(input.resolution))) throw new Error("WAN 请选择 480P、720P 或 1080P 分辨率");
-        if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("WAN 仅支持 16:9、9:16、1:1 和自适应比例");
+        if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("当前 WAN 模型不支持所选宽高比，请重新选择");
         if (input.generateAudio != null || input.watermark != null) throw new Error("WAN 暂不提供生成音频或水印开关");
     }
     const applied: Record<string, unknown> = {};
