@@ -5,7 +5,7 @@ export function ModelPriceQuotes({ paths }: Pick<ModelPrice, "paths">) {
         {paths.length > 1 ? <span className="shrink-0 text-muted-foreground">报价 {index + 1}</span> : null}
         {path.note ? <p className="!mb-0 text-muted-foreground">{path.note}</p> : <div className="min-w-0 space-y-3">
             {path.quotes.map((quote, quoteIndex) => <div key={quoteIndex} className="space-y-1.5">
-                {quote.source === "plugin" ? <p className="!mb-0 font-medium">{quote.pluginName || quote.pluginKey || "未知插件"}</p> : null}
+                {path.quotes.length > 1 ? <p className="!mb-0 font-medium">价格方案 {quoteIndex + 1}</p> : null}
                 {quote.note ? <p className="!mb-0 text-muted-foreground">{quote.note}</p> : quote.tiers.map((tier, tierIndex) => {
                     const first = tier.metrics[0];
                     const unit = first && tier.metrics.every((metric) => metric.unit === first.unit && metric.unitLabel === first.unitLabel) ? first.unitLabel : undefined;
