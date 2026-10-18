@@ -11,8 +11,9 @@ import { HttpError, requireUuid } from "./http.js";
 import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signWanMedia, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
 import { tokenoneError, modelErrorMessage, taskErrorMessage, upstreamErrorDetails } from "./model-errors.js";
-import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError, wanRequestSchema } from "./model-capabilities.js";
-import { videoModelProfile, wanModelProfile } from "../../shared/video-models.js";
+import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError, wanRequestSchema, h3RequestSchema } from "./model-capabilities.js";
+import { videoModelProfile, wanModelProfile, type VideoModelType } from "../../shared/video-models.js";
+import { videoTaskPath } from "../../shared/video-tasks.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
 import { readAccountData } from "./account-data.js";
 import { canvasGraphView } from "./canvas-graph.js";
@@ -29,7 +30,7 @@ const canvasContextSchema = z.object({
     outputId: z.string().trim().min(1).optional(),
 }).strict();
 
-async function assertVideoDurations(userId: string, model: string, family: "seedance" | "wan", references: { videos: string[]; audios: string[] }, client: Pick<typeof db, "query"> = db) {
+async function assertVideoDurations(userId: string, model: string, family: VideoModelType, references: { videos: string[]; audios: string[] }, client: Pick<typeof db, "query"> = db) {
     if (videoModelProfile(model, family).referenceSeconds === null) return;
     const duration = async (urls: string[]) => {
         let seconds = 0;
@@ -115,11 +116,12 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         if (req.method === "POST" && channel.capability === "image" && !channel.image_types?.[req.body.model]) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
         if (req.method === "POST" && channel.capability === "video") {
             const kind = channel.video_types?.[req.body.model] || "seedance";
-            if (path !== (kind === "wan" ? "videos" : "contents/generations/tasks")) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
+            if (path !== videoTaskPath(kind)) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
             if (kind === "wan") {
                 req.body = wanRequestSchema.parse(req.body);
                 if (!wanModelProfile(req.body.model)) throw new HttpError(400, "INVALID_WAN_MODEL");
             }
+            if (kind === "h3") req.body = h3RequestSchema.parse(req.body);
         }
     }
     if (req.method === "POST" && ["image", "video"].includes(channel.capability)) {
@@ -211,8 +213,8 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             catch { throw new HttpError(400, "MODEL_CAPABILITY_INVALID"); }
             const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(req.body.model, family as any, requestSnapshot) : videoRequestCapabilityError(req.body.model, family as any, requestSnapshot);
             if (capabilityError) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
-            if (channel.capability === "video") await assertVideoDurations(user.id, req.body.model, family as "seedance" | "wan", references, client);
-            const expectedPath = channel.capability === "video" ? family === "wan" ? "videos" : "contents/generations/tasks" : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
+            if (channel.capability === "video") await assertVideoDurations(user.id, req.body.model, family as VideoModelType, references, client);
+            const expectedPath = channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
             if (path !== expectedPath) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
             await assertReferenceImages(user.id, requestSnapshot, client);
             requestSnapshot = { ...requestSnapshot, user_prompt: savedMetadata.prompt, canvas_source: { node, contentRevision: project.content_revision }, canvas_submission: submission };

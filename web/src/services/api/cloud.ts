@@ -22,6 +22,7 @@ const errors: Record<string, string> = {
     TOKENONE_GROUP_FORBIDDEN: "当前账号没有该渠道的分组授权或有效订阅", TOKENONE_KEY_UNAVAILABLE: "该渠道的模型服务访问凭据已停用、过期或额度不足",
     TOKENONE_GROUP_UNAVAILABLE: "该渠道的分组不可用，请联系管理员", CHANNEL_UNAVAILABLE: "渠道已停用，请重新选择",
     MODEL_NOT_ALLOWED: "所选模型不在该渠道允许范围内", LOCAL_BLOB_NOT_SYNCABLE: "内容包含尚未上传的本地文件，无法同步",
+    INVALID_H3_MODEL: "MiniMax H3 调用类型仅支持 MiniMax-H3 公共模型。",
 };
 export class CloudError extends Error {
     constructor(public status: number, public code: string, message?: string, public requestId?: string) { super(message || errors[code] || `云端请求失败：${code}`); }

@@ -4,7 +4,7 @@ import { cloudSession } from "@/services/api/cloud";
 import { getAccountResource, changeAccountResource } from "@/services/api/account";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import type { ImageModelType } from "../../../shared/image-models";
-import type { VideoModelType } from "../../../shared/video-models";
+import { h3VideoDefaults, type VideoModelType } from "../../../shared/video-models";
 
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -206,7 +206,11 @@ export async function loadUserSettings() {
     const version = settingsVersion;
     const saved = await getAccountResource<Partial<AiConfig>>("/settings");
     if (version !== settingsVersion) return;
-    useConfigStore.setState({ config: applyCloudConfig({ ...defaultConfig, ...saved }) });
+    const config = applyCloudConfig({ ...defaultConfig, ...saved });
+    if (modelVideoTypeOf(config, config.videoModel) === "h3") {
+        for (const key of ["videoSeconds", "vquality", "videoSize"] as const) if (saved[key] === undefined) config[key] = h3VideoDefaults[key];
+    }
+    useConfigStore.setState({ config });
 }
 
 export function useEffectiveConfig() {

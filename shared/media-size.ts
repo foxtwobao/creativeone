@@ -110,7 +110,7 @@ export function parseVideoResolution(value: string | undefined) {
     const raw = String(value || "").trim().toLowerCase();
     if (raw === "low") return "480";
     if (raw === "auto" || raw === "high" || raw === "medium") return "720";
-    if (raw === "4k") return raw;
+    if (raw === "4k" || raw === "2k") return raw;
     const number = raw.replace(/p$/i, "");
     return /^\d+$/.test(number) && Number(number) > 0 ? number : "720";
 }

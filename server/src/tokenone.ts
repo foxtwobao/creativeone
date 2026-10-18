@@ -93,6 +93,7 @@ channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) 
     if (capability === "image" && models.some((model) => !config.image_types[model])) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
     if (capability === "video" && models.some((model) => !config.video_types[model])) throw new HttpError(400, "VIDEO_MODEL_TYPE_REQUIRED");
     if (capability === "video" && models.some((model) => config.video_types[model] === "wan" && !wanModelProfile(model))) throw new HttpError(400, "INVALID_WAN_MODEL");
+    if (capability === "video" && models.some((model) => config.video_types[model] === "h3" && model !== "MiniMax-H3")) throw new HttpError(400, "INVALID_H3_MODEL");
     if (Object.keys(config.image_types).some((model) => capability !== "image" || !models.includes(model))) throw new HttpError(400, "INVALID_IMAGE_MODEL_TYPES");
     if (Object.keys(config.video_types).some((model) => capability !== "video" || !models.includes(model))) throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES");
     if (Object.keys(config.model_descriptions).some((model) => !models.includes(model))) throw new HttpError(400, "INVALID_MODEL_DESCRIPTIONS");

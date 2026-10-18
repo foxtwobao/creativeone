@@ -3,6 +3,8 @@ import { Slider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
+import { WanReferenceNotice } from "@/components/wan-reference-notice";
+import { H3ReferenceNotice } from "@/components/h3-reference-notice";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { type AiConfig } from "@/stores/use-config-store";
 import { videoModeOptions, videoSettingsForModel } from "@/lib/video-settings";
@@ -23,13 +25,15 @@ type VideoSettingsPanelProps = {
 export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceMedia, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     const model = config.model || config.videoModel;
-    const { wan, ratios, resolution, ratio: selectedRatio, seconds, mode: videoMode, forcedReference, generateAudio, watermark, audioOptions, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = videoSettingsForModel(config, model, referenceImageCount, referenceMedia);
+    const { wan, h3, ratios, resolution, ratio: selectedRatio, seconds, mode: videoMode, forcedReference, generateAudio, watermark, audioOptions, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = videoSettingsForModel(config, model, referenceImageCount, referenceMedia);
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
                 {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
+                {wan ? <WanReferenceNotice /> : null}
+                {h3 ? <H3ReferenceNotice onConfigChange={onConfigChange} referenceImageCount={videoMode === "reference" ? referenceImageCount : 0} /> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {resolutions.map((item) => (
@@ -79,7 +83,6 @@ export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceM
                     <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /></div>
                     <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /></div>
                 </> : null}
-                {wan ? <p className="text-xs" style={{ color: theme.node.muted }}>参考视频时长参与计费。</p> : null}
             </div>
         </ImageSettingsTheme>
     );
