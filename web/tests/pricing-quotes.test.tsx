@@ -20,19 +20,21 @@ const render = (paths: ModelPrice["paths"]) => renderToStaticMarkup(createElemen
 test("WAN fixture renders every plugin, resolution tier and independent path", () => {
     for (const name of ["wan3.0-video", "wan3.0-video-prime"]) {
         const paths = pathsFor(name), html = render(paths);
-        for (const plugin of ["Alibaba Bailian", "RollDek", "Zhimeng"]) expect(html.split(plugin)).toHaveLength(paths.length + 1);
+        for (const plugin of ["Alibaba Bailian", "RollDek", "Zhimeng"]) expect(html).not.toContain(plugin);
         expect(html.match(/<dl /g)).toHaveLength(paths.length * 9);
+        for (const index of [1, 2, 3]) expect(html.split(`价格方案 ${index}`)).toHaveLength(paths.length + 1);
         for (const path of paths) for (const quote of path.quotes) for (const tier of quote.tiers) expect(html).toContain(tier.metrics[0]!.amount);
         if (paths.length > 1) expect(html).toContain("报价 2");
         expect(html).not.toContain("fixture-member");
     }
 });
 
-test("mixed plugin failures keep valid prices and missing identity has a placeholder", () => {
+test("mixed plugin failures keep valid prices without exposing provider identities", () => {
     const paths = pathsFor("fixture-mixed-plugins");
     paths[0]!.quotes.push({ source: "plugin", note: "模型价格配置无效", tiers: [] });
     const html = render(paths);
-    for (const text of ["Fast", "Slow", "0.025", "0.05", "unsupported_rule", "未知插件", "模型价格配置无效"]) expect(html).toContain(text);
+    for (const name of ["Fast", "Slow", "Unknown", "未知插件"]) expect(html).not.toContain(name);
+    for (const text of ["0.025", "0.05", "unsupported_rule", "价格方案 4", "模型价格配置无效"]) expect(html).toContain(text);
 });
 
 test("multi-usage fixture preserves separate seconds and per-task image prices", () => {
@@ -51,12 +53,12 @@ test("identical labels stay separate and different count unit labels are never c
     for (const text of ["0.000000000000000001", "个计费单位", "张图片"]) expect(html).toContain(text);
 });
 
-test("plugin names, conditions and usage labels are escaped as text", () => {
+test("plugin names are hidden while conditions and usage labels are escaped as text", () => {
     const paths = pathsFor("fixture-multi-usage"), quote = paths[0]!.quotes[0]!;
     quote.source = "plugin"; quote.pluginKey = "test"; quote.pluginName = "<img src=x onerror=alert(1)>";
     quote.tiers[0]!.condition = "<script>alert(1)</script>";
     quote.tiers[0]!.metrics[0]!.label = "<b>用量</b>";
     const html = render(paths);
     expect(html).not.toContain("<img"); expect(html).not.toContain("<script>"); expect(html).not.toContain("<b>");
-    expect(html).toContain("&lt;img"); expect(html).toContain("&lt;script&gt;"); expect(html).toContain("&lt;b&gt;");
+    expect(html).not.toContain("&lt;img"); expect(html).toContain("&lt;script&gt;"); expect(html).toContain("&lt;b&gt;");
 });

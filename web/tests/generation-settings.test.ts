@@ -109,6 +109,8 @@ test("canvas video panel exposes audio and watermark, removes W/H and shows effe
     expect(markup).not.toContain("↔");
     const wan = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: { ...config, model: "models::wan3.0-video" }, theme: canvasThemes.dark, onConfigChange: () => {} }));
     expect(wan).not.toContain('aria-label="生成音频"');
+    expect(wan).not.toContain('知梦');
+    expect(wan).not.toContain('zhimengapi');
     expect(wan).not.toContain("由模型决定");
     expect(wan).toContain("480p");
     expect(wan).toContain("1080p");
@@ -202,6 +204,8 @@ test("H3 displays 768P and 2K, reports manually entered invalid values and requi
         expect(markup).toContain(">21:9<");
         expect(markup).toContain(`本次额外参考图：${Math.max(count - 5, 0)} 张`);
         expect(markup).toContain("使用推荐参数");
+        expect(markup).not.toContain("知梦");
+        expect(markup).not.toContain("zhimengapi");
         expect(markup).not.toContain('aria-label="生成音频"');
     }
 });
