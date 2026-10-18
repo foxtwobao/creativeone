@@ -31,10 +31,10 @@ beforeAll(async () => {
     }) as typeof fetch;
     await initializeCloud();
     const { defaultConfig } = await import("@/stores/use-config-store");
-    config = { ...defaultConfig, model: "video::wan3.0-video-720p", size: "4:3", videoSize: "auto", channels: [{
+    config = { ...defaultConfig, model: "video::wan3.0-video", size: "4:3", videoSize: "auto", channels: [{
         id: "video", name: "Video", baseUrl: "https://creative.test/api/ai/video/v1", apiKey: "csrf", apiFormat: "openai",
         models: [
-            { name: "wan3.0-video-720p", capability: "video", videoType: "wan" },
+            { name: "wan3.0-video", capability: "video", videoType: "wan" },
             { name: "wan3.0-image-1080p", capability: "video", videoType: "wan" },
             { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance" },
             { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance" },
@@ -55,25 +55,28 @@ afterAll(() => {
 
 test("WAN submits owned file references without downloading or signing media in the browser", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, data: { task_id: "wan-task" } } }); mocks.push(post);
-    const task = await api.createVideoGenerationTask(config, "镜头向前", [{ id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:one" }], {
+    const task = await api.createVideoGenerationTask({ ...config, videoMode: "reference" }, "镜头向前", [{ id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:one" }], {
         videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }],
         audios: [{ id: "a", name: "audio", type: "audio/mp3", url: "", storageKey: "file:audio" }],
     });
     expect(task).toEqual({ id: "wan-task", provider: "wan", model: config.model });
     expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
-    expect(post.mock.calls[0]![1]).toEqual({ model: "wan3.0-video-720p", prompt: "镜头向前", seconds: "6", aspect_ratio: "adaptive",
-        reference_images: [{ url: "/api/files/image_files/image%3Aone", role: "first_frame" }],
-        reference_videos: [{ url: "/api/files/media_files/file%3Avideo" }], reference_audios: [{ url: "/api/files/media_files/file%3Aaudio" }],
+    expect(post.mock.calls[0]![1]).toEqual({ model: "wan3.0-video", prompt: "镜头向前", duration: 6, resolution: "720P", ratio: "adaptive",
+        metadata: { input: { media: [
+            { type: "reference_image", url: "/api/files/image_files/image%3Aone" },
+            { type: "reference_video", url: "/api/files/media_files/file%3Avideo" },
+            { type: "reference_audio", url: "/api/files/media_files/file%3Aaudio" },
+        ] } },
     });
     expect(signed).toHaveLength(0);
-    expect(settings.videoSettingsForModel({ ...config, vquality: "1080" }, config.model)).toMatchObject({ ratio: "auto", resolution: "720" });
+    expect(settings.videoSettingsForModel({ ...config, vquality: "1080" }, config.model)).toMatchObject({ ratio: "auto", resolution: "1080", resolutions: [{value: "480", label: "480p"}, {value: "720", label: "720p"}, {value: "1080", label: "1080p"}] });
 });
 
-test("image-only WAN rejects missing images and reference videos before creating or signing", async () => {
+test("WAN rejects old model IDs before creating or signing", async () => {
     const post = spyOn(axios, "post"); mocks.push(post);
     const imageConfig = { ...config, model: "video::wan3.0-image-1080p" };
-    await expect(api.createVideoGenerationTask(imageConfig, "prompt")).rejects.toThrow("至少一张");
-    await expect(api.createVideoGenerationTask(imageConfig, "prompt", [], { videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }] })).rejects.toThrow("不支持参考视频");
+    await expect(api.createVideoGenerationTask(imageConfig, "prompt")).rejects.toThrow("公共模型");
+    await expect(api.createVideoGenerationTask(imageConfig, "prompt", [], { videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }] })).rejects.toThrow("公共模型");
     expect(post).not.toHaveBeenCalled();
     expect(signed).toHaveLength(0);
 });
@@ -99,6 +102,17 @@ test("WAN rejects a preserved unsupported ratio before submitting or uploading r
     const post = spyOn(axios, "post"); mocks.push(post);
     await expect(api.createVideoGenerationTask({ ...config, videoSize: "4:3" }, "prompt")).rejects.toThrow("宽高比");
     expect(post).not.toHaveBeenCalled();
+});
+
+test("WAN rejects inherited automatic duration and submits only after a manual duration change", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "wan-manual-duration" } }); mocks.push(post);
+    const selected = { ...config, videoSeconds: "-1" };
+    await expect(api.createVideoGenerationTask(selected, "prompt")).rejects.toThrow("2–30");
+    expect(post).not.toHaveBeenCalled();
+    expect(selected.videoSeconds).toBe("-1");
+    await expect(api.createVideoGenerationTask({ ...selected, videoSeconds: "6" }, "prompt")).resolves.toMatchObject({ id: "wan-manual-duration", provider: "wan" });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0]![1]).toMatchObject({ duration: 6 });
 });
 
 test("resuming WAN reads server file metadata without downloading or uploading the video", async () => {

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { db, transaction } from "./db.js";
 import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError } from "./http.js";
-import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser } from "./storage.js";
+import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signWanMedia } from "./storage.js";
 import { downloadRemoteMedia } from "./media.js";
 import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
@@ -39,13 +39,7 @@ async function mediaBody(userId: string, path: string, channel: Channel, snapsho
     delete input.user_prompt;
     delete input.canvas_source;
     delete input.canvas_submission;
-    if (path === "videos") for (const field of ["reference_images", "reference_videos", "reference_audios"]) {
-        for (const ref of input[field] || []) if (ref.url.startsWith("/api/files/")) {
-            const match = /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(ref.url);
-            if (!match) throw new HttpError(400, "INVALID_FILE_REFERENCE");
-            ref.url = await mediaReferenceForUser(userId, match[1], decodeURIComponent(match[2]), Date.now() + 30 * 60_000);
-        }
-    }
+    if (path === "videos") await signWanMedia(userId, input.metadata?.input.media || []);
     if (path === "contents/generations/tasks") for (const part of input.content || []) {
         const url = part.video_url?.url || part.audio_url?.url;
         if (typeof url === "string" && url.startsWith("/api/files/media_files/")) {

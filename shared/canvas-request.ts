@@ -19,7 +19,7 @@ export function canvasRequestBody(model: string, capability: "image" | "video", 
     }
     const profile = videoModelProfile(model, family as VideoModelType);
     return videoRequestBody(model, family as VideoModelType, scene, references, {
-        ratio: metadata.videoSize || "auto", resolution: profile.fixedResolution || parseVideoResolution(metadata.vquality || "720"), seconds: metadata.seconds || "6",
+        ratio: metadata.videoSize || "auto", resolution: parseVideoResolution(metadata.vquality || "720"), seconds: metadata.seconds || "6",
         mode: metadata.videoMode === "reference" || references.images.length > 2 ? "reference" : "frames",
         generateAudio: profile.audioOptions && metadata.generateAudio !== "false", watermark: profile.audioOptions && metadata.watermark === "true",
     });

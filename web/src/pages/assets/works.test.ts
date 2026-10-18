@@ -41,9 +41,10 @@ test("task prompts use the saved user input and search Seedance content without 
     expect(generationPrompt({input: [{role: "system", content: "指令"}, {role: "user", content: [{type: "input_text", text: "用户问题"}]}]})).toBe("用户问题");
 });
 test("task settings retain false and zero, describe actual references and never infer resolution from a model ID", () => {
-    const settings = taskSettings({model: "wan3.0-video-1080p", prompt: "用户输入", seconds: "4", aspect_ratio: "1:1", generate_audio: false, seed: 0, reference_images: [{url: "/ref", role: "first_frame"}], reference_audios: [{url: "/audio"}]});
+    const settings = taskSettings({model: "wan3.0-video", prompt: "用户输入", duration: 4, resolution: "1080P", ratio: "1:1", generate_audio: false, seed: 0, metadata: {input: {media: [{type: "reference_image", url: "/ref"}, {type: "reference_audio", url: "/audio"}]}}});
     const values = Object.fromEntries(settings.map((item) => [item.label, item.children]));
-    expect(values).toMatchObject({"时长": "4 秒", "宽高比": "1:1", "生成音频": "关闭", "随机种子": "0", "参考图片": "1 个", "参考音频": "1 个", "图片参考方式": "首帧"});
-    expect(values["分辨率"]).toBeUndefined();
+    expect(values).toMatchObject({"时长": "4 秒", "宽高比": "1:1", "生成音频": "关闭", "随机种子": "0", "参考图片": "1 个", "参考音频": "1 个", "图片参考方式": "参考图"});
+    expect(values["分辨率"]).toBe("1080P");
+    expect(taskSettings({ model: "wan3.0-video-1080p", duration: 4 }).find((item) => item.key === "resolution")).toBeUndefined();
     expect(taskSettings({model: "banana", images: ["/a", "/b"]}).find((item) => item.key === "images")?.children).toBe("2 个");
 });

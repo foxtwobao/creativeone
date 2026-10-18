@@ -3,7 +3,7 @@ import { env } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { db, transaction } from "./db.js";
 import { HttpError } from "./http.js";
-import { downloadRemoteMedia, saveDownloadedMedia } from "./media.js";
+import { downloadRemoteMedia, readBytes, saveDownloadedMedia } from "./media.js";
 import { ensureKey, modelProvider, upstreamUrl } from "./tokenone.js";
 import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { VIDEO_WORKER_INTERVAL_MS } from "../../shared/video-tasks.js";
@@ -50,10 +50,25 @@ async function poll(taskId: string) {
         const wan = task.path === "videos";
         let media: Awaited<ReturnType<typeof downloadRemoteMedia>> | undefined;
         if (status === "succeeded") {
-            const url = wan ? video.metadata?.url : video.content?.video_url;
-            if (typeof url !== "string") throw new HttpError(502, "INVALID_VIDEO_TASK");
             // Only the session lock is held during transfers; no project/user row locks are held.
-            media = await downloadRemoteMedia(url, signal, "video/mp4");
+            if (wan) {
+                const content = await fetch(upstreamUrl(`videos/${encodeURIComponent(task.upstream_id)}/content`), {
+                    headers: { Authorization: `Bearer ${key.key}` }, redirect: "error", signal,
+                });
+                const mimeType = (content.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+                if (!content.ok) {
+                    if (mimeType.includes("json")) throw await tokenoneError(content);
+                    throw new HttpError(502, "MEDIA_DOWNLOAD_FAILED");
+                }
+                if (!mimeType.startsWith("video/") && mimeType !== "application/octet-stream") throw new HttpError(502, "INVALID_VIDEO_TASK");
+                const bytes = await readBytes(content);
+                if (!bytes.length) throw new HttpError(502, "EMPTY_UPSTREAM_RESPONSE");
+                media = { bytes, mimeType: mimeType === "application/octet-stream" ? "video/mp4" : mimeType };
+            } else {
+                const url = video.content?.video_url;
+                if (typeof url !== "string") throw new HttpError(502, "INVALID_VIDEO_TASK");
+                media = await downloadRemoteMedia(url, signal, "video/mp4");
+            }
         }
         if (disconnected) return;
         await owner.query("SELECT 1");

@@ -8,10 +8,10 @@ import { db, transaction } from "./db.js";
 import { env } from "./config.js";
 import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError, requireUuid } from "./http.js";
-import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, fileReferences, collectDeletedFiles } from "./storage.js";
+import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signWanMedia, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
 import { tokenoneError, modelErrorMessage, taskErrorMessage, upstreamErrorDetails } from "./model-errors.js";
-import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError } from "./model-capabilities.js";
+import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError, wanRequestSchema } from "./model-capabilities.js";
 import { videoModelProfile, wanModelProfile } from "../../shared/video-models.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
 import { readAccountData } from "./account-data.js";
@@ -21,17 +21,6 @@ import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES, fieldSize: env.MAX_JSON_BYTES } }).any();
 const endpoints: Record<string, string> = { "images/generations": "image", "images/edits": "image", "responses": "text", "chat/completions": "text", "audio/speech": "audio", "contents/generations/tasks": "video", videos: "video" };
-const referenceUrl = z.union([z.string().regex(/^\/api\/files\/(image_files|media_files)\/[^/?#]+$/), z.url().refine((value) => {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password;
-})]);
-const wanRequest = z.object({
-    model: z.string(), prompt: z.string().trim().min(1), seconds: z.string().regex(/^[1-9]\d*$/),
-    aspect_ratio: z.enum(["16:9", "9:16", "1:1", "adaptive"]),
-    reference_images: z.array(z.object({ url: referenceUrl, role: z.enum(["reference_image", "first_frame", "last_frame"]).optional() }).strict()).max(10).default([]),
-    reference_videos: z.array(z.object({ url: referenceUrl }).strict()).default([]),
-    reference_audios: z.array(z.object({ url: referenceUrl }).strict()).default([]),
-}).strict();
 const canvasContextSchema = z.object({
     projectId: z.uuid(),
     nodeId: z.string().trim().min(1),
@@ -128,11 +117,8 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             const kind = channel.video_types?.[req.body.model] || "seedance";
             if (path !== (kind === "wan" ? "videos" : "contents/generations/tasks")) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
             if (kind === "wan") {
-                req.body = wanRequest.parse(req.body);
-                const profile = wanModelProfile(req.body.model);
-                if (!profile) throw new HttpError(400, "INVALID_WAN_MODEL");
-                if (!profile.referenceVideo && req.body.reference_videos?.length) throw new HttpError(400, "WAN_REFERENCE_VIDEO_UNSUPPORTED");
-                if (!profile.referenceVideo && !req.body.reference_images?.length) throw new HttpError(400, "WAN_REFERENCE_IMAGE_REQUIRED");
+                req.body = wanRequestSchema.parse(req.body);
+                if (!wanModelProfile(req.body.model)) throw new HttpError(400, "INVALID_WAN_MODEL");
             }
         }
     }
@@ -147,13 +133,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     if (canvasContext && !["image", "video"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
     if (canvasContext && req.is("multipart/form-data")) throw new HttpError(400, "INVALID_REQUEST");
     let requestSnapshot: Record<string, any> = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }) };
-    if (!canvasContext && path === "videos") for (const field of ["reference_images", "reference_videos", "reference_audios"]) {
-        for (const ref of req.body[field] || []) {
-            if (!ref.url.startsWith("/api/files/")) continue;
-            const match = /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(ref.url)!;
-            ref.url = await mediaReferenceForUser(user.id, match[1], decodeURIComponent(match[2]), Date.now()+30*60_000);
-        }
-    }
+    if (!canvasContext && path === "videos") await signWanMedia(user.id, req.body.metadata?.input.media || []);
     if (!canvasContext && path === "contents/generations/tasks") for (const part of req.body.content || []) {
         const url = part.type === "video_url" ? part.video_url?.url : undefined;
         if (typeof url !== "string" || !url.startsWith("/api/files/media_files/")) continue;

@@ -35,6 +35,21 @@ export async function mediaReferenceForUser(userId: string, ns: string, key: str
     return signedMediaUrl(rows[0].disk_id, expiresAt);
 }
 
+export async function signWanMedia(userId: string, media: { type: string; url: string }[]) {
+    const expiresAt = Date.now() + 30 * 60_000;
+    for (const ref of media) {
+        if (!ref.url.startsWith("/api/files/")) continue;
+        const match = /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(ref.url);
+        if (!match) throw new HttpError(400, "INVALID_FILE_REFERENCE");
+        if (new URL(env.APP_ORIGIN).protocol !== "https:") throw new HttpError(409, "WAN_PUBLIC_ORIGIN_REQUIRED");
+        const { rows } = await db.query("SELECT disk_id,mime_type FROM files WHERE user_id=$1 AND namespace=$2 AND key=$3", [userId, match[1], decodeURIComponent(match[2])]);
+        if (!rows[0]) throw new HttpError(404, "FILE_NOT_FOUND");
+        const kind = ref.type === "reference_video" ? "video" : ref.type === "reference_audio" ? "audio" : "image";
+        if (!rows[0].mime_type.startsWith(`${kind}/`)) throw new HttpError(400, "INVALID_FILE_REFERENCE");
+        ref.url = signedMediaUrl(rows[0].disk_id, expiresAt);
+    }
+}
+
 export const publicMediaRouter = Router();
 publicMediaRouter.get("/public/media/:diskId", async (req, res) => {
     const diskId = z.uuid().parse(req.params.diskId);

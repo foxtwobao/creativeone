@@ -3,7 +3,7 @@ export type VideoModelType = (typeof videoModelTypes)[number];
 export const videoModelTypeLabels: Record<VideoModelType, string> = { seedance: "Seedance", wan: "WAN 3" };
 
 type VideoCapabilities = {
-    resolutions: string[]; fixedResolution?: string; ratios: string[];
+    resolutions: string[]; ratios: string[];
     duration: { min: number; max: number; auto: boolean } | null;
     maxImages: number | null; maxVideos: number | null; maxAudios: number | null;
     referenceSeconds: number | null; requireImage: boolean; audioOnly: boolean;
@@ -11,7 +11,7 @@ type VideoCapabilities = {
 };
 export const videoTypePresets: Record<VideoModelType, VideoCapabilities> = {
     seedance: { resolutions: ["480", "720", "1080"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9", "auto"], duration: null, maxImages: null, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: true, framesAdaptive: false, explicitReferenceTask: false },
-    wan: { resolutions: [], ratios: ["16:9", "9:16", "1:1", "auto"], duration: null, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
+    wan: { resolutions: [], ratios: ["16:9", "9:16", "1:1", "auto"], duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
 };
 // https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh
 // https://doc.tokenone.work/web/#/688394820/172712494
@@ -21,10 +21,8 @@ export const videoModelOverrides: Record<VideoModelType, Record<string, Partial<
         "doubao-seedance-2-5-260628": { duration: { min: 4, max: 30, auto: true }, maxImages: 30, maxVideos: 10, maxAudios: 10, referenceSeconds: 30, audioOnly: true, framesAdaptive: true, explicitReferenceTask: true },
     },
     wan: {
-        "wan3.0-video-480p": { fixedResolution: "480" }, "wan3.0-video-720p": { fixedResolution: "720" }, "wan3.0-video-1080p": { fixedResolution: "1080" },
-        "wan3.0-video-prime-480p": { fixedResolution: "480" }, "wan3.0-video-prime-720p": { fixedResolution: "720" }, "wan3.0-video-prime-1080p": { fixedResolution: "1080" },
-        "wan3.0-image-480p": { fixedResolution: "480", maxVideos: 0, requireImage: true }, "wan3.0-image-720p": { fixedResolution: "720", maxVideos: 0, requireImage: true }, "wan3.0-image-1080p": { fixedResolution: "1080", maxVideos: 0, requireImage: true },
-        "wan3.0-image-prime-480p": { fixedResolution: "480", maxVideos: 0, requireImage: true }, "wan3.0-image-prime-720p": { fixedResolution: "720", maxVideos: 0, requireImage: true }, "wan3.0-image-prime-1080p": { fixedResolution: "1080", maxVideos: 0, requireImage: true },
+        "wan3.0-video": { resolutions: ["480", "720", "1080"] },
+        "wan3.0-video-prime": { resolutions: ["480", "720", "1080"] },
     },
 };
 export function videoModelProfile(model: string, family: VideoModelType) {
@@ -33,7 +31,7 @@ export function videoModelProfile(model: string, family: VideoModelType) {
 }
 export function wanModelProfile(model: string) {
     const profile = videoModelProfile(model, "wan");
-    return profile.fixedResolution ? { referenceVideo: profile.maxVideos !== 0, resolution: profile.fixedResolution } : null;
+    return profile.resolutions.length ? profile : null;
 }
 export type VideoReferenceCounts = { images: number; videos: number; audios: number; videoSeconds?: number; audioSeconds?: number };
 export function videoReferenceError(profile: ReturnType<typeof videoModelProfile>, refs: VideoReferenceCounts) {
@@ -47,12 +45,12 @@ export function videoReferenceError(profile: ReturnType<typeof videoModelProfile
     return "";
 }
 export function videoCapabilityError(profile: ReturnType<typeof videoModelProfile>, params: { resolution: string; ratio: string; seconds: number; mode: string }, refs: VideoReferenceCounts) {
-    if (profile.family === "wan" && !profile.fixedResolution) return "当前 WAN 型号尚未配置能力。";
+    if (profile.family === "wan" && !profile.resolutions.length) return "请选择 wan3.0-video 或 wan3.0-video-prime 公共模型。";
     const referenceError = videoReferenceError(profile, refs);
     if (referenceError) return referenceError;
-    if (!profile.fixedResolution && !profile.resolutions.includes(params.resolution)) return "当前模型不支持所选分辨率，请重新选择。";
+    if (!profile.resolutions.includes(params.resolution)) return "当前模型不支持所选分辨率，请重新选择。";
     if (!profile.ratios.includes(params.ratio)) return "当前模型不支持所选宽高比，请重新选择。";
-    if (profile.family === "seedance" && params.mode === "frames" && refs.images) {
+    if (params.mode === "frames" && refs.images) {
         if (refs.images > 2 || refs.videos || refs.audios) return "首尾帧模式不能混用多图、视频或音频参考，请切换参考模式。";
         if (profile.framesAdaptive && params.ratio !== "auto") return "当前模型的首尾帧模式只能使用自动宽高比，请重新选择。";
     }

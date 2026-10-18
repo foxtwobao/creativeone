@@ -9,7 +9,6 @@ import { videoSettingsForModel } from "@/lib/video-settings";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { buildApiUrl, modelOptionName, modelVideoTypeOf, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
-import { wanModelProfile } from "../../../../shared/video-models";
 import { VIDEO_POLL_INTERVAL_MS } from "../../../../shared/video-tasks";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -136,11 +135,7 @@ async function referenceUrl(namespace: "image_files" | "media_files", item: { st
 }
 
 async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const profile = wanModelProfile(modelOptionName(model));
-    if (!profile) throw new Error("WAN 模型名需包含有效的分辨率后缀");
-    if (!profile.referenceVideo && options?.videos?.length) throw new Error("当前 WAN 图生模型不支持参考视频");
-    if (!profile.referenceVideo && !references.length) throw new Error("WAN 图生模型需要至少一张参考图片");
-    const { mode, ratio, seconds } = videoSettingsForModel(config, model, references.length);
+    const { mode, ratio, seconds, resolution } = videoSettingsForModel(config, model, references.length, options);
     const [reference_images, reference_videos, reference_audios] = await Promise.all([
         Promise.all(references.map(async (image, index) => {
             const url = await imageToDataUrl(image, options);
@@ -155,7 +150,7 @@ async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: s
             return { url: await referenceUrl("media_files", audio, options) };
         })),
     ]);
-    const body = { ...videoRequestBody(modelOptionName(model), "wan", prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution: profile.fixedResolution || "720", generateAudio: false, watermark: false }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
+    const body = { ...videoRequestBody(modelOptionName(model), "wan", prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution, generateAudio: false, watermark: false }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
     try {
         const response = (await axios.post<ApiVideoResponse & { canvasTaskId?: string }>(aiApiUrl(requestConfig, "/videos"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data;
         const created = unwrapVideoResponse(await canvasGenerationResult(response, options?.signal));

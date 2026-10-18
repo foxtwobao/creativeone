@@ -24,10 +24,10 @@ export function generationRequestSettings(capability: string, request: Record<st
         quality: request.quality || "auto",
         background: request.background || "",
         count: String(request.n || 1),
-        vquality: request.resolution || "",
+        vquality: request.resolution?.replace(/p$/i, "") || "",
         videoSeconds: String(request.seconds || request.duration || ""),
         videoGenerateAudio: String(request.generate_audio ?? true),
         videoWatermark: String(request.watermark ?? false),
-        videoMode: [...(request.content || []), ...(request.reference_images || [])].some((part: any) => part.role === "reference_image") ? "reference" : "frames",
+        videoMode: [...(request.content || []), ...(request.metadata?.input?.media || [])].some((part: any) => part.role === "reference_image" || part.type === "reference_image") ? "reference" : "frames",
     };
 }

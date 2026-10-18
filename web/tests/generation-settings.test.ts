@@ -29,7 +29,7 @@ beforeAll(async () => {
             { name: "banana-2k", capability: "image", imageType: "banana" },
             { name: "grok-imagine-image-2.0", capability: "image", imageType: "grok" },
             { name: "seedance", capability: "video", videoType: "seedance" },
-            { name: "wan3.0-video-720p", capability: "video", videoType: "wan" },
+            { name: "wan3.0-video", capability: "video", videoType: "wan" },
         ],
     }] };
     images = await import("@/lib/image-settings");
@@ -82,14 +82,14 @@ test("image and video preferences and canvas node settings remain separate", () 
 test("video panels and requests derive the same mode, switches, duration and WAN restrictions", () => {
     expect(videos.videoSettingsForModel({ ...config, videoGenerateAudio: "false", videoWatermark: "true" }, "models::seedance", 3)).toMatchObject({ mode: "reference", forcedReference: true, generateAudio: false, watermark: true, seconds: "6" });
     expect(videos.videoSettingsForModel(config, "models::seedance", 2).mode).toBe("frames");
-    expect(videos.videoSettingsForModel({ ...config, vquality: "1080" }, "models::wan3.0-video-720p")).toMatchObject({ resolution: "720", audioOptions: false });
-    expect(videos.videoSettingsForModel({ ...config, videoSize: "4:3" }, "models::wan3.0-video-720p").error).toContain("宽高比");
+    expect(videos.videoSettingsForModel({ ...config, vquality: "1080" }, "models::wan3.0-video")).toMatchObject({ resolution: "1080", audioOptions: false });
+    expect(videos.videoSettingsForModel({ ...config, videoSize: "4:3" }, "models::wan3.0-video").error).toContain("宽高比");
 });
 
 test("history restores submitted image resolution, automatic size, transparency and actual WAN reference mode", () => {
     expect(generationRequestSettings("image", { aspect_ratio: "16:9", resolution: "2k", quality: "medium" })).toMatchObject({ size: "2048x1152", videoSize: "", quality: "medium" });
     expect(generationRequestSettings("image", { background: "transparent" })).toMatchObject({ size: "auto", quality: "auto", background: "transparent" });
-    expect(generationRequestSettings("video", { aspect_ratio: "adaptive", reference_images: [{ role: "reference_image" }], seconds: "6" })).toMatchObject({ size: "", videoSize: "auto", videoMode: "reference", videoSeconds: "6" });
+    expect(generationRequestSettings("video", { ratio: "adaptive", metadata: { input: { media: [{ type: "reference_image", url: "/ref" }] } }, duration: 6, resolution: "720P" })).toMatchObject({ size: "", videoSize: "auto", videoMode: "reference", videoSeconds: "6" });
 });
 
 test("canvas video panel exposes audio and watermark, removes W/H and shows effective reference mode", async () => {
@@ -102,9 +102,39 @@ test("canvas video panel exposes audio and watermark, removes W/H and shows effe
     expect(markup).toContain('aria-label="视频水印"');
     expect(markup).toContain("超过两张图片，已使用参考图模式。");
     expect(markup).not.toContain("↔");
-    const wan = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: { ...config, model: "models::wan3.0-video-720p" }, theme: canvasThemes.dark, onConfigChange: () => {} }));
+    const wan = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: { ...config, model: "models::wan3.0-video" }, theme: canvasThemes.dark, onConfigChange: () => {} }));
     expect(wan).not.toContain('aria-label="生成音频"');
-    expect(wan).toContain("由模型决定");
+    expect(wan).not.toContain("由模型决定");
+    expect(wan).toContain("480p");
+    expect(wan).toContain("1080p");
+    expect(wan).toContain('min="2"');
+    expect(wan).toContain('max="30"');
+});
+
+test("switching from Seedance automatic duration to WAN preserves -1 and unlocks the duration controls", async () => {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { VideoSettingsPanel } = await import("@/components/video-settings-panel");
+    const { canvasThemes } = await import("@/lib/canvas-theme");
+    const selected = { ...config, model: "models::doubao-seedance-2-0-260128", videoSeconds: "-1", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const }] }] };
+    const changes: string[] = [];
+    const render = (value: AiConfig) => renderToStaticMarkup(createElement(VideoSettingsPanel, { config: value, theme: canvasThemes.light, onConfigChange: (_key, next) => changes.push(next) }));
+    const seedance = render(selected);
+    expect(seedance).toContain('aria-label="自动时长"');
+    expect(seedance.match(/<input\b[^>]*type="number"[^>]*>/)?.[0]).toContain("disabled");
+    expect(videos.videoSettingsForModel(selected, selected.model)).toMatchObject({ seconds: "-1", automaticDuration: true });
+    const switched = { ...selected, model: "models::wan3.0-video" };
+    const wan = render(switched);
+    const input = wan.match(/<input\b[^>]*type="number"[^>]*>/)?.[0];
+    expect(input).toContain('value="-1"');
+    expect(input).not.toContain("disabled");
+    expect(wan).not.toContain('aria-disabled="true"');
+    expect(wan).not.toContain('aria-label="自动时长"');
+    expect(wan).toContain("2–30");
+    expect(videos.videoSettingsForModel(switched, switched.model)).toMatchObject({ seconds: "-1", autoSeconds: false, automaticDuration: false });
+    expect(videos.videoSettingsForModel({ ...switched, videoSeconds: "6" }, switched.model).error).toBe("");
+    expect(changes).toEqual([]);
+    expect(selected.videoSeconds).toBe("-1");
 });
 
 test("model-aware panels show extra GPT quality and single-image Grok follows the reference ratio", async () => {
