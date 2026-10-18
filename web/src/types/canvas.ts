@@ -87,7 +87,7 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     videoTaskId?: string;
-    videoTaskProvider?: "seedance" | "wan";
+    videoTaskPath?: "videos" | "contents/generations/tasks";
     videoTaskModel?: string;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.

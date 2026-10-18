@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
+import { WanReferenceNotice } from "@/components/wan-reference-notice";
+import { H3ReferenceNotice } from "@/components/h3-reference-notice";
 import { normalizeVideoResolutionValue, videoModeLabel, videoSizeLabel } from "@/lib/video-settings";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
@@ -460,7 +462,7 @@ export default function VideoPage() {
                             {referenceAudios.map((item) => <span key={item.id}>音频：{item.name}<button aria-label={`移除 ${item.name}`} onClick={() => setReferenceAudios((value) => value.filter((ref) => ref.id !== item.id))}><X className="ml-1 inline size-3" /></button></span>)}
                         </div> : null}
                         <div className="studio-input-row">
-                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" onClick={() => videoInputRef.current?.click()} disabled={videoSettings.profile.maxVideos === 0}>上传参考视频</Button><Button type="text" onClick={() => audioInputRef.current?.click()}>上传参考音频</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
+                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" onClick={() => videoInputRef.current?.click()} disabled={videoSettings.profile.maxVideos === 0}>上传参考视频</Button><Button type="text" onClick={() => audioInputRef.current?.click()}>上传参考音频</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button>{videoSettings.wan ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><WanReferenceNotice showDetails={false} /></section> : videoSettings.h3 ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><H3ReferenceNotice compact referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : null}</div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
                             <Input.TextArea aria-label="视频创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述画面、动作与运镜，让故事动起来…" onChange={(event) => setPrompt(event.target.value)} />
                             <button className="studio-send" aria-label="开始生成视频" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
                         </div>
@@ -470,6 +472,7 @@ export default function VideoPage() {
                         </div>
                     </div>
                     <div className="studio-composer-caption"><span>{modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(videoSettings.resolution)} · {videoSizeLabel(videoSettings.ratio)} · {videoSecondsLabel(videoSettings.seconds)} · {videoModeLabel(videoSettings.mode)}</span><span>{uploadingMedia ? "参考素材上传中…" : "点击生成 · Enter 换行"}</span></div>
+                    {videoSettings.wan ? <section className="mt-4 px-3.5"><WanReferenceNotice /></section> : videoSettings.h3 ? <section className="mt-4 px-3.5"><H3ReferenceNotice onConfigChange={updateConfig} referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : null}
                     {videoSettings.error ? <p role="alert" className="text-xs text-muted-foreground">{videoSettings.error}</p> : null}
                 </section>
                 {results.length ? <section className="studio-results">
@@ -526,13 +529,14 @@ function GenerationSettings({ showModel = true, referenceImageCount, media }: { 
     const config = useEffectiveConfig();
     const model = config.videoModel || config.model;
     const settings = videoSettingsForModel(config, model, referenceImageCount, media);
-    const { wan, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = settings;
+    const { wan, h3, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = settings;
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     return <div className="studio-settings">
         <h3>视频生成设置</h3>
         {error ? <p role="alert" className="text-xs text-muted-foreground">{error}</p> : null}
         {showModel ? <div><span>视频模型</span><ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} /></div> : null}
+        {wan ? <section className="mb-4"><WanReferenceNotice showDetails={showModel} /></section> : h3 ? <section className="mb-4"><H3ReferenceNotice onConfigChange={updateConfig} compact={!showModel} referenceImageCount={mode === "reference" ? referenceImageCount : 0} /></section> : null}
         <div><span>分辨率</span><Select aria-label="视频分辨率" value={resolution} options={resolutions} onChange={(value) => updateConfig("vquality", value)} /></div>
         <div><span>宽高比</span><Select aria-label="视频宽高比" value={ratio} options={videoSizeOptions.filter((item) => ratios.some((option) => option.value === item.value))} onChange={(value) => updateConfig("videoSize", value)} /></div>
         <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} changeOnBlur={false} precision={0} value={automaticDuration ? null : Number(seconds)} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div>
@@ -540,7 +544,7 @@ function GenerationSettings({ showModel = true, referenceImageCount, media }: { 
         {framesAdaptive ? <p className="text-xs text-muted-foreground">首尾帧生成沿用首帧比例，请选择自动宽高比。</p> : null}
         <div><span>参考模式</span><Select aria-label="视频参考模式" value={mode} options={videoModeOptions.map((item) => ({ ...item, disabled: forcedReference && item.value === "frames" }))} onChange={(value) => updateConfig("videoMode", value)} /></div>
         {settings.audioOptions ? <><div><span>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(value) => updateConfig("videoGenerateAudio", String(value))} /></div>
-        <div><span>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div></> : wan ? <p className="text-xs text-muted-foreground">参考视频时长参与计费。</p> : null}
+        <div><span>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div></> : null}
         {forcedReference ? <p className="pt-2 text-xs text-muted-foreground">超过两张图片，已使用参考图模式。</p> : null}
     </div>;
 }

@@ -2,7 +2,7 @@ import { bananaImageBody } from "./image-banana.js";
 import { grokImageBody } from "./image-grok.js";
 import { openAiImageParams } from "./image-openai.js";
 import { parseVideoResolution } from "./media-size.js";
-import { videoModelProfile, type VideoModelType } from "./video-models.js";
+import { h3VideoDefaults, videoModelProfile, type VideoModelType } from "./video-models.js";
 import { videoRequestBody } from "./video-request.js";
 import type { ImageModelType } from "./image-models.js";
 import type { CanvasNodeMetadata } from "../web/src/types/canvas.js";
@@ -19,8 +19,8 @@ export function canvasRequestBody(model: string, capability: "image" | "video", 
     }
     const profile = videoModelProfile(model, family as VideoModelType);
     return videoRequestBody(model, family as VideoModelType, scene, references, {
-        ratio: metadata.videoSize || "auto", resolution: parseVideoResolution(metadata.vquality || "720"), seconds: metadata.seconds || "6",
-        mode: metadata.videoMode === "reference" || references.images.length > 2 ? "reference" : "frames",
+        ratio: metadata.videoSize || (family === "h3" ? h3VideoDefaults.videoSize : "auto"), resolution: parseVideoResolution(metadata.vquality || (family === "h3" ? h3VideoDefaults.vquality : "720")), seconds: metadata.seconds || (family === "h3" ? h3VideoDefaults.videoSeconds : "6"),
+        mode: metadata.videoMode === "reference" || family !== "h3" && references.images.length > 2 ? "reference" : "frames",
         generateAudio: profile.audioOptions && metadata.generateAudio !== "false", watermark: profile.audioOptions && metadata.watermark === "true",
     });
 }

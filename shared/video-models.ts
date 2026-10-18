@@ -1,7 +1,9 @@
-export const videoModelTypes = ["seedance", "wan"] as const;
+export const videoModelTypes = ["seedance", "wan", "h3"] as const;
 export type VideoModelType = (typeof videoModelTypes)[number];
-export const videoModelTypeLabels: Record<VideoModelType, string> = { seedance: "Seedance", wan: "WAN 3" };
+export const videoModelTypeLabels: Record<VideoModelType, string> = { seedance: "Seedance", wan: "WAN 3", h3: "MiniMax H3" };
 export const wanAspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "adaptive"] as const;
+export const h3AspectRatios = [...wanAspectRatios, "21:9"] as const;
+export const h3VideoDefaults = { videoSeconds: "4", vquality: "768", videoSize: "16:9" } as const;
 
 type VideoCapabilities = {
     resolutions: string[]; ratios: string[];
@@ -13,6 +15,7 @@ type VideoCapabilities = {
 export const videoTypePresets: Record<VideoModelType, VideoCapabilities> = {
     seedance: { resolutions: ["480", "720", "1080"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9", "auto"], duration: null, maxImages: null, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: true, framesAdaptive: false, explicitReferenceTask: false },
     wan: { resolutions: [], ratios: wanAspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
+    h3: { resolutions: [], ratios: h3AspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 4, max: 15, auto: false }, maxImages: 9, maxVideos: 3, maxAudios: 3, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false },
 };
 // https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh
 // https://doc.tokenone.work/web/#/688394820/172712494
@@ -25,6 +28,7 @@ export const videoModelOverrides: Record<VideoModelType, Record<string, Partial<
         "wan3.0-video": { resolutions: ["480", "720", "1080"] },
         "wan3.0-video-prime": { resolutions: ["480", "720", "1080"] },
     },
+    h3: { "MiniMax-H3": { resolutions: ["768", "2k"] } },
 };
 export function videoModelProfile(model: string, family: VideoModelType) {
     const name = model.split("::").pop() || "";
@@ -47,10 +51,12 @@ export function videoReferenceError(profile: ReturnType<typeof videoModelProfile
 }
 export function videoCapabilityError(profile: ReturnType<typeof videoModelProfile>, params: { resolution: string; ratio: string; seconds: number; mode: string }, refs: VideoReferenceCounts) {
     if (profile.family === "wan" && !profile.resolutions.length) return "请选择 wan3.0-video 或 wan3.0-video-prime 公共模型。";
+    if (profile.family === "h3" && !profile.resolutions.length) return "请选择 MiniMax-H3 公共模型。";
     const referenceError = videoReferenceError(profile, refs);
     if (referenceError) return referenceError;
     if (!profile.resolutions.includes(params.resolution)) return "当前模型不支持所选分辨率，请重新选择。";
     if (!profile.ratios.includes(params.ratio)) return "当前模型不支持所选宽高比，请重新选择。";
+    if (profile.family === "h3" && params.mode === "frames" && (refs.videos || refs.audios)) return "首尾帧模式不能混用视频或音频参考，请切换参考模式。";
     if (params.mode === "frames" && refs.images) {
         if (refs.images > 2 || refs.videos || refs.audios) return "首尾帧模式不能混用多图、视频或音频参考，请切换参考模式。";
         if (profile.framesAdaptive && params.ratio !== "auto") return "当前模型的首尾帧模式只能使用自动宽高比，请重新选择。";

@@ -39,6 +39,7 @@ beforeAll(async () => {
             { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance" },
             { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance" },
             { name: "seedance", capability: "video", videoType: "seedance" },
+            { name: "MiniMax-H3", capability: "video", videoType: "h3" },
         ],
     }] };
     api = await import("./video");
@@ -59,7 +60,7 @@ test("WAN submits owned file references without downloading or signing media in 
         videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }],
         audios: [{ id: "a", name: "audio", type: "audio/mp3", url: "", storageKey: "file:audio" }],
     });
-    expect(task).toEqual({ id: "wan-task", provider: "wan", model: config.model });
+    expect(task).toEqual({ id: "wan-task", path: "videos", model: config.model });
     expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
     expect(post.mock.calls[0]![1]).toEqual({ model: "wan3.0-video", prompt: "镜头向前", duration: 6, resolution: "720P", ratio: "adaptive",
         metadata: { input: { media: [
@@ -83,7 +84,7 @@ test("WAN rejects old model IDs before creating or signing", async () => {
 
 test("Seedance retains its endpoint, numeric duration, ratio and audio switches", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "seedance-task" } }); mocks.push(post);
-    expect(await api.createVideoGenerationTask({ ...config, model: "video::seedance", videoSize: "4:3" }, "prompt")).toMatchObject({ provider: "seedance" });
+    expect(await api.createVideoGenerationTask({ ...config, model: "video::seedance", videoSize: "4:3" }, "prompt")).toMatchObject({ path: "contents/generations/tasks" });
     expect(post.mock.calls[0]![0]).toEndWith("/contents/generations/tasks");
     expect(post.mock.calls[0]![1]).toEqual({ model: "seedance", content: [{ type: "text", text: "prompt" }], duration: 6, resolution: "720p", ratio: "4:3", generate_audio: true, watermark: false });
     expect(signed).toHaveLength(0);
@@ -118,7 +119,7 @@ test("WAN rejects inherited automatic duration and submits only after a manual d
     await expect(api.createVideoGenerationTask(selected, "prompt")).rejects.toThrow("2–30");
     expect(post).not.toHaveBeenCalled();
     expect(selected.videoSeconds).toBe("-1");
-    await expect(api.createVideoGenerationTask({ ...selected, videoSeconds: "6" }, "prompt")).resolves.toMatchObject({ id: "wan-manual-duration", provider: "wan" });
+    await expect(api.createVideoGenerationTask({ ...selected, videoSeconds: "6" }, "prompt")).resolves.toMatchObject({ id: "wan-manual-duration", path: "videos" });
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0]![1]).toMatchObject({ duration: 6 });
 });
@@ -126,7 +127,7 @@ test("WAN rejects inherited automatic duration and submits only after a manual d
 test("resuming WAN reads server file metadata without downloading or uploading the video", async () => {
     const file = { url: "/api/files/media_files/file:completed", storageKey: "file:completed", bytes: 4915678, mimeType: "video/mp4", width: 960, height: 960, durationMs: 4000 };
     const get = spyOn(axios, "get").mockResolvedValue({ data: { code: 0, data: { id: "wan-task", status: "completed", file } } }); mocks.push(get);
-    expect(await api.waitForVideoGenerationTask({ ...config, model: "video::seedance" }, { id: "wan-task", provider: "wan", model: config.model })).toEqual(file);
+    expect(await api.waitForVideoGenerationTask({ ...config, model: "video::seedance" }, { id: "wan-task", path: "videos", model: config.model })).toEqual(file);
     expect(get.mock.calls[0]![0]).toEndWith("/v1/videos/wan-task");
     expect(get).toHaveBeenCalledTimes(1);
     // No document/media element exists, and the fetch mock rejects all media uploads.
@@ -134,7 +135,7 @@ test("resuming WAN reads server file metadata without downloading or uploading t
 
 test("a completed response without a stored file never falls back to client download or upload", async () => {
     const get = spyOn(axios, "get").mockResolvedValue({ data: { status: "completed", metadata: { url: "https://upstream.test/video.mp4" } } }); mocks.push(get);
-    await expect(api.pollVideoGenerationTask(config, { id: "wan-task", provider: "wan", model: config.model })).rejects.toThrow("服务端尚未返回");
+    await expect(api.pollVideoGenerationTask(config, { id: "wan-task", path: "videos", model: config.model })).rejects.toThrow("服务端尚未返回");
     expect(get).toHaveBeenCalledTimes(1);
 });
 
@@ -149,7 +150,7 @@ test("WAN foreground deadline aborts an in-flight query without submitting anoth
         options!.signal!.addEventListener!("abort", () => reject(new Error("aborted")));
     })); mocks.push(get);
     const post = spyOn(axios, "post"); mocks.push(post);
-    const waiting = api.waitForVideoGenerationTask(config, { id: "wan-task", provider: "wan", model: config.model });
+    const waiting = api.waitForVideoGenerationTask(config, { id: "wan-task", path: "videos", model: config.model });
     expire!();
     await expect(waiting).rejects.toThrow("后台任务不受影响");
     expect(get).toHaveBeenCalledTimes(1);
@@ -163,9 +164,9 @@ test("WAN and Seedance poll local status every five seconds", async () => {
         return 1;
     }) as typeof setTimeout); mocks.push(timer);
     const get = spyOn(axios, "get"); mocks.push(get);
-    for (const provider of ["wan", "seedance"] as const) {
-        get.mockResolvedValueOnce({ data: { status: "queued" } }).mockResolvedValueOnce({ data: { status: provider === "wan" ? "completed" : "succeeded", file } });
-        expect(await api.waitForVideoGenerationTask(config, { id: "existing", provider, model: config.model })).toEqual(file);
+    for (const path of ["videos", "contents/generations/tasks"] as const) {
+        get.mockResolvedValueOnce({ data: { status: "queued" } }).mockResolvedValueOnce({ data: { status: path === "videos" ? "completed" : "succeeded", file } });
+        expect(await api.waitForVideoGenerationTask(config, { id: "existing", path, model: config.model })).toEqual(file);
     }
     expect(get).toHaveBeenCalledTimes(4);
 });
@@ -173,7 +174,7 @@ test("WAN and Seedance poll local status every five seconds", async () => {
 test("paused tasks require explicit resume and never resubmit generation", async () => {
     const get = spyOn(axios, "get").mockResolvedValue({ data: { status: "paused", error: { message: "后台下载暂时失败" } } }); mocks.push(get);
     const post = spyOn(axios, "post").mockResolvedValue({ data: { status: "queued" } }); mocks.push(post);
-    const task = { id: "existing", provider: "wan" as const, model: config.model };
+    const task = { id: "existing", path: "videos" as const, model: config.model };
     await expect(api.waitForVideoGenerationTask(config, task)).rejects.toThrow("后台下载暂时失败");
     expect(post).not.toHaveBeenCalled();
     await api.resumeVideoGenerationTask(config, task);
@@ -217,4 +218,49 @@ test("Seedance applies per-model reference counts and prevents mixing frame and 
     await expect(api.createVideoGenerationTask(selected, "prompt", [image], { videos: [video] })).rejects.toThrow("不能混用");
     await expect(api.createVideoGenerationTask({ ...selected, videoMode: "reference" }, "prompt", [image], { videos: Array(4).fill(video) })).rejects.toThrow("3");
     expect(post).not.toHaveBeenCalled();
+});
+
+test("H3 sends explicit public parameters and every reference role without WAN switches", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "h3-task" } }); mocks.push(post);
+    const selected = { ...config, model: "video::MiniMax-H3", videoSeconds: "4", vquality: "2K", videoSize: "21:9", videoMode: "reference", videoGenerateAudio: "true", videoWatermark: "true" };
+    const image = { id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:h3" };
+    const videos = [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:h3-video" }];
+    const audios = [{ id: "a", name: "audio", type: "audio/mp3", url: "", storageKey: "file:h3-audio" }];
+    const task = await api.createVideoGenerationTask(selected, "镜头推进", [image], { videos, audios });
+    expect(task).toEqual({ id: "h3-task", path: "videos", model: selected.model });
+    expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
+    expect(post.mock.calls[0]![1]).toEqual({ model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "2K", ratio: "21:9", generation_mode: "references", metadata: { input: { media: [
+        { type: "reference_image", url: "/api/files/image_files/image%3Ah3" },
+        { type: "reference_video", url: "/api/files/media_files/file%3Ah3-video" },
+        { type: "reference_audio", url: "/api/files/media_files/file%3Ah3-audio" },
+    ] } } });
+    expect(signed).toHaveLength(0);
+});
+
+test("H3 rejects inherited parameters, excess references and frame mixing before uploading or creating", async () => {
+    const post = spyOn(axios, "post"); mocks.push(post);
+    const selected = { ...config, model: "video::MiniMax-H3", vquality: "768", videoSeconds: "4", videoMode: "reference" };
+    const image = { id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:h3" };
+    const video = { id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" };
+    for (const videoSeconds of ["-1", "3", "16"]) await expect(api.createVideoGenerationTask({ ...selected, videoSeconds }, "画面")).rejects.toThrow("4–15");
+    await expect(api.createVideoGenerationTask({ ...selected, vquality: "720" }, "画面")).rejects.toThrow("分辨率");
+    await expect(api.createVideoGenerationTask(selected, "画面", Array(10).fill(image))).rejects.toThrow("9");
+    await expect(api.createVideoGenerationTask({ ...selected, videoMode: "frames" }, "画面", Array(3).fill(image))).rejects.toThrow("不能混用");
+    await expect(api.createVideoGenerationTask({ ...selected, videoMode: "frames" }, "画面", [], { videos: [video] })).rejects.toThrow("参考模式");
+    await expect(api.createVideoGenerationTask(selected, "画面", [], { videos: Array(4).fill(video) })).rejects.toThrow("3");
+    expect(post).not.toHaveBeenCalled();
+    expect(signed).toHaveLength(0);
+});
+
+test("H3 creation timeout is never reposted and saved tasks retain their protocol after model switching", async () => {
+    const post = spyOn(axios, "post").mockRejectedValue(new Error("timeout")); mocks.push(post);
+    const selected = { ...config, model: "video::MiniMax-H3", vquality: "768", videoSeconds: "4" };
+    await expect(api.createVideoGenerationTask(selected, "画面")).rejects.toThrow("timeout");
+    expect(post).toHaveBeenCalledTimes(1);
+    const file = { url: "/api/files/media_files/h3-result", storageKey: "h3-result", bytes: 10, mimeType: "video/mp4" };
+    const get = spyOn(axios, "get").mockResolvedValue({ data: { status: "completed", file } }); mocks.push(get);
+    const task = { id: "h3-existing", path: "videos" as const, model: selected.model };
+    expect(await api.waitForVideoGenerationTask({ ...config, model: "video::seedance" }, task)).toEqual(file);
+    expect(get.mock.calls[0]![0]).toEndWith("/videos/h3-existing");
+    expect(post).toHaveBeenCalledTimes(1);
 });

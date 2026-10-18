@@ -15,7 +15,7 @@ import { remapCanvasGraph } from "../../../../shared/canvas-archive";
 import { preserveCanvasGeneration } from "../../../../shared/canvas-generations";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, resumeVideoGenerationTask, waitForVideoGenerationTask } from "@/services/api/video";
-import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelVideoTypeOf, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -337,7 +337,7 @@ function InfiniteCanvasPage() {
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, canvasContext: await prepareCanvasGeneration(nodeId) });
-            setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider, videoTaskModel: task.model, model: config.model, videoMode: resolveVideoMode(config.videoMode, images?.length || 0) } } : item)));
+            setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskPath: task.path, videoTaskModel: task.model, model: config.model, videoMode: resolveVideoMode(config.videoMode, images?.length || 0, modelVideoTypeOf(config, config.model) !== "h3") } } : item)));
             const video = await waitForVideoGenerationTask(config, task, { signal });
             setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
         },
@@ -364,7 +364,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(node.id);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
                 controller = startGenerationRequest(node.id, node.id, node.id);
-                const task = { id: taskId, provider: node.metadata?.videoTaskProvider === "wan" ? "wan" as const : "seedance" as const, model: generationConfig.model, generationTaskId: node.metadata?.generationTaskId };
+                const task = { id: taskId, path: node.metadata?.videoTaskPath || "contents/generations/tasks" as const, model: generationConfig.model, generationTaskId: node.metadata?.generationTaskId };
                 if (!silent) await resumeVideoGenerationTask(generationConfig, task, { signal: controller.signal });
                 const video = await waitForVideoGenerationTask(generationConfig, task, { signal: controller.signal });
                 setNodes((prev) =>
@@ -2183,7 +2183,7 @@ function InfiniteCanvasPage() {
                                       position: { x: node.position.x + node.width / 2 - spec.width / 2, y: node.position.y + node.height / 2 - spec.height / 2 },
                                       width: spec.width,
                                       height: spec.height,
-                                      metadata: { ...node.metadata, ...audioMetadata(audio), generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined, videoTaskId: undefined, videoTaskProvider: undefined, videoTaskModel: undefined, errorDetails: undefined },
+                                      metadata: { ...node.metadata, ...audioMetadata(audio), generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined, videoTaskId: undefined, videoTaskPath: undefined, videoTaskModel: undefined, errorDetails: undefined },
                                   }
                                 : node,
                         ),
@@ -2203,7 +2203,7 @@ function InfiniteCanvasPage() {
                                       position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 },
                                       width: nextSize.width,
                                       height: nextSize.height,
-                                      metadata: { ...node.metadata, ...videoMetadata(video), generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined, videoTaskId: undefined, videoTaskProvider: undefined, videoTaskModel: undefined, errorDetails: undefined },
+                                      metadata: { ...node.metadata, ...videoMetadata(video), generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined, videoTaskId: undefined, videoTaskPath: undefined, videoTaskModel: undefined, errorDetails: undefined },
                                   }
                                 : node,
                         ),
@@ -2228,7 +2228,7 @@ function InfiniteCanvasPage() {
                                           generationId: undefined,
                                           generationTaskId: undefined,
                                           videoTaskId: undefined,
-                                          videoTaskProvider: undefined,
+                                          videoTaskPath: undefined,
                                           videoTaskModel: undefined,
                                           errorDetails: undefined,
                                           freeResize: false,
@@ -2556,7 +2556,7 @@ function InfiniteCanvasPage() {
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length),
+                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
                             references: generationReferenceUrls(generationContext),
                         },
                     };
@@ -2575,7 +2575,7 @@ function InfiniteCanvasPage() {
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length),
+                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
                             references: generationReferenceUrls(generationContext),
                         }, generationContext.referenceVideos, generationContext.referenceAudios);
                     } finally {
@@ -2850,7 +2850,7 @@ function InfiniteCanvasPage() {
                         vquality: generationConfig.vquality,
                         generateAudio: generationConfig.videoGenerateAudio,
                         watermark: generationConfig.videoWatermark,
-                        videoMode: resolveVideoMode(generationConfig.videoMode, retryImages.length),
+                        videoMode: resolveVideoMode(generationConfig.videoMode, retryImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
                     }, context?.referenceVideos || [], context?.referenceAudios || []);
                     return;
                 }

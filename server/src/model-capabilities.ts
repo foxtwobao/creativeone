@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { imageModelProfile, imageCapabilityError, type ImageModelType } from "../../shared/image-models.js";
-import { videoModelProfile, videoCapabilityError, wanAspectRatios, type VideoModelType } from "../../shared/video-models.js";
+import { videoModelProfile, videoCapabilityError, wanAspectRatios, h3AspectRatios, type VideoModelType } from "../../shared/video-models.js";
 
 const imageParams = z.object({
     quality: z.string().optional(), size: z.string().optional(), aspect_ratio: z.string().optional(), resolution: z.string().optional(),
@@ -35,23 +35,30 @@ export const wanRequestSchema = z.object({
     resolution: z.enum(["480P", "720P", "1080P"]), ratio: z.enum(wanAspectRatios),
     metadata: wanMetadata.optional(),
 }).strict();
+export const h3RequestSchema = wanRequestSchema.extend({
+    model: z.literal("MiniMax-H3"), resolution: z.enum(["768P", "2K"]), ratio: z.enum(h3AspectRatios),
+    generation_mode: z.enum(["frames", "references"]),
+});
 const videoParams = z.object({
     duration: z.number().optional(), seconds: z.string().optional(), resolution: z.string().optional(), ratio: z.string().optional(), aspect_ratio: z.string().optional(),
     content: z.array(reference.extend({ type: z.string() })).optional(),
     metadata: wanMetadata.optional(),
+    generation_mode: z.enum(["frames", "references"]).optional(),
     omni_reference_task_type: z.enum(["auto", "reference", "edit", "extend"]).optional(),
 }).passthrough();
 export function videoRequestCapabilityError(model: string, family: VideoModelType, body: unknown) {
     if (family === "wan" && !wanRequestSchema.safeParse(body).success) return "WAN 请求请使用 duration、resolution、ratio 和 metadata.input.media 公共格式。";
+    if (family === "h3" && !h3RequestSchema.safeParse(body).success) return "H3 请求请使用 MiniMax-H3、duration、resolution、ratio、generation_mode 和 metadata.input.media 公共格式。";
     const parsed = videoParams.safeParse(body);
     if (!parsed.success) return "视频请求参数格式不正确。";
     const params = parsed.data, profile = videoModelProfile(model, family);
     const media = (params.metadata?.input.media || []).map((item) => ({ role: item.type }));
-    const images = family === "wan" ? media.filter((item) => ["first_frame", "last_frame", "reference_image"].includes(item.role)) : (params.content || []).filter((item) => item.type === "image_url");
-    const videos = family === "wan" ? media.filter((item) => item.role === "reference_video") : (params.content || []).filter((item) => item.type === "video_url");
-    const audios = family === "wan" ? media.filter((item) => item.role === "reference_audio") : (params.content || []).filter((item) => item.type === "audio_url");
+    const images = family !== "seedance" ? media.filter((item) => ["first_frame", "last_frame", "reference_image"].includes(item.role)) : (params.content || []).filter((item) => item.type === "image_url");
+    const videos = family !== "seedance" ? media.filter((item) => item.role === "reference_video") : (params.content || []).filter((item) => item.type === "video_url");
+    const audios = family !== "seedance" ? media.filter((item) => item.role === "reference_audio") : (params.content || []).filter((item) => item.type === "audio_url");
     const frames = images.filter((item) => item.role === "first_frame" || item.role === "last_frame" || (family === "seedance" && !item.role));
     if (frames.length && (frames.length !== images.length || frames.length > 2 || images.filter((item) => item.role === "last_frame").length > 1 || images.filter((item) => item.role === "first_frame" || !item.role).length !== 1)) return "首尾帧需要一张首帧和至多一张尾帧，不能混用参考图。";
+    if (family === "h3" && (params.generation_mode === "references" && frames.length || params.generation_mode === "frames" && (images.some((item) => item.role === "reference_image") || videos.length || audios.length))) return "H3 生成模式与素材角色不一致，首尾帧和普通参考素材不能混用。";
     const ratio = params.aspect_ratio || params.ratio || "adaptive";
     const seconds = Number(params.duration ?? (profile.duration?.auto ? -1 : 6));
     if (profile.framesAdaptive && ["edit", "extend"].includes(params.omni_reference_task_type || "")) {
@@ -59,8 +66,8 @@ export function videoRequestCapabilityError(model: string, family: VideoModelTyp
         if (params.omni_reference_task_type === "edit" && seconds !== -1) return "视频编辑必须使用自动时长。";
     }
     return videoCapabilityError(profile, {
-        resolution: params.resolution?.replace(/p$/i, "") || "720",
-        ratio: ratio === "adaptive" ? "auto" : ratio, seconds, mode: frames.length ? "frames" : "reference",
+        resolution: params.resolution?.replace(/p$/i, "").toLowerCase() || "720",
+        ratio: ratio === "adaptive" ? "auto" : ratio, seconds, mode: family === "h3" ? params.generation_mode === "frames" ? "frames" : "reference" : frames.length ? "frames" : "reference",
     }, { images: images.length, videos: videos.length, audios: audios.length });
 }
 

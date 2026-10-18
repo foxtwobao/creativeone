@@ -227,10 +227,10 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const model = typeof input.model === "string" && input.model.trim() ? normalizeModelOptionValue(input.model, configStore.config.channels) : configStore.config.videoModel;
     if (!model || !selectableModelsByCapability(configStore.config, "video").includes(model)) throw new Error("请选择已配置的视频模型");
     const settings = videoSettingsForModel(configStore.config, model);
-    if (settings.wan) {
-        if (typeof input.resolution === "string" && !settings.resolutions.some((item) => item.value === parseVideoResolution(input.resolution))) throw new Error("WAN 请选择 480P、720P 或 1080P 分辨率");
-        if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("当前 WAN 模型不支持所选宽高比，请重新选择");
-        if (input.generateAudio != null || input.watermark != null) throw new Error("WAN 暂不提供生成音频或水印开关");
+    if (settings.wan || settings.h3) {
+        if (typeof input.resolution === "string" && !settings.resolutions.some((item) => item.value === parseVideoResolution(input.resolution))) throw new Error("请选择当前模型支持的分辨率");
+        if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("当前模型不支持所选宽高比，请重新选择");
+        if (input.generateAudio != null || input.watermark != null) throw new Error("当前模型不提供生成音频或水印开关");
     }
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {

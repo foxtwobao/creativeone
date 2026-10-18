@@ -1,6 +1,6 @@
 import type { CanvasNodeData, CanvasNodeMetadata, CanvasNodeImage } from "../web/src/types/canvas";
 
-const resultFields = ["generationId", "generationTaskId", "content", "storageKey", "naturalWidth", "naturalHeight", "bytes", "mimeType", "durationMs", "status", "errorDetails", "videoTaskId", "videoTaskProvider", "videoTaskModel"] as const;
+const resultFields = ["generationId", "generationTaskId", "content", "storageKey", "naturalWidth", "naturalHeight", "bytes", "mimeType", "durationMs", "status", "errorDetails", "videoTaskId", "videoTaskPath", "videoTaskModel"] as const;
 function resultMetadata<T extends CanvasNodeMetadata | CanvasNodeImage>(incoming: T, saved: T): T {
     // A new operation may replace a result; ordinary edits and old undo snapshots may not.
     if (!saved.generationTaskId || (incoming.generationId !== saved.generationId && incoming.status === "loading")) return incoming;

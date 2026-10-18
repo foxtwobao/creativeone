@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { AiConfig } from "@/stores/use-config-store";
 import { generationRequestSettings } from "../../shared/generation-request";
+import { taskSettings } from "../../shared/task-settings";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -30,6 +31,7 @@ beforeAll(async () => {
             { name: "grok-imagine-image-2.0", capability: "image", imageType: "grok" },
             { name: "seedance", capability: "video", videoType: "seedance" },
             { name: "wan3.0-video", capability: "video", videoType: "wan" },
+            { name: "MiniMax-H3", capability: "video", videoType: "h3" },
         ],
     }] };
     images = await import("@/lib/image-settings");
@@ -178,4 +180,35 @@ test("Seedance panel and history preserve automatic duration and 4k", async () =
     expect(generationRequestSettings("video", { duration: -1, resolution: "4k" })).toMatchObject({ videoSeconds: "-1", vquality: "4k" });
     const { taskSettings } = await import("@/pages/assets/task-details");
     expect(taskSettings({ duration: -1, quality: "max" })).toEqual([{ key: "duration", label: "时长", children: "自动" }, { key: "quality", label: "质量", children: "极致" }]);
+});
+
+test("H3 displays 768P and 2K, preserves invalid model switches and requires an explicit reference mode", async () => {
+    const model = "models::MiniMax-H3";
+    const selected = { ...config, model, vquality: "768", videoSeconds: "4", videoSize: "16:9", videoMode: "frames" };
+    expect(videos.videoSettingsForModel({ ...selected, vquality: "720" }, model).error).toContain("分辨率");
+    expect(videos.videoSettingsForModel({ ...selected, videoSeconds: "-1" }, model)).toMatchObject({ seconds: "-1", automaticDuration: false, autoSeconds: false });
+    expect(videos.videoSettingsForModel(selected, model, 3)).toMatchObject({ mode: "frames", forcedReference: false });
+    expect(videos.videoSettingsForModel(selected, model, 3).error).toContain("不能混用");
+    expect(videos.videoSettingsForModel({ ...selected, videoMode: "reference", vquality: "2K" }, model, 9, { videos: [{ durationMs: 6000 }], audios: [{ durationMs: 173000 }] })).toMatchObject({ error: "", resolution: "2k", audioOptions: false, secondsRange: { min: 4, max: 15, auto: false } });
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { VideoSettingsPanel } = await import("@/components/video-settings-panel");
+    const { canvasThemes } = await import("@/lib/canvas-theme");
+    for (const count of [5, 6, 9]) {
+        const markup = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: { ...selected, videoMode: "reference" }, referenceImageCount: count, theme: canvasThemes.dark, onConfigChange: () => {} }));
+        expect(markup).toContain("2K");
+        expect(markup).toContain("768p");
+        expect(markup).toContain(">21:9<");
+        expect(markup).toContain(`本次额外参考图：${Math.max(count - 5, 0)} 张`);
+        expect(markup).toContain("使用推荐参数");
+        expect(markup).not.toContain('aria-label="生成音频"');
+    }
+});
+
+test("H3 history preserves explicit mode, resolution and duration independently of current preferences", () => {
+    expect(taskSettings({ generation_mode: "references" })).toEqual([{ key: "generation_mode", label: "生成模式", children: "多素材参考" }]);
+    for (const resolution of ["768P", "2K"]) {
+        expect(generationRequestSettings("video", { generation_mode: "references", resolution, duration: 15, ratio: "21:9", metadata: { input: { media: [{ type: "reference_audio", url: "/ref" }] } } })).toMatchObject({ videoMode: "reference", vquality: resolution === "2K" ? "2k" : "768", videoSeconds: "15", videoSize: "21:9" });
+    }
+    expect(generationRequestSettings("video", { generation_mode: "frames", resolution: "768P", duration: 4 })).toMatchObject({ videoMode: "frames", vquality: "768", videoSeconds: "4" });
 });

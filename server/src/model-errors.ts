@@ -69,7 +69,7 @@ const messages: Record<string, string> = {
     WAN_REFERENCE_VIDEO_UNSUPPORTED: "当前 WAN 图生模型不支持参考视频。",
     WAN_REFERENCE_IMAGE_REQUIRED: "WAN 图生模型需要至少一张参考图片。",
     VIDEO_ENDPOINT_MISMATCH: "视频模型与调用协议不匹配，请检查后台模型类型配置。",
-    WAN_PUBLIC_ORIGIN_REQUIRED: "WAN 参考素材需要公网可访问的 HTTPS 应用地址。",
+    WAN_PUBLIC_ORIGIN_REQUIRED: "视频参考素材需要公网可访问的 HTTPS 应用地址。",
     MEDIA_LINK_EXPIRED: "参考素材链接已过期，请重新发起任务；请先核查已有任务状态，避免重复计费。",
     TOKENONE_USER_NOT_FOUND: "原生模型服务账号不存在，请联系管理员核验账号及身份绑定。",
     INSUFFICIENT_BALANCE: "账户余额不足，暂时无法使用模型。请前往 TokenONE 充值，完成后手动重试。",

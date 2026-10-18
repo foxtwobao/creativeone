@@ -3,12 +3,13 @@ import { videoModelProfile, type VideoModelType } from "./video-models.js";
 export function videoRequestBody(model: string, family: VideoModelType, prompt: string, references: { images: string[]; videos: string[]; audios: string[] }, params: { seconds: string; ratio: string; resolution: string; mode: string; generateAudio: boolean; watermark: boolean }) {
     const { images, videos, audios } = references;
     const { seconds, ratio, resolution, mode, generateAudio, watermark } = params;
-    if (family === "wan") {
+    if (family !== "seedance") {
         const media = [
             ...images.map((url, index) => ({ type: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame", url })),
             ...videos.map((url) => ({ type: "reference_video", url })), ...audios.map((url) => ({ type: "reference_audio", url })),
         ];
-        return { model, prompt, duration: Number(seconds), resolution: `${resolution}P`, ratio: ratio === "auto" ? "adaptive" : ratio,
+        return { model, prompt, duration: Number(seconds), resolution: resolution === "2k" ? "2K" : `${resolution}P`, ratio: ratio === "auto" ? "adaptive" : ratio,
+            ...(family === "h3" ? { generation_mode: media.length && mode === "reference" ? "references" : "frames" } : {}),
             ...(media.length ? { metadata: { input: { media } } } : {}) };
     }
     const duration = seconds === "-1" ? {} : { duration: Number(seconds) };

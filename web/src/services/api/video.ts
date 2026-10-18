@@ -9,7 +9,7 @@ import { videoSettingsForModel } from "@/lib/video-settings";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { buildApiUrl, modelOptionName, modelVideoTypeOf, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
-import { VIDEO_POLL_INTERVAL_MS } from "../../../../shared/video-tasks";
+import { VIDEO_POLL_INTERVAL_MS, type VideoTaskPath } from "../../../../shared/video-tasks";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { CanvasGenerationContext } from "./image";
@@ -22,7 +22,7 @@ type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = UploadedFile;
-export type VideoGenerationTask = { id: string; provider: "seedance" | "wan"; model: string; generationTaskId?: string };
+export type VideoGenerationTask = { id: string; path: VideoTaskPath; model: string; generationTaskId?: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -46,9 +46,9 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
         if (!result.file?.storageKey) throw new Error("服务端尚未保存视频结果，请查看原任务");
         return result.file;
     }
-    const wan = task.provider === "wan";
+    const publicVideo = task.path === "videos";
     const timeout = new AbortController();
-    const timer = wan ? setTimeout(() => timeout.abort(), 15 * 60_000) : undefined;
+    const timer = publicVideo ? setTimeout(() => timeout.abort(), 15 * 60_000) : undefined;
     const signal = options?.signal ? AbortSignal.any([options.signal, timeout.signal]) : timeout.signal;
     try {
         for (let attempt = 0; ; attempt += 1) {
@@ -56,7 +56,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
             const state = await pollVideoGenerationTask(config, task, { signal });
             if (state.status === "completed") return state.result;
             if (state.status === "failed") throw videoTaskFailed(state.error);
-            if (!wan && attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
+            if (!publicVideo && attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
             await delay(VIDEO_POLL_INTERVAL_MS, signal);
         }
     } catch (error) {
@@ -84,7 +84,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     assertVideoConfig(requestConfig, requestConfig.model);
     const settings = videoSettingsForModel(config, selectedModel, references.length, options);
     if (settings.error) throw new Error(settings.error);
-    if (modelVideoTypeOf(config, selectedModel) === "wan") return createWanTask(config, requestConfig, selectedModel, prompt, references, options);
+    if (modelVideoTypeOf(config, selectedModel) !== "seedance") return createPublicVideoTask(config, requestConfig, selectedModel, prompt, references, options);
     const [images, videos, audios] = await Promise.all([
         Promise.all(references.map((image) => imageToDataUrl(image))),
         Promise.all((options?.videos || []).map(async (video) => video.storageKey ? resolveMediaUrl(video.storageKey, video.url) : video.url)),
@@ -97,7 +97,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         const response = (await axios.post<ApiVideoResponse & { canvasTaskId?: string }>(aiApiUrl(requestConfig, "/contents/generations/tasks"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data;
         const created = unwrapVideoResponse(await canvasGenerationResult(response, options?.signal));
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "seedance", model: selectedModel, generationTaskId: response.canvasTaskId };
+        return { id: created.id, path: "contents/generations/tasks", model: selectedModel, generationTaskId: response.canvasTaskId };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -107,11 +107,11 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
     try {
-        const path = task.provider === "wan" ? "/videos" : "/contents/generations/tasks";
+        const path = `/${task.path}`;
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(requestConfig, `${path}/${encodeURIComponent(task.id)}`), { headers: aiHeaders(requestConfig), signal: options?.signal })).data);
         if (video.status === "paused") throw new Error(readApiErrorMessage(video.error) || "后台任务已暂停，可手动恢复处理");
         if (["failed", "cancelled", "expired"].includes(video.status || "")) return { status: "failed", error: readApiErrorMessage(video.error) || apiText("videoGenerationFailed") };
-        if (video.status !== (task.provider === "wan" ? "completed" : "succeeded")) return { status: "pending" };
+        if (video.status !== (task.path === "videos" ? "completed" : "succeeded")) return { status: "pending" };
         if (!video.file?.url.startsWith("/api/files/media_files/") || !video.file.storageKey) throw new Error("服务端尚未返回已保存的视频文件，请继续查询任务");
         return { status: "completed", result: video.file };
     } catch (error) {
@@ -121,7 +121,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, task.model);
-    const path = task.provider === "wan" ? "/videos" : "/contents/generations/tasks";
+    const path = `/${task.path}`;
     try {
         await axios.post(aiApiUrl(requestConfig, `${path}/${encodeURIComponent(task.id)}/resume`), {}, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal });
     } catch (error) { throw new Error(readAxiosError(error, "恢复后台任务失败")); }
@@ -134,7 +134,7 @@ async function referenceUrl(namespace: "image_files" | "media_files", item: { st
     return (await cloudApi<{ url: string }>("/files/import", { method: "POST", body: JSON.stringify({ url: item.url }), signal: options?.signal })).url;
 }
 
-async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+async function createPublicVideoTask(config: AiConfig, requestConfig: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const { mode, ratio, seconds, resolution } = videoSettingsForModel(config, model, references.length, options);
     const [reference_images, reference_videos, reference_audios] = await Promise.all([
         Promise.all(references.map(async (image, index) => {
@@ -150,13 +150,13 @@ async function createWanTask(config: AiConfig, requestConfig: AiConfig, model: s
             return { url: await referenceUrl("media_files", audio, options) };
         })),
     ]);
-    const body = { ...videoRequestBody(modelOptionName(model), "wan", prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution, generateAudio: false, watermark: false }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
+    const body = { ...videoRequestBody(modelOptionName(model), modelVideoTypeOf(config, model), prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution, generateAudio: false, watermark: false }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
     try {
         const response = (await axios.post<ApiVideoResponse & { canvasTaskId?: string }>(aiApiUrl(requestConfig, "/videos"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data;
         const created = unwrapVideoResponse(await canvasGenerationResult(response, options?.signal));
         const id = created.id || created.task_id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
-        return { id, provider: "wan", model, generationTaskId: response.canvasTaskId };
+        return { id, path: "videos", model, generationTaskId: response.canvasTaskId };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }

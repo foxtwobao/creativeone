@@ -1112,6 +1112,109 @@ test("admin media uses the task owner for previews, multi-image results and vide
     assert.equal(playback.status, 206); assert.equal((await playback.arrayBuffer()).byteLength, 8);
 });
 
+
+async function enableH3() {
+    const response = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3", "wan3.0-video", "seedance-test"], default_model: "MiniMax-H3", enabled: true, video_types: { "MiniMax-H3": "h3", "wan3.0-video": "wan", "seedance-test": "seedance" } });
+    assert.equal(response.status, 200);
+}
+
+test("H3 configuration, strict request fields and reference counts are enforced before upstream calls", async () => {
+    await enableH3();
+    const invalidModel = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3-768p"], default_model: "MiniMax-H3-768p", enabled: true, video_types: { "MiniMax-H3-768p": "h3" } });
+    assert.equal(invalidModel.status, 400);
+    const body = { model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "768P", ratio: "16:9", generation_mode: "frames" };
+    const media = (types: string[]) => ({ input: { media: types.map((type) => ({ type, url: "https://example.test/ref" })) } });
+    const before = forwardedRequests.length;
+    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", body)).status, 403);
+    for (const invalid of [
+        { ...body, duration: 3 }, { ...body, duration: 16 }, { ...body, duration: -1 },
+        { ...body, resolution: "720P" }, { ...body, watermark: false }, { ...body, content: [] },
+        { ...body, generation_mode: undefined }, { ...body, metadata: media(["last_frame"]) },
+        { ...body, generation_mode: "references", metadata: media(Array(10).fill("reference_image")) },
+        { ...body, generation_mode: "references", metadata: media(Array(4).fill("reference_video")) },
+        { ...body, generation_mode: "references", metadata: media(Array(4).fill("reference_audio")) },
+        { ...body, metadata: media(["reference_video"]) },
+        { ...body, generation_mode: "references", metadata: media(["first_frame", "reference_audio"]) },
+    ]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", invalid)).status, 400);
+    assert.equal(forwardedRequests.length, before);
+    for (const count of [5, 6, 9]) {
+        videoCreateResponse = { id: `task-h3-images-${count}`, status: "queued" };
+        const request = { ...body, generation_mode: "references", metadata: media(Array(count).fill("reference_image")) };
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", request)).status, 200);
+        assert.equal(forwardedRequests.at(-1)!.body.metadata.input.media.length, count);
+    }
+});
+
+test("H3 multimodal files remain owner scoped; history and download recovery retain the original task", async () => {
+    await enableH3();
+    const previousOrigin = env.APP_ORIGIN;
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const image = `/api/files/image_files/image:${randomUUID()}`, video = `/api/files/media_files/file:${randomUUID()}`, audio = `/api/files/media_files/file:${randomUUID()}`;
+        for (const [url, bytes, mime] of [[image, jpegBytes, "image/jpeg"], [video, videoBytes, "video/mp4"], [audio, new Uint8Array([1, 2, 3]), "audio/mpeg"]] as const) assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": mime }, body: bytes })).status, 200);
+        const items = [{ type: "reference_image", url: image }, { type: "reference_video", url: video }, { type: "reference_audio", url: audio }];
+        const body = { model: "MiniMax-H3", prompt: "参考主体、动作与音乐", duration: 15, resolution: "2K", ratio: "21:9", generation_mode: "references", metadata: { input: { media: items } } };
+        const before = forwardedRequests.length;
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, bob, "POST", body)).status, 404);
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { ...body, metadata: { input: { media: [{ type: "reference_image", url: video }] } } })).status, 400);
+        assert.equal(forwardedRequests.length, before);
+        videoCreateResponse = { id: "task-h3-recovery", status: "queued" };
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body);
+        assert.equal(created.status, 200);
+        const taskId = created.headers.get("X-Generation-Task-Id")!;
+        const sent = forwardedRequests.at(-1)!.body;
+        assert.equal(sent.resolution, "2K");
+        assert.equal(sent.generation_mode, "references");
+        assert.deepEqual(sent.metadata.input.media.map((item: any) => item.type), items.map((item) => item.type));
+        for (const item of sent.metadata.input.media) assert.match(item.url, /^https:\/\/creativeone.test\/api\/public\/media\//);
+        const snapshot = (await db.query("SELECT request FROM generation_tasks WHERE id=$1", [taskId])).rows[0].request;
+        assert.deepEqual(snapshot.metadata.input.media, items);
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos/task-h3-recovery`, bob)).status, 404);
+        videoQueryResponse = { status: "completed" };
+        videoDownloadFails = true;
+        await processVideoTask(taskId);
+        assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "unknown");
+        videoDownloadFails = false;
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos/task-h3-recovery/resume`, alice, "POST", {})).status, 200);
+        await processVideoTask(taskId);
+        const completed = await (await call(`/ai/${videoChannel}/v1/videos/task-h3-recovery`)).json();
+        assert.equal(completed.status, "completed");
+        assert.ok(completed.file.storageKey);
+        assert.equal(forwardedRequests.slice(before).filter((item) => item.url === "https://tokenone.test/v1/videos").length, 1);
+        const history = await (await call("/history/video?upstreamId=task-h3-recovery")).json();
+        assert.equal(history.logs[0].config.vquality, "2k");
+        assert.equal(history.logs[0].config.videoMode, "reference");
+        assert.equal(history.logs[0].task.path, "videos");
+        assert.equal(history.logs[0].referenceVideos[0].url, video);
+        assert.equal(history.logs[0].referenceAudios[0].url, audio);
+    } finally { env.APP_ORIGIN = previousOrigin; videoDownloadFails = false; }
+});
+
+test("H3 canvas uses saved parameters, publishes the public task path and stops failed tasks", async () => {
+    await enableH3();
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const node = { id: "h3-output", type: "video", title: "H3", position: { x: 0, y: 0 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading" } as Record<string, any> };
+    const project = await canvasOutput(node, videoChannel, "MiniMax-H3", "H3 权威提示词");
+    Object.assign(node.metadata, { vquality: "2k", seconds: "15", videoSize: "21:9", videoMode: "reference" });
+    assert.equal((await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node }] } })).status, 200);
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "MiniMax-H3", prompt: "ignored", duration: 4, resolution: "768P", ratio: "adaptive", generation_mode: "frames", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    assert.equal(created.status, 202);
+    const taskId = (await created.json()).canvasTaskId;
+    videoCreateResponse = { id: "task-h3-canvas", status: "queued" };
+    await executeMediaTask(taskId);
+    assert.deepEqual(forwardedRequests.at(-1)!.body, { model: "MiniMax-H3", prompt: "H3 权威提示词", duration: 15, resolution: "2K", ratio: "21:9", generation_mode: "frames" });
+    videoQueryResponse = { status: "failed", error: { message: "H3 generation failed" } };
+    await processVideoTask(taskId);
+    const failedQueries = forwardedRequests.length;
+    await processVideoTask(taskId);
+    assert.equal(forwardedRequests.length, failedQueries);
+    const saved = (await (await call(`/projects/${project.id}`)).json()).project.nodes.find((item: any) => item.id === node.id);
+    assert.equal(saved.metadata.status, "error");
+    assert.equal(saved.metadata.videoTaskPath, "videos");
+    assert.equal(saved.metadata.videoTaskId, "task-h3-canvas");
+});
+
+
 test("account switching and logout invalidate stale clients", async () => {
     const changed = await realFetch(`${base}/api/tasks`, { headers: { ...headers(bob), "X-Expected-User": alice } });
     assert.equal(changed.status, 409);

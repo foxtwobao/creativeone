@@ -19,7 +19,7 @@ export async function attachCanvasTask(taskId: string, client: Pick<PoolClient, 
     const succeeded = task.status === "succeeded" && file?.url && file?.storageKey;
     const errorDetails = succeeded || active ? undefined : taskErrorMessage(task) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "生成失败，请查看生成任务详情。");
     const result = { ...slot, generationTaskId: taskId, status: active ? "loading" as const : succeeded ? "success" as const : "error" as const, errorDetails,
-        ...(task.capability === "video" && task.upstream_id ? { videoTaskId: task.upstream_id, videoTaskProvider: task.path === "videos" ? "wan" as const : "seedance" as const, videoTaskModel: `${task.channel_id}::${task.model}` } : {}),
+        ...(task.capability === "video" && task.upstream_id ? { videoTaskId: task.upstream_id, videoTaskPath: task.path, videoTaskModel: `${task.channel_id}::${task.model}` } : {}),
         ...(succeeded ? { content: file.url, storageKey: file.storageKey, naturalWidth: file.width, naturalHeight: file.height, bytes: file.bytes, mimeType: file.mimeType, ...(file.durationMs === undefined ? {} : { durationMs: file.durationMs }) } : {}) };
     const metadata = { ...node!.metadata };
     if (task.canvas_output_id) {
