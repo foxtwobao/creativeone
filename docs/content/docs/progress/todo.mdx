@@ -46,7 +46,7 @@ description: Planned follow-up work
 
 - Reseller 用量明细与统计：待上游具备契约后另行实现并验收；账户汇总、用量明细和统计接口仍明确不可用，不作为模型生成功能的前置条件。余额与模型价格展示已转入待测清单。
 
-- 视频模型价格联调：Reseller 插件报价新契约的 CreativeOne 配套实现已转待测，需安排两端同步发布后，在 lab 验收真实应用价格接口及桌面/窄屏页面，旧响应与新解析不兼容。继续在对应项目核查 Seedance 的 `video_input` 表达式字符串 `"true"` 与 schema 的 `none/video` 不一致，新接口应返回 `schema_condition_mismatch`；H3 实际用量及金额预估仍待权威规则。契约和发布交接见 `docs/handoffs/reseller-app-pricing.md` 第 11 节。
+- 视频模型价格联调：公开模型价格摘要的 CreativeOne 配套实现已转待测，需安排 Reseller 与 CreativeOne 同步发布后，在 lab 验收真实响应不含内部字段、每模型单份档位/区间、partial 提示、USD 单位、刷新失败清空旧价及桌面/窄屏布局；旧 paths/quotes 合同已废止。继续在对应项目核查 Seedance 的计费条件与 schema 不一致，H3 实际用量换算及金额预估仍待权威规则。交接见 `docs/handoffs/reseller-app-pricing.md` 第 12 节。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

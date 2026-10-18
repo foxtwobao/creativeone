@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "cookie": "^1.0.2",
+    "decimal.js": "^10.6.0",
     "eventsource-parser": "^3.0.6",
     "express": "^5.1.0",
     "fflate": "0.8.3",
