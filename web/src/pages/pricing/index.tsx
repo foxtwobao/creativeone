@@ -4,7 +4,7 @@ import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { fetchModelPricing } from "@/services/api/account-pricing";
 import { cloudSession } from "@/services/api/cloud";
 import type { ModelPricing } from "../../../../shared/account-pricing";
-import { ModelPriceQuotes } from "./model-price-quotes";
+import { ModelPriceTable } from "./model-price-table";
 
 const capabilities = [["image", "图片"], ["text", "文本"], ["video", "视频"], ["audio", "音频"]] as const;
 
@@ -35,7 +35,7 @@ export default function PricingPage() {
                     {cloudSession?.modelServiceUrl ? <a className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={`${cloudSession.modelServiceUrl}/pricing`} target="_blank" rel="noopener noreferrer">TokenONE<ArrowUpRight size={13} /></a> : null}
                 </div>
             </header>
-            <p className="mb-5 text-xs leading-5 text-muted-foreground">单价以 CNY 展示，充值额度与人民币按 1:1 对应。按次、按张、按秒和 token 分别按所示单位计费；总费用取决于请求参数与最终用量，以实际账单为准。</p>
+            <p className="mb-5 text-xs leading-5 text-muted-foreground">价格以 USD 展示，按各项所示单位计费。价格区间仅供参考，不保证实际请求采用最低价；各项价格不能直接相加作为费用预估，最终扣费以账单为准。</p>
             {loading ? <p role="status" className="py-12 text-center text-sm text-muted-foreground">正在读取模型价格…</p> : error ? <Alert type="warning" showIcon title="模型价格暂不可用" description={error} /> : pricing ? <>
                 {capabilities.map(([capability, title]) => {
                     const models = pricing.models.filter((model) => model.capability === capability);
@@ -45,8 +45,7 @@ export default function PricingPage() {
                             {models.map((model) => <article key={model.model} className="grid gap-x-6 gap-y-1.5 py-2.5 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]">
                                 <div className="min-w-0"><h3 className="!mb-0 break-all text-[13px] font-medium leading-5">{model.model}</h3>{model.description ? <p title={model.description} className="!mb-0 mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">{model.description}</p> : null}</div>
                                 <div className="min-w-0 space-y-1.5 text-xs leading-5">
-                                    {model.note ? <p className="!mb-0 text-muted-foreground">{model.note}</p> : null}
-                                    <ModelPriceQuotes paths={model.paths} />
+                                    <ModelPriceTable model={model} currency={pricing.currency} />
                                 </div>
                             </article>)}
                         </div>
