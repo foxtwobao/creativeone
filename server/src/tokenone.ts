@@ -1,5 +1,6 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { createHash, randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 import { z } from "zod";
 import { db } from "./db.js";
 import { env } from "./config.js";
@@ -37,28 +38,39 @@ const enhanceErrors = new Set([
     "BALANCE_UNIT_UNSUPPORTED", "APP_PRICING_GROUP_UNAVAILABLE", "APP_PRICING_UNAVAILABLE",
     "ANNOUNCEMENT_NOT_FOUND",
 ]);
-export async function enhancer(path: string, requestId: string, body?: unknown, signal?: AbortSignal) {
-    if (!env.ENHANCER_BASE_URL || !env.ENHANCER_APP_CREDENTIAL) throw new HttpError(503, "ENHANCER_NOT_CONFIGURED");
-    const response = await fetch(`${env.ENHANCER_BASE_URL.replace(/\/$/, "")}/api/apps${path}`, {
-        method: body ? "POST" : "GET", redirect: "error", cache: "no-store", signal,
-        headers: { Authorization: `Bearer ${env.ENHANCER_APP_CREDENTIAL}`, "Content-Type": "application/json", "X-Request-Id": requestId },
-        body: body ? JSON.stringify(body) : undefined,
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-        const code = enhanceErrors.has(result?.error) ? result.error : "ENHANCER_FAILED";
-        throw new HttpError(response.status === 401 ? 502 : response.status, code, result?.retryable === true);
-    }
-    if (!result || typeof result !== "object") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
-    return result;
+export function applicationCredential(hash: string) {
+    return [env.ENHANCER_APP_CREDENTIAL, ...env.ENHANCER_PREVIOUS_APP_CREDENTIALS]
+        .find(value => value && createHash("sha256").update(value).digest("hex") === hash);
 }
-export async function ensureKey(user: User, requestId: string) {
+export async function enhancer(path: string, requestId: string, body?: unknown, signal = AbortSignal.timeout(120_000), credential = env.ENHANCER_APP_CREDENTIAL) {
+    if (!env.ENHANCER_BASE_URL || !credential) throw new HttpError(503, "ENHANCER_NOT_CONFIGURED");
+    try {
+        const response = await fetch(`${env.ENHANCER_BASE_URL.replace(/\/$/, "")}/api/apps${path}`, {
+            method: body ? "POST" : "GET", redirect: "error", cache: "no-store", signal,
+            headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json", "X-Request-Id": requestId },
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        const result = await response.json().catch(() => null);
+        if (signal.aborted) throw new HttpError(503, "APP_SERVICE_UNAVAILABLE");
+        if (!response.ok) {
+            const code = enhanceErrors.has(result?.error) ? result.error : "ENHANCER_FAILED";
+            throw new HttpError(response.status === 401 ? 502 : response.status, code, result?.retryable === true);
+        }
+        if (!result || typeof result !== "object") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
+        return result;
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
+        if (signal.aborted) throw new HttpError(503, "APP_SERVICE_UNAVAILABLE");
+        throw error;
+    }
+}
+export async function ensureKey(user: User, requestId: string, options: { signal?: AbortSignal; credential?: string; client?: Pick<PoolClient, "query"> } = {}) {
     if (!env.TOKENONE_BASE_URL) throw new HttpError(503, "TOKENONE_NOT_CONFIGURED");
     if (!user.email_verified) throw new HttpError(403, "EMAIL_NOT_VERIFIED");
-    const parsed = keySchema.safeParse(await enhancer("/keys/ensure", requestId, { identity: identity(user) }));
+    const parsed = keySchema.safeParse(await enhancer("/keys/ensure", requestId, { identity: identity(user) }, options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120_000)]) : undefined, options.credential));
     if (!parsed.success) throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
     const result = parsed.data;
-    await db.query(`INSERT INTO key_bindings (user_id,group_id,tokenone_user_id,key_id,provider) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id,provider,group_id) DO UPDATE SET tokenone_user_id=EXCLUDED.tokenone_user_id,key_id=EXCLUDED.key_id`, [user.id, result.api_key.group_id, result.tokenone_user_id, result.api_key.id, modelProvider]);
+    await (options.client || db).query(`INSERT INTO key_bindings (user_id,group_id,tokenone_user_id,key_id,provider) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (user_id,provider,group_id) DO UPDATE SET tokenone_user_id=EXCLUDED.tokenone_user_id,key_id=EXCLUDED.key_id`, [user.id, result.api_key.group_id, result.tokenone_user_id, result.api_key.id, modelProvider]);
     return result.api_key;
 }
 export function upstreamUrl(path: string) {
@@ -67,21 +79,30 @@ export function upstreamUrl(path: string) {
     return `${base}/${path.startsWith("contents/generations/tasks") ? "doubao/api/v3" : "v1"}/${path}`;
 }
 export const channelRouter = Router();
+async function withReadCancellation<T>(res: Response, run: (signal: AbortSignal) => Promise<T>) {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    res.once("close", cancel);
+    try { return await run(controller.signal); }
+    finally { res.off("close", cancel); }
+}
 channelRouter.get("/channels", async (_req, res) => {
     const { rows } = await db.query("SELECT id,name,capability,models,image_types,video_types,model_descriptions,is_default FROM channels WHERE enabled ORDER BY is_default DESC,name,id");
     res.json({ channels: rows });
 });
-channelRouter.get("/admin/groups", requireAdmin, async (_req, res) => res.json(await enhancer("/groups", res.locals.requestId)));
-channelRouter.get("/admin/models", requireAdmin, async (_req, res) => {
-    const apiKey = await ensureKey(res.locals.user, res.locals.requestId);
+channelRouter.get("/admin/groups", requireAdmin, (_req, res) => withReadCancellation(res, async signal => {
+    res.json(await enhancer("/groups", res.locals.requestId, undefined, AbortSignal.any([signal, AbortSignal.timeout(120_000)])));
+}));
+channelRouter.get("/admin/models", requireAdmin, (_req, res) => withReadCancellation(res, async signal => {
+    const apiKey = await ensureKey(res.locals.user, res.locals.requestId, { signal });
     const response = await fetch(upstreamUrl("models"), {
-        headers: { Authorization: `Bearer ${apiKey.key}` }, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(600_000),
+        headers: { Authorization: `Bearer ${apiKey.key}` }, redirect: "error", cache: "no-store", signal: AbortSignal.any([signal, AbortSignal.timeout(600_000)]),
     });
     if (!response.ok) throw await tokenoneError(response);
     const result = z.object({ data: z.array(z.object({ id: z.string().trim().min(1) })) }).safeParse(await response.json().catch(() => null));
     if (!result.success) throw new HttpError(502, "TOKENONE_INVALID_RESPONSE");
     res.json({ models: [...new Set(result.data.data.map((model) => model.id))] });
-});
+}));
 channelRouter.get("/admin/channels", requireAdmin, async (_req, res) => {
     const { rows } = await db.query("SELECT id,capability,models,image_types,video_types,model_descriptions,enabled,COALESCE(models->>0,'') AS default_model FROM channels ORDER BY capability");
     res.json({ channels: rows });

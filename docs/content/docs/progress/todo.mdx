@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+ONE 对接以最新指南为主要依据：通用流程遵循 HomeONE `docs/one-auth/appone.md`，模型价格遵循 Reseller `docs/APP_PRICING_API.md` 与 `docs/CREATIVEONE_PRICING_HANDOFF.md`。对照指南检查实现、配置和本仓库说明，差异列为适配事项；现有代码只用于判断完成情况，不据此反推指南过时。示例按指南要求替换为实际交付值；指南之间存在实质冲突时先确认适用规则。
+
 - MiniMax H3 真实联调与金额预估：应用的全部素材模式已接入，见待测清单。需在目标 TokenONE 实例核实知梦 1.2.0、模型启用及价格，并在 CreativeOne 后台将 `MiniMax-H3` 配置为「MiniMax H3」调用类型；核对实际路由、公网素材可达性、生成效果和真实账单。新版 Reseller 价格合同已支持独立用量项，CreativeOne 展示适配见待测清单；尚无实际 H3 报价及请求参数到计费用量的权威换算规则，条件文本不可作为计费表达式执行，待对应项目提供实际规则或权威报价接口后接入金额预估。当前显示附加图片数量、15 秒预留及最终账单提示，不硬编码供应商报价。
 
 - WAN3 真实联调：lab 两个公共模型已按用户授权保存临时按秒价，配置和候选列表恢复已转入[待测清单](/docs/progress/pending-test)。需管理员在 CreativeOne 刷新候选并显式启用新型号；实际生成路由、参考素材可达性、输入视频计费用量、账单、重试行为及正式售价仍需确认，不把临时价当作供应商成本或生产售价。本次未改应用启用模型、关联项目源码或运行部署。
@@ -15,7 +17,7 @@ description: Planned follow-up work
 
 - AppONE 新协议联调：应用侧 Reseller 导航与独立 OIDC 已部署 lab，双域名协议检查通过，详见待测清单；完整登录仍需核对默认/CCPG 实际来源域名、产品 `creativeone`、`oidcStartPath=/api/auth/oidc/start` 和 IDONE 精确业务回调，再验收真实 SSO、注册与渠道入口。旧 HomeONE 回调拒绝记录仅作历史诊断，不能据此判断新路由状态；本项目不修改关联项目。
 
-- 多域名接入后的模型服务授权：现有 Reseller 回调仍固定为 `APP_ORIGIN/api/auth/reseller/callback`，第二业务域名的 host-only 会话不会随跨域回调发送。单独确定按站点回调和 Reseller 登记方案后实施；本次统一登录不修改模型授权协议或关联项目，不宣称第二域名模型授权已可用。AppONE 新协议的应用侧登录已补齐，实现及验收项见待测清单。
+- 多域名接入后的模型服务授权：现有 Reseller 回调仍固定为 `APP_ORIGIN/api/auth/reseller/callback`，第二业务域名的 host-only 会话不会随跨域回调发送。按新版 AppONE 第 2.3、7.1 节，从已校验的当前 origin 构造固定回调并绑定授权事务；部署方在 Reseller `redirect_uris` 精确登记各支持域名，当前上限为 10 个且不支持通配符。未登记域名不提供授权入口；超过上限先确定独立方案，不改成主域回调或放宽 Cookie。渠道新地址还需分别核对 DNS/TLS/代理、应用允许域名与 IDONE 回调，Reseller 地址配置不会自动完成这些工作。AppONE 新协议的应用侧登录已补齐，实现及验收项见待测清单。
 
 
 - 无限画布后续扩展：个人画布首版编辑、图片/视频任务、冲突处理、撤销、导入导出及入口开放代码已转入[待测清单](/docs/progress/pending-test)。后续接入 Agent 自动操作、文本/音频模型生成和受控插件；实时协作、分享权限及按连线自动执行在明确需求后单独设计。扩展仍须遵循[无限画布开放方案](/docs/progress/infinite-canvas-plan)的服务端命令、身份与任务约束，具体并发、重试、规模和保留边界另行确认。
@@ -46,7 +48,7 @@ description: Planned follow-up work
 
 - Reseller 用量明细与统计：待上游具备契约后另行实现并验收；账户汇总、用量明细和统计接口仍明确不可用，不作为模型生成功能的前置条件。余额与模型价格展示已转入待测清单。
 
-- 视频模型价格联调：公开模型价格摘要的 CreativeOne 配套实现已转待测，需安排 Reseller 与 CreativeOne 同步发布后，在 lab 验收真实响应不含内部字段、每模型单份档位/区间、partial 提示、USD 单位、刷新失败清空旧价及桌面/窄屏布局；旧 paths/quotes 合同已废止。继续在对应项目核查 Seedance 的计费条件与 schema 不一致，H3 实际用量换算及金额预估仍待权威规则。交接见 `docs/handoffs/reseller-app-pricing.md` 第 12 节。
+- 视频模型价格联调：公开模型价格摘要的 CreativeOne 配套实现已转待测。Reseller `PROGRESS.md` 与 `LOCAL_PRODUCTION_SNAPSHOT.md` 已记录 lab 发布公开摘要，发布时应用凭证只读取得 24 个模型（22 个 available、2 个 unavailable）；专项接口文档修订稿已移除过时部署状态，只定义稳定契约。下一步核对 CreativeOne 实际运行版本并验收真实响应不含内部字段、每模型单份档位/区间、partial 提示、USD 单位、刷新失败清空旧价及桌面/窄屏布局，不把对方发布记录当成本项目消费端验收；旧 paths/quotes 合同已废止。继续在对应项目核查 Seedance 的计费条件与 schema 不一致，H3 实际用量换算及金额预估仍待权威规则。交接见 `docs/handoffs/reseller-app-pricing.md` 第 12 节。
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

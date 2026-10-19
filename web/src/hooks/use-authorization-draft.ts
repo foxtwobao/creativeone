@@ -9,7 +9,7 @@ export function useAuthorizationDraft<T>(draft: T, restore: (draft: T) => void, 
         const resume = state.authorizationResume;
         if (resume && resume.returnTo === window.location.pathname + window.location.search && resume.draft) {
             restore(resume.draft as T);
-            state.setAuthorizationResume(null);
+            state.setAuthorizationResume(resume.recoverable ? { ...resume, draft: null } : null);
             void cloudApi("/model-authorization/resume", { method: "DELETE" }).catch(() => undefined);
         }
     }, []);

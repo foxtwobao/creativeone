@@ -16,6 +16,13 @@ export const env = z.object({
     ADMIN_SUBJECTS: z.string().min(1),
     ENHANCER_BASE_URL: z.url(),
     ENHANCER_APP_CREDENTIAL: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
+    ENHANCER_PREVIOUS_APP_CREDENTIALS: z.string().default("[]").transform(value => z.array(z.string().min(1)).parse(JSON.parse(value))),
+    ONE_NAVIGATION_CONFIG: z.string().default("").transform(value => value ? z.object({
+        moduleUrl: z.url().refine(value => { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/navigation.js"; }),
+        policy: z.object({ defaults: z.object({ v: z.literal(1), channel: z.literal(""), homeUrl: z.url(), rechargeUrl: z.url() }).strict(), productHosts: z.array(z.string()) }).strict().optional(),
+        dedicated: z.boolean().optional(),
+        current: z.object({ v: z.literal(1), channel: z.string(), homeUrl: z.url(), rechargeUrl: z.url() }).strict().optional(),
+    }).strict().parse(JSON.parse(value)) : { moduleUrl: "https://home.agentone.work/navigation.js" }),
     TOKENONE_BASE_URL: z.preprocess(emptyAsUndefined, z.url().optional()),
     SESSION_SECONDS: positive.default(604800),
     MAX_REFERENCE_IMAGE_BYTES: positive.default(10485760),

@@ -7,6 +7,7 @@ import { useInterfaceStore } from "@/stores/use-interface-store";
 import { useAgentStore } from "@/stores/use-agent-store";
 import "./studio.css";
 import { features } from "@/constant/features";
+import { useOneNavigation } from "@/hooks/use-one-navigation";
 
 const links = [
     { to: "/studio", label: "图片创作", icon: PenLine },
@@ -17,6 +18,7 @@ const links = [
 ].filter(({ to }) => (to !== "/canvas" || features.canvas) && (to !== "/video" || features.video));
 
 export default function StudioLayout({ children }: { children: ReactNode }) {
+    const { homeLink, refresh } = useOneNavigation();
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
@@ -33,7 +35,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
     return (
         <div className={`studio-shell ${collapsed ? "studio-collapsed" : ""}`}>
             {!canvasEditor ? <>
-                <button className="studio-mobile-menu studio-icon" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={19} /></button>
+                <button className="studio-mobile-menu studio-icon" aria-label="打开导航" onClick={() => { refresh(); setMobileOpen(true); }}><Menu size={19} /></button>
                 {mobileOpen ? <button className="studio-backdrop" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
                 <aside className={`studio-sidebar ${mobileOpen ? "is-open" : ""}`}>
                     <header className="studio-brand-row">
@@ -42,7 +44,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
                         <button className="studio-icon studio-mobile-close" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button>
                     </header>
                     <nav className="studio-navigation" aria-label="主导航">
-                        <a href="https://home.agentone.work/" className="studio-nav-item"><span>首页</span></a>
+                        <a {...homeLink} className="studio-nav-item aria-disabled:opacity-40"><span>首页</span></a>
                         {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
                         {features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
                     </nav>
