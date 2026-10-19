@@ -16,20 +16,19 @@ test("authorization routes bind PKCE to the session, reject replay, and recover 
         db.query = async (sql, values = []) => {
             if (sql.startsWith('SELECT u.')) return { rows: signedIn ? [user] : [] };
             if (sql.startsWith('SELECT id_hash')) return { rowCount: 1, rows: [{}] };
-            if (sql.startsWith('SELECT authorization_url')) return { rows: flow && !flow.consumed && !expired ? [flow] : [] };
+            if (sql.startsWith('SELECT *,expires_at')) return { rows: flow && flow.session_hash === values[0] && flow.issuer === values[1] && flow.subject === values[2] && flow.provider === values[3] ? [{ ...flow, valid: !expired }] : [] };
             if (sql.startsWith('INSERT INTO reseller_authorizations')) {
                 flow = Object.fromEntries(['session_hash','state_hash','verifier','issuer','subject','provider','credential_hash','authorization_url','return_to','draft','expires_at'].map((key, i) => [key, values[i]]));
                 flow.draft = JSON.parse(flow.draft); flow.consumed = false;
             }
             if (sql.startsWith('UPDATE reseller_authorizations SET consumed')) {
-                assert.ok(sql.includes("consumed=false RETURNING *,expires_at>now() AS valid"));
-                const keys = ['session_hash','state_hash','issuer','subject','provider','credential_hash'];
-                if (!flow || flow.consumed || keys.some((key, i) => flow[key] !== values[i])) return { rows: [] };
-                flow.consumed = true; return { rows: [{ ...flow, valid: !expired }] };
+                if (!flow || flow.consumed || flow.session_hash !== values[0] || flow.state_hash !== values[1]) return { rowCount: 0, rows: [] };
+                flow.consumed = true; flow.result = 'processing'; return { rowCount: 1, rows: [{ state_hash: flow.state_hash }] };
             }
             if (sql.startsWith('UPDATE reseller_authorizations SET result')) { flow.result = values[1]; flow.verifier = null; }
             if (sql.startsWith('SELECT return_to')) return { rows: flow?.consumed ? [flow] : [] };
-            if (sql.startsWith('DELETE FROM reseller_authorizations')) flow = undefined;
+            if (sql.startsWith('UPDATE reseller_authorizations SET draft')) flow.draft = null;
+            if (sql.startsWith('DELETE FROM reseller_authorizations') && (!sql.includes('result NOT IN') || !['processing','unknown'].includes(flow?.result))) flow = undefined;
             return { rows: [] };
         };
         db.connect = async () => ({ query: db.query, release() {} });

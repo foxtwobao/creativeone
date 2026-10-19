@@ -9,10 +9,15 @@ import { exportUnsavedChanges, retryCloudSave } from "@/services/cloud-storage";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { flushCanvasPersistence, hasPendingCanvasPersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
+import { useOneNavigation } from "@/hooks/use-one-navigation";
+import { useModelAuthorizationRecovery } from "@/hooks/use-model-authorization-recovery";
 
 const AnnouncementCenter = lazyWithReload(() => import("./announcements/announcement-center"));
 
 export function CloudAccountBar() {
+    const { homeLink, rechargeLink } = useOneNavigation();
+    const authorizationRecoverable = useCloudStore(state => state.authorizationResume?.recoverable);
+    const { recover, recovering } = useModelAuthorizationRecovery();
     const { message, modal } = App.useApp();
     const { t } = useTranslation();
     const saving = useCloudStore((state) => state.saving);
@@ -64,11 +69,11 @@ export function CloudAccountBar() {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span>{cloudSession?.user.displayName}</span>
                 {!needsLogin ? <div role="group" aria-label="账户余额与充值" className="flex items-center gap-1.5">
-                    <span role="status" title={balanceError || "按本站充值额度 1:1 展示余额，可能晚于实际扣费"} className="tabular-nums">
-                        {balanceLoading ? "余额加载中…" : balance && balanceOwner === userId ? `余额 ${balance.amount} ${balance.unit === "USD" ? "CNY" : balance.unit}` : balanceError ? "余额暂不可用" : "余额 —"}
+                    <span role="status" title={balanceError || "按账户返回的金额和单位展示，可能晚于实际扣费"} className="tabular-nums">
+                        {balanceLoading ? "余额加载中…" : balance && balanceOwner === userId ? `余额 ${balance.amount} ${balance.unit}` : balanceError ? "余额暂不可用" : "余额 —"}
                     </span>
                     <button type="button" onClick={() => void loadBalance()} disabled={balanceLoading} aria-label="刷新余额" title={balanceError || "刷新余额"} className="rounded p-1 hover:bg-muted disabled:opacity-40"><RefreshCw size={12} className={balanceLoading ? "animate-spin" : ""} /></button>
-                    <a href="https://token.agentone.work/wallet" target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-1 font-medium text-foreground hover:bg-black/5 dark:hover:bg-white/10">{t("topNav.recharge")}<ArrowUpRight size={12} /></a>
+                    <a {...rechargeLink} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-1 font-medium text-foreground hover:bg-black/5 dark:hover:bg-white/10 aria-disabled:opacity-40">{t("topNav.recharge")}<ArrowUpRight size={12} /></a>
                 </div> : null}
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -77,8 +82,9 @@ export function CloudAccountBar() {
                     {!needsLogin ? <button disabled={saving > 0 || retrying} onClick={() => void retry()}>{retrying ? "正在重试…" : "重试"}</button> : null}
                 </> : <span role="status">{saving || retrying || pendingCanvas ? "正在保存…" : "已保存"}</span>}
                 <Suspense fallback={null}><AnnouncementCenter /></Suspense>
-                <a href="https://home.agentone.work/">首页</a>
+                <a {...homeLink} className="aria-disabled:opacity-40">首页</a>
                 <Link to="/pricing">模型价格</Link>
+                {!needsLogin && authorizationRecoverable ? <button disabled={recovering} onClick={() => void recover()}>{recovering ? "正在检查授权…" : "检查授权结果"}</button> : null}
                 {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
                 {cloudSession?.user.admin ? <Link to="/admin/tasks">用户任务</Link> : null}
                 <button disabled={saving > 0 || retrying} onClick={() => void logout()}>退出</button>

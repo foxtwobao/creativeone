@@ -31,13 +31,13 @@ IDONE_DISCOVERY_URL=https://idone.example.com/.well-known/openid-configuration
 3. 验证 ID Token 签名、issuer、audience、有效期和 nonce；需要 UserInfo 时，使用 Access Token 请求并确认 UserInfo 的 `sub` 与 ID Token 一致。
 4. 使用原始 `(issuer, sub)` 作为业务用户唯一身份，创建业务会话和本地权限；不要使用邮箱合并不同 sub。
 
-完整回调由平台按应用交付的固定路径和实际发布域名在 IDONE 精确登记，应用不重复维护完整回调列表，不使用通配符。新接入默认回调路径为 `/auth/callback`；已有产品可保留实际路径，应用发送的 redirect_uri 必须与交付的回调地址一致。接入时只核对 IDONE 已有配置；缺客户端、回调或权限时报告缺项并停止相关入口启用，不擅自修改 IDONE。
+完整回调由部署方按应用交付的固定路径和实际发布域名在 IDONE 精确登记，不使用通配符。回调路径沿用应用实际实现；CreativeONE 为 `/api/auth/callback`，不要直接复制其他应用的示例。应用发送的 redirect_uri 必须与交付的回调地址一致。接入时只核对 IDONE 已有配置；缺客户端、回调或权限时报告缺项并停止相关入口启用，不擅自修改 IDONE。
 
 IDONE 只负责身份认证和原生注册资料；业务角色、业务数据和本地会话由各 ONE 管理。验收应覆盖登录、账号切换、无效令牌、过期、userinfo subject 不一致和跨入口 SSO。
 
 ## 2. 对接 Reseller：统一登录导航
 
-**准备资料**：浏览器可达的 Reseller origin、登记的产品 appId、业务 OIDC 启动路径及实际访问域名。业务 ONE 不配置 HomeONE 地址，不维护 Site 映射或调用归属回执。
+**准备资料**：浏览器可达的 Reseller origin、登记的产品 appId、业务 OIDC 启动路径及实际访问域名。业务 ONE 的登录流程不配置 HomeONE 地址，不维护 Site 映射或调用归属回执；可选页面导航的静态资源地址见第 5 节。
 
 **CreativeONE 配置示例**：
 
@@ -65,13 +65,13 @@ GET <ENHANCER_BASE_URL>/auth/enter
 3. `/api/auth/oidc/start` 独立生成业务 state、nonce 和 PKCE，直接启动 IDONE OIDC。原页面记录缺失或过期也允许启动；没有可信记录时返回 `/studio`。
 4. `/api/auth/callback` 按第 1 节验证业务授权，并检查浏览器 Cookie、origin、固定客户端、issuer、精确 redirect_uri、期限与一次性消费。业务事务固定 300 秒；原页面导航记录保留 600 秒，仅代表导航偏好。
 
-交付 `launchPath=/studio`、`oidcStartPath=/api/auth/oidc/start`、`callbackPaths=["/api/auth/callback"]` 与实际 `idoneApp`。前两项不是 IDONE redirect_uri；`idoneApp` 只交平台登记，Secret 始终留在业务后端。普通匿名页面由用户点击登录；独立启动入口自动发起 OIDC，不回跳 Reseller。
+产品配置交付 `launchPath=/studio`、`oidcStartPath=/api/auth/oidc/start` 与实际 `idoneApp`，不包含 `callbackPaths` 或 `callbackUrl`。另交付每个实际 origin 的完整业务 OIDC 回调，由部署方在应用自己的 IDONE 客户端精确登记；模型授权返回地址另在 Reseller 服务应用中登记。启动路径不是 IDONE redirect_uri；`idoneApp` 只交平台登记，Secret 始终留在业务后端。普通匿名页面由用户点击登录；独立启动入口自动发起 OIDC，不回跳 Reseller。
 
 业务失败手动重试，不循环登录。会话 Cookie 使用 host-only、HttpOnly、SameSite=Lax，HTTPS 下启用 Secure。已有有效业务会话直接访问业务页面；明确换号先退出。本地退出清除当前会话和未完成事务，不表示平台退出，也不自动启动 OIDC。CreativeONE 实现与真实联调状态见 [交接文档](../../../handoffs/creativeone-one-auth.md)。
 
 ## 3. 对接 Reseller：模型授权与 Key 获取
 
-**准备资料**：Reseller 服务地址、具备 `keys:ensure` 和 `groups:read` 的应用接入凭证、应用默认分组，以及业务后端实现并登记的精确模型授权回调。该回调与 OIDC 登录回调分别核对，路径由产品交付。凭证只保存在后端。
+**准备资料**：Reseller 服务地址、应用接入凭证、应用默认分组，以及业务后端实现并登记的精确模型授权回调。调用模型需 `keys:ensure`，展示默认分组另需 `groups:read`。模型授权与 OIDC 登录的两类回调分别核对，路径由产品交付。凭证只保存在后端。
 
 登录成功并满足应用与 Reseller 的用户资格要求后，后端使用已验证身份请求：
 
@@ -83,7 +83,15 @@ Content-Type: application/json
 {"identity":{"issuer":"原始 issuer","subject":"原始 sub"}}
 ```
 
-若返回 `APP_USER_AUTHORIZATION_REQUIRED`，后端通过 `/api/apps/authorizations` 发起授权，提交 identity、精确 redirect_uri、state 和 S256 code_challenge；用户完成授权返回业务回调后，后端向 `/api/apps/authorizations/complete` 提交 code 和 code_verifier。请求绑定身份与会话，回调一次性消费；授权前保存业务内容，返回后由用户重新确认操作。多个业务域名须分别验证回调与会话绑定，不能假定跨域共享 Cookie。
+若返回 `APP_USER_AUTHORIZATION_REQUIRED`，后端通过 `/api/apps/authorizations` 发起授权，提交 identity、精确 redirect_uri、state 和 S256 code_challenge；用户完成授权返回业务回调后，后端向 `/api/apps/authorizations/complete` 提交 code 和 code_verifier。请求绑定身份与会话，回调一次性消费；授权前保存业务内容，返回后由用户重新确认操作。多个业务域名须分别验证回调与会话绑定，模型授权应返回发起 origin 的同一个 host-only 会话。Reseller 最多登记 10 个完整 HTTPS 返回地址，不支持通配符。CreativeONE 当前模型授权仍使用 `APP_ORIGIN/api/auth/reseller/callback`，第二域名配套改造继续见 TODO，不把登录多域名能力当作模型授权已完成。
+
+### 授权结果未知与凭证轮换
+
+CreativeONE 在服务端持久标记一次性 code 已消费，再执行兑换；同一会话的发起、兑换、恢复及撤销以 PostgreSQL 连接锁串行处理。进程退出时锁释放，已消费状态保留。兑换或随后 ensure 结果未知时保留待恢复状态和编辑内容，用户通过「检查授权结果」手动调用 ensure；不再次兑换 code，不自动提交生成。恢复成功后继续原任务；仍需授权时由用户重新发起。
+
+`ENHANCER_APP_CREDENTIAL` 用于新事务。轮换期间，把仍有效的旧凭证放入服务端 Secret 配置 `ENHANCER_PREVIOUS_APP_CREDENTIALS` JSON 数组；在途事务根据保存的哈希选择原凭证。数据库不保存这些应用凭证或用户 Key，浏览器不接收凭证列表。确认在途事务结束后移除旧配置；原凭证缺失、撤销或到期时提示重新发起，不用新凭证兑换旧 code。
+
+分组、ensure、授权发起/兑换/撤销的每次 Reseller 请求上限为用户确认的 120 秒；余额保留 7 秒，价格与公告保留 600 秒。前台只读请求断开时取消上游读取；有副作用的授权操作及后台任务不随浏览器断开取消。超时不证明操作失败；兑换进入待确认，撤销响应不明时不显示成功，用户可手动再次断开以确认。没有新增自动重试或轮询。
 
 ## 4. 对接 TokenONE / New API：调用模型
 
@@ -97,11 +105,45 @@ Content-Type: application/json
 
 模型调用同时受用户权益、分组和产品模型配置约束。上游需要访问参考素材时，必须确认素材 URL 可达；请求结果不确定时不自动重试收费调用。TokenONE 的渠道、定价和上游适配问题由对应项目处理。
 
-## 5. 通用联调顺序
+## 5. 可选首页与充值导航
+
+CreativeONE 保留现有首页和充值按钮，从可信分发域动态加载 ESM `/navigation.js`，调用其 `browserNavigation`。导航配置由服务端 `ONE_NAVIGATION_CONFIG` 通过登录会话接口交付，仅包含公开地址；它与登录配置、业务身份和分组权限独立。
+
+Cookie `one_nav` 由工具统一读取和校验，不自行解析、改写或由当前域名猜测渠道。公共应用使用有效 Cookie 中的完整首页、充值地址，Cookie 缺失或无效时回落 policy 的平台默认地址。窗口恢复焦点、页面重新可见、导航展开及普通/中键点击前均刷新，所有按钮共享状态和监听器。保留普通链接、新标签页及充值的新标签页行为。
+
+留空配置使用 `https://home.agentone.work/navigation.js` 及其默认 policy。lab 等非默认部署须同时提供模块地址和完整 policy，例如：
+
+```dotenv
+ONE_NAVIGATION_CONFIG='{"moduleUrl":"https://homeone.lab.home.arpa/navigation.js","policy":{"defaults":{"v":1,"channel":"","homeUrl":"https://homeone.lab.home.arpa/","rechargeUrl":"https://tokenone.lab.home.arpa/wallet"},"productHosts":["homeone.lab.home.arpa","tokenone.lab.home.arpa","creative.lab.home.arpa","pptone.lab.home.arpa"]}}'
+```
+
+独立渠道部署可额外提供 `dedicated: true` 和部署方交付的完整 `current` 导航对象，仍由工具按 policy 校验；有效独立配置不被 Cookie 覆盖，无效时禁用链接。自定义域名是否满足工具规则须按实际配置验证，不能生成伪造的渠道对象。模块加载失败时导航链接保持不可用，应用页面、登录和业务请求继续工作；不回退到未经校验的 Cookie URL。CSP 须允许实际模块来源，模块须支持无凭证跨域读取。
+
+## 6. 余额、价格与公告能力
+
+这些读取能力不要求用户先完成模型 Key 授权。应用凭证始终只留在后端，浏览器调用本应用代理。
+
+| 能力 | Reseller 接口 | 权限与前置条件 | CreativeONE 入口 |
+| --- | --- | --- | --- |
+| 余额 | `POST /api/apps/balance/query` | `balance:read`、当前已验证身份；无需默认分组 | `GET /api/account/balance` |
+| 模型价格 | `GET /api/apps/pricing` | `pricing:read`、默认 Composite 分组；不发送 identity、query 或 body | `GET /api/model-pricing`、`/pricing` |
+| 应用公告 | `GET /api/apps/announcements` 及 `/:id` | 复用应用凭证，默认可读；无需新 scope、分组或 identity | `GET /api/announcements` 及 `/:id` |
+
+余额响应为 `data.balance`，金额字符串及 `USD/CNY/QUOTA` 按返回值原样展示，不将 USD 直接改标 CNY。登录后读取一次并支持手动刷新，失败显示不可用；退出或账号变化清除旧结果，不影响保存或模型授权。
+
+价格以 Reseller `APP_PRICING_API.md`、`CREATIVEONE_PRICING_HANDOFF.md` 为准：每个模型只有一份 `tiers`，按条件展示 `prices` 的精确字符串 `min_amount/max_amount`；端点相同显示单价，否则显示区间。按 `metric + usage_key + unit` 保留独立用量，`partial` 明确显示「价格信息不完整」，`unavailable` 不显示伪造零价。金额已包含倍率，使用 USD，不再次计算倍率、执行条件文本或将各项相加预估费用。后端及浏览器响应不返回 group、paths、quotes、渠道、插件和倍率身份。仅与本地启用模型取交集，失败清除旧报价；不自动重试、缓存或轮询。
+
+公告列表及详情只读取本应用已发布内容；正文安全渲染 Markdown，禁用 HTML 和图片。CreativeONE 自行按账号与公告版本保存已读记录，只看列表或关闭提示不算已读。公告故障只影响公告区域，不伪装空列表或触发模型授权。
+
+上游 401 表示服务接入凭证异常，映射为本地服务错误，不清除有效业务会话。余额不能替代用量统计，价格目录不能证明模型权限；账户汇总、用量明细及统计仍明确不可用。
+
+## 7. 通用联调顺序
 
 1. IDONE：核对客户端、issuer、完整回调和真实 OIDC 登录。
 2. 登录衔接：检查公开 appId/sourceOrigin、直接 OIDC 启动、300 秒过期和一次性消费、浏览器事务绑定，以及原页面恢复和失败不循环。
 3. Reseller 模型授权：验证用户身份、默认分组、Key 保密、授权取消和一次性回调。
-4. TokenONE：查询模型并完成一次真实调用，验证任务保存、额度错误和素材可达性。
+4. 读取能力：独立验收余额原币种、价格区间与 partial、公告列表/详情及已读隔离，故障不影响业务会话。
+5. 页面导航：验证 Cookie 生效、缺失/非法回落平台默认、页面重新可见和点击前刷新，以及模块失败和独立渠道配置。
+6. TokenONE：查询模型并完成一次真实调用，验证任务保存、额度错误和素材可达性。
 
 平台入口拒绝时核对 appId、sourceOrigin、产品启用状态与登记的 OIDC 启动路径；仍失败时将脱敏错误和请求标识交给平台维护方。模型授权跨域失败时检查业务回调 origin 与 host-only Cookie 的会话绑定。

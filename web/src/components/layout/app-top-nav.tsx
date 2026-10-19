@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { features } from "@/constant/features";
+import { useOneNavigation } from "@/hooks/use-one-navigation";
 
 export function AppTopNav() {
+    const { homeLink, refresh } = useOneNavigation();
     const { t } = useTranslation();
     const { pathname } = useLocation();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -43,7 +45,7 @@ export function AppTopNav() {
                             <button
                                 type="button"
                                 className="ml-3 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 md:hidden dark:text-stone-300 dark:hover:text-white"
-                                onClick={() => setMobileNavOpen(true)}
+                                onClick={() => { refresh(); setMobileNavOpen(true); }}
                                 aria-label={t("topNav.openMenu")}
                                 title={t("topNav.menu")}
                             >
@@ -74,7 +76,7 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <a href="https://home.agentone.work/" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">首页</a>
+                            <a {...homeLink} className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 aria-disabled:opacity-40">首页</a>
                             <Link to="/studio" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">新版 UI</Link>
                             {features.assistant && <Tooltip title={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")}>
                                 <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")} />

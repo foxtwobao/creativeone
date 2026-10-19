@@ -3,6 +3,7 @@ import { cloudSession } from "@/services/api/cloud";
 import { fetchAccountBalance } from "@/services/api/account-pricing";
 import type { AccountBalance } from "../../../shared/account-pricing";
 import { useAnnouncementStore } from "./use-announcement-store";
+import type { AuthorizationResume } from "@/services/api/model-authorization";
 
 let balanceRequest: AbortController | null = null;
 
@@ -13,8 +14,9 @@ export const useCloudStore = create<{
     balanceError: string;
     loadBalance: () => Promise<void>;
     clearBalance: () => void;
-    authorizationResume: { returnTo: string; draft: unknown; result: string; message: string } | null;
-    setAuthorizationResume: (resume: { returnTo: string; draft: unknown; result: string; message: string } | null) => void;
+    authorizationResume: AuthorizationResume | null;
+    setAuthorizationResume: (resume: AuthorizationResume | null) => void;
+    authorizationRecovering: boolean;
     authorizationDraft: (() => unknown) | null;
     setAuthorizationDraft: (capture: (() => unknown) | null) => void;
     modelAuthorized: boolean;
@@ -50,6 +52,7 @@ export const useCloudStore = create<{
         }
     },
     authorizationResume: null,
+    authorizationRecovering: false,
     setAuthorizationResume: (authorizationResume) => set((state) => ({ authorizationResume, modelAuthorized: authorizationResume ? authorizationResume.result === "authorized" : state.modelAuthorized })),
     authorizationDraft: null,
     setAuthorizationDraft: (authorizationDraft) => set({ authorizationDraft }),

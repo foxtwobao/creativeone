@@ -1,18 +1,66 @@
-import { Router, type ErrorRequestHandler } from "express";
+import { Router, type ErrorRequestHandler, type Response } from "express";
 import { createHash, randomBytes } from "node:crypto";
+import type { PoolClient } from "pg";
 import { z } from "zod";
-import { db, transaction } from "./db.js";
+import { db } from "./db.js";
 import { env } from "./config.js";
 import { requireUser } from "./auth.js";
-import { enhancer, ensureKey, modelProvider } from "./tokenone.js";
+import { applicationCredential, enhancer, ensureKey, modelProvider } from "./tokenone.js";
 import { HttpError, noCache } from "./http.js";
 import { modelErrorMessage } from "./model-errors.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
-const credentialHash = () => digest(env.ENHANCER_APP_CREDENTIAL || "");
 const callbackUrl = `${env.APP_ORIGIN}/api/auth/reseller/callback`;
 const returnPath = z.string().refine((path) => path.startsWith("/") && !path.startsWith("//") && !path.includes("\\") && !/[\r\n]/.test(path) && new URL(path, env.APP_ORIGIN).origin === env.APP_ORIGIN && !new URL(path, env.APP_ORIGIN).pathname.startsWith("/api/"));
 const startSchema = z.object({ returnTo: returnPath, draft: z.unknown() }).strict();
+type Flow = { state_hash: string; verifier: string | null; credential_hash: string; return_to: string; draft: unknown; consumed: boolean; result: string | null; valid: boolean };
+const uncertain = (flow: Flow) => flow.consumed && (flow.result === "processing" || flow.result === "unknown");
+const definitive = (error: unknown) => error instanceof HttpError && (error.status < 500 || ["UNAUTHORIZED", "AUTHORIZATION_CREDENTIAL_UNAVAILABLE", "ENHANCER_NOT_CONFIGURED"].includes(error.code));
+
+// Keep the consume committed before exchange. A connection lock serializes recovery and
+// revocation across processes, and is released by PostgreSQL if the process disappears.
+async function locked<T>(res: Response, run: (client: PoolClient) => Promise<T>) {
+    const client = await db.connect();
+    const key = `reseller-authorization:${res.locals.sessionHash}`;
+    let unlocked = false;
+    try {
+        await client.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [key]);
+        const session = await client.query("SELECT id_hash FROM sessions WHERE id_hash=$1 AND expires_at>now()", [res.locals.sessionHash]);
+        if (!session.rowCount) throw new HttpError(401, "SESSION_EXPIRED");
+        return await run(client);
+    } finally {
+        try { await client.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [key]); unlocked = true; }
+        finally { client.release(!unlocked); }
+    }
+}
+async function readFlow(client: Pick<PoolClient, "query">, res: Response) {
+    return (await client.query<Flow>(`SELECT *,expires_at>now() AS valid FROM reseller_authorizations
+        WHERE session_hash=$1 AND issuer=$2 AND subject=$3 AND provider=$4`,
+        [res.locals.sessionHash, res.locals.user.issuer, res.locals.user.subject, modelProvider])).rows[0];
+}
+function resume(flow: Flow | undefined) {
+    if (!flow || (!flow.consumed && flow.draft == null)) return null;
+    const recoverable = uncertain(flow);
+    const result = recoverable ? "AUTHORIZATION_RESULT_UNKNOWN" : !flow.consumed && flow.valid ? "AUTHORIZATION_PENDING" : flow.result || "AUTHORIZATION_FLOW_INVALID";
+    return { returnTo: flow.return_to, draft: flow.draft, result, recoverable,
+        message: result === "authorized" ? "模型服务已授权" : modelErrorMessage(result) || "授权未完成，请重新发起。" };
+}
+async function finish(client: PoolClient, res: Response, flow: Flow, result: string) {
+    await client.query(`UPDATE reseller_authorizations SET result=$2,verifier=NULL,authorization_url=NULL
+        WHERE session_hash=$1 AND state_hash=$3 AND consumed=true`, [res.locals.sessionHash, result, flow.state_hash]);
+    flow.result = result;
+    return resume(flow);
+}
+async function recover(client: PoolClient, res: Response, flow: Flow) {
+    let result = "authorized";
+    try {
+        const credential = applicationCredential(flow.credential_hash);
+        if (!credential) throw new HttpError(503, "AUTHORIZATION_CREDENTIAL_UNAVAILABLE");
+        await ensureKey(res.locals.user, res.locals.requestId, { credential, client });
+    } catch (error) { result = definitive(error) ? (error as HttpError).code : "unknown"; }
+    return finish(client, res, flow, result);
+}
+
 export const resellerRouter = Router();
 resellerRouter.use("/model-authorization", noCache, (_req, res, next) => { res.setHeader("Referrer-Policy", "no-referrer"); next(); });
 resellerRouter.post("/model-authorization", async (req, res) => {
@@ -20,14 +68,15 @@ resellerRouter.post("/model-authorization", async (req, res) => {
     const user = res.locals.user;
     if (!user.email_verified) throw new HttpError(403, "EMAIL_NOT_VERIFIED");
     if (!callbackUrl.startsWith("https://")) throw new HttpError(503, "REDIRECT_URI_FORBIDDEN");
-    const result = await transaction(async (client) => {
-        // Lock the session, including across processes, to merge concurrent starts.
-        const session = await client.query("SELECT id_hash FROM sessions WHERE id_hash=$1 AND expires_at>now() FOR UPDATE", [res.locals.sessionHash]);
-        if (!session.rowCount) throw new HttpError(401, "SESSION_EXPIRED");
-        const existing = (await client.query("SELECT authorization_url FROM reseller_authorizations WHERE session_hash=$1 AND (consumed=false OR result='processing') AND expires_at>now() AND provider=$2 AND credential_hash=$3", [res.locals.sessionHash, modelProvider, credentialHash()])).rows[0];
-        if (existing) return { pending: true };
+    const result = await locked(res, async client => {
+        const existing = await readFlow(client, res);
+        if (existing && uncertain(existing)) {
+            const status = await recover(client, res, existing);
+            if (status?.recoverable) return { pending: true, recoverable: true };
+            if (status?.result === "authorized") return { authorized: true };
+        } else if (existing && !existing.consumed && existing.valid && applicationCredential(existing.credential_hash)) return { pending: true };
         try {
-            await ensureKey(user, res.locals.requestId);
+            await ensureKey(user, res.locals.requestId, { client });
             return { authorized: true };
         } catch (error) {
             if (!(error instanceof HttpError) || error.status !== 403 || error.code !== "APP_USER_AUTHORIZATION_REQUIRED") throw error;
@@ -45,56 +94,71 @@ resellerRouter.post("/model-authorization", async (req, res) => {
         await client.query(`INSERT INTO reseller_authorizations (session_hash,state_hash,verifier,issuer,subject,provider,credential_hash,authorization_url,return_to,draft,expires_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
             ON CONFLICT (session_hash) DO UPDATE SET state_hash=EXCLUDED.state_hash,verifier=EXCLUDED.verifier,issuer=EXCLUDED.issuer,subject=EXCLUDED.subject,provider=EXCLUDED.provider,credential_hash=EXCLUDED.credential_hash,authorization_url=EXCLUDED.authorization_url,return_to=EXCLUDED.return_to,draft=EXCLUDED.draft,expires_at=EXCLUDED.expires_at,consumed=false,result=NULL`,
-            [res.locals.sessionHash, digest(state), verifier, user.issuer, user.subject, modelProvider, credentialHash(), url.href, input.returnTo, JSON.stringify(input.draft ?? null), new Date(started + 300_000)]);
+            [res.locals.sessionHash, digest(state), verifier, user.issuer, user.subject, modelProvider, digest(env.ENHANCER_APP_CREDENTIAL!), url.href, input.returnTo, JSON.stringify(input.draft ?? null), new Date(started + 300_000)]);
         return { authorizationUrl: url.href };
     });
     res.json(result);
 });
-resellerRouter.get("/model-authorization", async (_req, res) => {
-    const flow = (await db.query("SELECT return_to,draft,result FROM reseller_authorizations WHERE session_hash=$1 AND consumed=true AND result<>'processing'", [res.locals.sessionHash])).rows[0];
-    res.json(flow ? { returnTo: flow.return_to, draft: flow.draft, result: flow.result, message: flow.result === "authorized" ? "模型服务已授权" : modelErrorMessage(flow.result) || "授权未完成，请重新发起。" } : null);
+resellerRouter.get("/model-authorization", async (_req, res) => res.json(resume(await readFlow(db, res))));
+resellerRouter.post("/model-authorization/recover", async (_req, res) => {
+    res.json(await locked(res, async client => {
+        const flow = await readFlow(client, res);
+        return flow && uncertain(flow) ? recover(client, res, flow) : resume(flow);
+    }));
 });
 resellerRouter.delete("/model-authorization/resume", async (_req, res) => {
-    await db.query("DELETE FROM reseller_authorizations WHERE session_hash=$1 AND consumed=true AND result<>'processing'", [res.locals.sessionHash]);
+    await locked(res, async client => {
+        // Restoring the editor must not erase an authorization whose result is unknown.
+        await client.query("UPDATE reseller_authorizations SET draft=NULL WHERE session_hash=$1", [res.locals.sessionHash]);
+        await client.query("DELETE FROM reseller_authorizations WHERE session_hash=$1 AND consumed=true AND result NOT IN ('processing','unknown')", [res.locals.sessionHash]);
+    });
     res.json({ ok: true });
 });
 resellerRouter.post("/model-authorization/revoke", async (_req, res) => {
-    const user = res.locals.user;
-    const result = await enhancer("/authorizations/revoke", res.locals.requestId, { identity: { issuer: user.issuer, subject: user.subject } });
-    if (result.status !== "revoked") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
-    await db.query("DELETE FROM reseller_authorizations WHERE session_hash IN (SELECT id_hash FROM sessions WHERE user_id=$1)", [user.id]);
-    // Keys are never cached. Every subsequent model request must pass ensure again.
+    await locked(res, async client => {
+        const user = res.locals.user;
+        try {
+            const result = await enhancer("/authorizations/revoke", res.locals.requestId, { identity: { issuer: user.issuer, subject: user.subject } });
+            if (result.status !== "revoked") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
+        } catch (error) {
+            if (definitive(error)) throw error;
+            throw new HttpError(503, "AUTHORIZATION_REVOKE_UNKNOWN");
+        }
+        await client.query("DELETE FROM reseller_authorizations WHERE session_hash IN (SELECT id_hash FROM sessions WHERE user_id=$1)", [user.id]);
+    });
     res.json({ status: "revoked" });
 });
 
 export const resellerCallbackRouter = Router();
 resellerCallbackRouter.use(noCache, (_req, res, next) => { res.setHeader("Referrer-Policy", "no-referrer"); next(); });
 resellerCallbackRouter.get("/", requireUser, async (req, res) => {
-    const query = z.object({ code: z.string().min(1), state: z.string().min(32).max(256) }).safeParse(req.query);
+    const query = z.object({ code: z.string().min(1), state: z.string().min(32).max(256) }).strict().safeParse(req.query);
     if (!query.success) return res.redirect("/studio?modelAuthorization=invalid");
-    const user = res.locals.user;
-    // Consume before exchange; wrong state, changed identity or replay never reaches Reseller.
-    const flow = (await db.query(`UPDATE reseller_authorizations SET consumed=true,result='processing'
-        WHERE session_hash=$1 AND state_hash=$2 AND issuer=$3 AND subject=$4 AND provider=$5 AND credential_hash=$6 AND consumed=false RETURNING *,expires_at>now() AS valid`,
-        [res.locals.sessionHash, digest(query.data.state), user.issuer, user.subject, modelProvider, credentialHash()])).rows[0];
-    if (!flow) return res.redirect("/studio?modelAuthorization=invalid");
-    let result = "authorized";
-    try {
-        if (!flow.valid) throw new HttpError(400, "AUTHORIZATION_FLOW_INVALID");
-        try {
-            const response = await enhancer("/authorizations/complete", res.locals.requestId, { code: query.data.code, code_verifier: flow.verifier });
-            if (response.status !== "authorized") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
-        } catch (error) {
-            // An exchange response may be lost after authorization succeeded. Never replay the code.
-            if (error instanceof HttpError && error.status < 500) throw error;
+    const returnTo = await locked(res, async client => {
+        const flow = await readFlow(client, res);
+        if (!flow || flow.consumed || flow.state_hash !== digest(query.data.state)) return;
+        const claimed = await client.query(`UPDATE reseller_authorizations SET consumed=true,result='processing'
+            WHERE session_hash=$1 AND state_hash=$2 AND consumed=false RETURNING state_hash`, [res.locals.sessionHash, flow.state_hash]);
+        if (!claimed.rowCount) return;
+        flow.consumed = true;
+        if (!flow.valid) await finish(client, res, flow, "AUTHORIZATION_FLOW_INVALID");
+        else {
+            try {
+                const credential = applicationCredential(flow.credential_hash);
+                if (!credential) throw new HttpError(503, "AUTHORIZATION_CREDENTIAL_UNAVAILABLE");
+                const response = await enhancer("/authorizations/complete", res.locals.requestId, { code: query.data.code, code_verifier: flow.verifier }, undefined, credential);
+                if (response.status !== "authorized") throw new HttpError(502, "ENHANCER_INVALID_RESPONSE");
+                await recover(client, res, flow);
+            } catch (error) {
+                if (definitive(error)) await finish(client, res, flow, (error as HttpError).code);
+                else await recover(client, res, flow); // Check only; a code is never exchanged twice.
+            }
         }
-        await ensureKey(user, res.locals.requestId);
-    } catch (error) { result = error instanceof HttpError ? error.code : "APP_SERVICE_UNAVAILABLE"; }
-    await db.query("UPDATE reseller_authorizations SET result=$2,verifier=NULL,authorization_url=NULL WHERE session_hash=$1 AND state_hash=$3", [res.locals.sessionHash, result, digest(query.data.state)]);
-    res.redirect(flow.return_to);
+        return flow.return_to;
+    });
+    res.redirect(returnTo || "/studio?modelAuthorization=invalid");
 });
 
-// Even an expired login must leave the callback URL without code/state in the address bar.
 const callbackError: ErrorRequestHandler = (_error, _req, res, _next) => {
     res.redirect("/studio?modelAuthorization=invalid");
 };

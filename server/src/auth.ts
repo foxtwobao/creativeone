@@ -164,7 +164,7 @@ authRouter.get("/callback", async (req, res) => {
 });
 authRouter.get("/me", requireUser, (_req, res) => {
     const user = res.locals.user;
-    res.json({ user: { id: user.id, username: user.username, displayName: user.display_name, avatarUrl: user.avatar_url, email: user.email, emailVerified: user.email_verified, admin: adminSubjects.has(user.subject) }, csrf: res.locals.csrf, maxReferenceImageBytes: env.MAX_REFERENCE_IMAGE_BYTES, modelServiceUrl: env.TOKENONE_BASE_URL?.replace(/\/+$/, "").replace(/\/v1$/, "") });
+    res.json({ user: { id: user.id, username: user.username, displayName: user.display_name, avatarUrl: user.avatar_url, email: user.email, emailVerified: user.email_verified, admin: adminSubjects.has(user.subject) }, csrf: res.locals.csrf, maxReferenceImageBytes: env.MAX_REFERENCE_IMAGE_BYTES, modelServiceUrl: env.TOKENONE_BASE_URL?.replace(/\/+$/, "").replace(/\/v1$/, ""), navigation: env.ONE_NAVIGATION_CONFIG });
 });
 authRouter.post("/logout", requireUser, csrf, async (req, res) => {
     await db.query("DELETE FROM sessions WHERE id_hash=$1", [res.locals.sessionHash]);

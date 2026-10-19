@@ -13,12 +13,18 @@
   "idoneApp": "admin/creativeone",
   "domainLabel": "creative",
   "launchPath": "/studio",
-  "oidcStartPath": "/api/auth/oidc/start",
-  "callbackPaths": ["/api/auth/callback"]
+  "oidcStartPath": "/api/auth/oidc/start"
 }
 ```
 
-平台根据实际发布域名登记 Reseller 产品访问地址和 IDONE 精确业务回调。`oidcStartPath` 是浏览器可直接访问的启动路由，不是 redirect_uri；平台认证后直接导航到它，不追加身份或认证结果参数。普通业务页面已有会话时直接进入；匿名访问展示登录/注册按钮，用户点击后前往 Reseller。启动入口则自动发起业务 OIDC，即使浏览器已有业务会话，也以本次业务 OIDC 验证的账号为准。
+产品 JSON 不包含 `callbackPaths` 或 `callbackUrl`。另交付以下部署清单，分别核对两类白名单：
+
+| 实际 origin | 业务 OIDC 回调（IDONE） | 模型授权回调（Reseller） |
+| --- | --- | --- |
+| `https://creative.lab.home.arpa` | `https://creative.lab.home.arpa/api/auth/callback` | `https://creative.lab.home.arpa/api/auth/reseller/callback` |
+| `https://creativeccpg.lab.home.arpa` | `https://creativeccpg.lab.home.arpa/api/auth/callback` | 待第二域名模型授权改造与精确登记，不宣称已支持 |
+
+上述地址是本应用实际交付路径；新环境按实际 origin 交付完整地址，不照搬其他应用的示例。平台登记 Reseller 产品访问地址；部署方在本应用 IDONE 客户端精确登记业务回调，在 Reseller 服务应用 `redirect_uris` 精确登记模型授权回调。`oidcStartPath` 是浏览器可直接访问的启动路由，不是 redirect_uri；平台认证后直接导航到它，不追加身份或认证结果参数。普通业务页面已有会话时直接进入；匿名访问展示登录/注册按钮，用户点击后前往 Reseller。启动入口则自动发起业务 OIDC，即使浏览器已有业务会话，也以本次业务 OIDC 验证的账号为准。
 
 lab 已检查域名为 `https://creative.lab.home.arpa` 和 `https://creativeccpg.lab.home.arpa`。域名与 Site 的关系由 Reseller 管理，CreativeONE 不交付映射表。此前旧协议的默认入口检查、CCPG `APP_RETURN_FORBIDDEN` 和模拟回跳结果不能作为新协议验收证据；新版本需重新核对产品、origin、启动路径和业务回调。
 
@@ -69,3 +75,11 @@ IDONE issuer、Discovery、Client ID/Secret、管理员 sub 和 `SESSION_SECONDS
 已备份原配置、Git HEAD、工作区补丁、PostgreSQL 自定义归档及媒体，数据库归档目录校验通过。备份路径、代码版本、工作区状态、进程和日志记录在本机忽略文件 `server/data/appone-deployment.json`。保留 Vite 3002、API 4013、专用数据库 `127.0.0.1:5433/creativeone` 和既有 Caddy 链路，只重启 CreativeONE API；现有 Reseller 地址与 IDONE 业务客户端保持原值，配置删除旧 HomeONE 项并设置产品 `creativeone`。
 
 两个业务域名均通过页面 200、匿名 401、Reseller 新入口 302、平台导航 302、独立 OIDC 302、精确回调与 S256、300 秒安全 Cookie、取消恢复深链接、无导航记录回默认页面、重放 400；伪造 Host 与转发头被后端 400 拒绝。检查使用独立 HTTP Cookie 容器，未进入用户浏览器或创建业务会话。结果保存在 `server/data/appone-lab-validation.json`。完整用户授权、IDONE 回调换码、平台返回启动入口及真实跨应用 SSO 仍需登录验收，以上协议检查不替代这些结果。
+
+## 页面导航与业务读取配套
+
+首页和充值保留现有按钮，统一调用 HomeONE `/navigation.js` 的 `browserNavigation`。有效 `one_nav` 决定导航；缺失或无效时公共页面回落 policy 中的平台首页及充值地址。焦点恢复、页面重新可见、导航展开和点击前刷新，不自行解析 Cookie 或推导渠道。非默认部署通过 `ONE_NAVIGATION_CONFIG` 同时提供可信模块地址与完整 policy；独立渠道按指南提供 `dedicated/current`，无需在登录配置中维护 Site 映射。配置示例与边界见 [ONE 对接指南](../content/docs/development/one-integration.mdx)。
+
+业务能力由应用管理员独立授权：模型需要 `keys:ensure` 和默认组，管理分组展示需要 `groups:read`，余额需要 `balance:read`，价格需要 `pricing:read` 和默认 Composite 组；公告复用现有应用凭证默认读取。余额、价格和公告均不依赖模型 Key 授权。余额按返回的金额与币种展示；价格只使用公开模型 `tiers`、单价区间和 partial 状态，不返回内部路径或插件字段。
+
+模型授权结果未知时保留服务端事务及编辑内容，提供手动 ensure 检查；重启后不重复兑换 code。凭证轮换通过服务端 `ENHANCER_PREVIOUS_APP_CREDENTIALS` 保留仍有效旧凭证，事务只存哈希并继续使用原凭证。原凭证不可用时重新发起。分组、ensure 及授权请求采用已确认的每次 120 秒上限，余额 7 秒、价格和公告 600 秒保持；前台只读取消与后台任务、有副作用的授权操作分别处理。上述本轮配套实现和真实验收状态以待测清单为准，不沿用登录协议检查作为证明。

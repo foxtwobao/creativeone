@@ -7,6 +7,7 @@ import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import { loadUserSettings } from "@/stores/use-config-store";
 import { retryCloudSave } from "@/services/cloud-storage";
+import { useModelAuthorizationRecovery } from "@/hooks/use-model-authorization-recovery";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
 
@@ -17,18 +18,18 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const modelLoginRequired = useCloudStore((state) => state.modelLoginRequired);
     const setModelLoginRequired = useCloudStore((state) => state.setModelLoginRequired);
     const [starting, setStarting] = useState(false);
-    const [resumeError] = useState(() => {
-        const resume = useCloudStore.getState().authorizationResume;
-        return resume?.result !== "authorized" ? resume?.message : undefined;
-    });
+    const authorizationResume = useCloudStore(state => state.authorizationResume);
+    const { recover, recovering } = useModelAuthorizationRecovery();
+    const [initialResume] = useState(() => useCloudStore.getState().authorizationResume);
     useEffect(() => {
         const url = new URL(window.location.href);
         if (url.searchParams.has("modelAuthorization")) {
             url.searchParams.delete("modelAuthorization");
             window.history.replaceState(null, "", url.pathname + url.search + url.hash);
             message.error("授权流程已失效，请重新发起授权");
-        } else if (resumeError) message.error(resumeError);
-    }, [message, resumeError]);
+        } else if (initialResume?.recoverable || initialResume?.result === "AUTHORIZATION_PENDING") message.info(initialResume.message);
+        else if (initialResume && initialResume.result !== "authorized") message.error(initialResume.message);
+    }, [message, initialResume]);
     const authorize = async () => {
         setStarting(true);
         try {
@@ -37,11 +38,14 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
             await retryCloudSave();
             const state = useCloudStore.getState();
             if (state.saving || Object.keys(state.errors).length) throw new Error("还有未保存的修改，请先处理保存失败或冲突，再授权");
-            const result = await cloudApi<{ authorizationUrl?: string; authorized?: boolean; pending?: boolean }>("/model-authorization", {
+            const result = await cloudApi<{ authorizationUrl?: string; authorized?: boolean; pending?: boolean; recoverable?: boolean }>("/model-authorization", {
                 method: "POST", body: JSON.stringify({ returnTo: window.location.pathname + window.location.search, draft }),
             });
             if (result.authorizationUrl) window.location.assign(result.authorizationUrl);
-            else if (result.pending) message.info("此登录会话已有授权流程，请在原页面完成；过期后可重新发起");
+            else if (result.recoverable) {
+                state.setAuthorizationResume(await cloudApi("/model-authorization"));
+                message.info("授权结果待确认，请点击检查授权结果");
+            } else if (result.pending) message.info("此登录会话已有授权流程，请在原页面完成；过期后可重新发起");
             else if (result.authorized) { state.setModelAuthorized(true); message.success("模型服务已授权，请返回原任务继续处理"); }
             else throw new Error("暂时无法确认授权结果，请重新发起授权");
         } catch (error) { message.error(error instanceof Error ? error.message : "授权启动失败，请重试"); }
@@ -57,7 +61,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                 </div> : null}
                 <p className="text-xs text-muted-foreground">继续前会保存当前编辑内容，授权完成后返回此页。授权本身不会提交生成任务。</p>
             </div>
-            <Button className="mt-4" type="primary" loading={starting} onClick={() => void authorize()}>同意并前往授权</Button>
+            {authorizationResume?.recoverable ? <div className="mt-4"><p className="text-sm text-muted-foreground">{authorizationResume.message}</p><Button loading={recovering} onClick={() => void recover()}>检查授权结果</Button></div> : null}
+            <Button className="mt-4" type="primary" loading={starting} disabled={Boolean(authorizationResume?.recoverable) || recovering} onClick={() => void authorize()}>同意并前往授权</Button>
         </Modal>
     </>;
 }
