@@ -105,9 +105,13 @@ CreativeONE 在服务端持久标记一次性 code 已消费，再执行兑换�
 
 模型调用同时受用户权益、分组和产品模型配置约束。上游需要访问参考素材时，必须确认素材 URL 可达；请求结果不确定时不自动重试收费调用。TokenONE 的渠道、定价和上游适配问题由对应项目处理。
 
-## 5. 可选首页与充值导航
+## 5. 首页、充值与悬浮菜单
 
 CreativeONE 保留现有首页和充值按钮，从可信分发域动态加载 ESM `/navigation.js`，调用其 `browserNavigation`。导航配置由服务端 `ONE_NAVIGATION_CONFIG` 通过登录会话接口交付，仅包含公开地址；它与登录配置、业务身份和分组权限独立。
+
+登录后的业务页面同时异步加载同一分发源的经典脚本 `/widget.js`，右下角展示 ONE 悬浮菜单，提供首页、充值及应用目录，`data-app=creativeone` 标识当前应用。脚本使用 `crossorigin=anonymous`，与现有按钮复用同一 policy 及 dedicated/current，每个文档只初始化一次，SPA 切换不重建。菜单使用 Shadow DOM 和系统深浅色；点击链接按组件约定在当前页导航，现有顶部充值按钮仍在新标签页打开。脚本加载失败不阻断业务页面，目录读取失败由菜单提供手动重试。
+
+菜单层级为 10000；应用在全局 Ant Design 主题中将 `zIndexPopupBase` 设为 11000，让弹窗及遮罩覆盖菜单，避免弹窗打开后仍可点击外部导航。
 
 Cookie `one_nav` 由工具统一读取和校验，不自行解析、改写或由当前域名猜测渠道。公共应用使用有效 Cookie 中的完整首页、充值地址，Cookie 缺失或无效时回落 policy 的平台默认地址。窗口恢复焦点、页面重新可见、导航展开及普通/中键点击前均刷新，所有按钮共享状态和监听器。保留普通链接、新标签页及充值的新标签页行为。
 
@@ -117,7 +121,7 @@ Cookie `one_nav` 由工具统一读取和校验，不自行解析、改写或由
 ONE_NAVIGATION_CONFIG='{"moduleUrl":"https://homeone.lab.home.arpa/navigation.js","policy":{"defaults":{"v":1,"channel":"","homeUrl":"https://homeone.lab.home.arpa/","rechargeUrl":"https://tokenone.lab.home.arpa/wallet"},"productHosts":["homeone.lab.home.arpa","tokenone.lab.home.arpa","creative.lab.home.arpa","pptone.lab.home.arpa"]}}'
 ```
 
-独立渠道部署可额外提供 `dedicated: true` 和部署方交付的完整 `current` 导航对象，仍由工具按 policy 校验；有效独立配置不被 Cookie 覆盖，无效时禁用链接。自定义域名是否满足工具规则须按实际配置验证，不能生成伪造的渠道对象。模块加载失败时导航链接保持不可用，应用页面、登录和业务请求继续工作；不回退到未经校验的 Cookie URL。CSP 须允许实际模块来源，模块须支持无凭证跨域读取。
+独立渠道部署可额外提供 `dedicated: true` 和部署方交付的完整 `current` 导航对象，仍由工具按 policy 校验；有效独立配置不被 Cookie 覆盖，无效时禁用链接。自定义域名是否满足工具规则须按实际配置验证，不能生成伪造的渠道对象。模块加载失败时导航链接保持不可用，应用页面、登录和业务请求继续工作；不回退到未经校验的 Cookie URL。CSP 须允许实际脚本/模块来源及目录、图标的门户来源，资源须支持无凭证跨域读取。严格样式 CSP 还须为每次 HTML 响应提供随机 nonce；加载器继承页面脚本已有的 nonce，悬浮菜单再将其用于 Shadow DOM 样式，不能使用固定 nonce 或放宽整体策略。
 
 ## 6. 余额、价格与公告能力
 

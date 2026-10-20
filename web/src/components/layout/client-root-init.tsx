@@ -8,9 +8,10 @@ import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import { loadUserSettings } from "@/stores/use-config-store";
 import { retryCloudSave } from "@/services/cloud-storage";
 import { useModelAuthorizationRecovery } from "@/hooks/use-model-authorization-recovery";
+import { useOneWidget } from "@/hooks/use-one-widget";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
-
+    useOneWidget();
     const { message } = App.useApp();
     useEffect(() => {
         void loadUserSettings().catch((error) => message.error(error.message));

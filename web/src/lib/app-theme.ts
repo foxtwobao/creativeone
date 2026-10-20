@@ -35,6 +35,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
+            zIndexPopupBase: 11000, // Keep dialogs and their masks above the ONE widget (10000).
             colorPrimary: color.primary,
             colorInfo: color.primary,
             colorLink: color.primary,
