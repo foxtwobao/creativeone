@@ -80,6 +80,8 @@ IDONE issuer、Discovery、Client ID/Secret、管理员 sub 和 `SESSION_SECONDS
 
 首页和充值保留现有按钮，统一调用 HomeONE `/navigation.js` 的 `browserNavigation`。有效 `one_nav` 决定导航；缺失或无效时公共页面回落 policy 中的平台首页及充值地址。焦点恢复、页面重新可见、导航展开和点击前刷新，不自行解析 Cookie 或推导渠道。非默认部署通过 `ONE_NAVIGATION_CONFIG` 同时提供可信模块地址与完整 policy；独立渠道按指南提供 `dedicated/current`，无需在登录配置中维护 Site 映射。配置示例与边界见 [ONE 对接指南](../content/docs/development/one-integration.mdx)。
 
+登录后的业务页面同时加载同一分发源的经典 `/widget.js`，右下角提供首页、充值及应用目录，保留上述自有按钮以便比较体验。悬浮菜单复用同一公开导航配置，每个文档仅初始化一次，不随 SPA 路由重建；脚本加载失败不影响业务页面。全局 Ant Design 弹层及遮罩高于菜单，避免覆盖授权或编辑弹窗。部署时同时核对脚本 CORS、目录与图标 CSP，以及严格样式策略所需的每响应随机 nonce；真实默认/CCPG 导航与跨应用登录仍待验收。
+
 业务能力由应用管理员独立授权：模型需要 `keys:ensure` 和默认组，管理分组展示需要 `groups:read`，余额需要 `balance:read`，价格需要 `pricing:read` 和默认 Composite 组；公告复用现有应用凭证默认读取。余额、价格和公告均不依赖模型 Key 授权。余额按返回的金额与币种展示；价格只使用公开模型 `tiers`、单价区间和 partial 状态，不返回内部路径或插件字段。
 
 模型授权结果未知时保留服务端事务及编辑内容，提供手动 ensure 检查；重启后不重复兑换 code。凭证轮换通过服务端 `ENHANCER_PREVIOUS_APP_CREDENTIALS` 保留仍有效旧凭证，事务只存哈希并继续使用原凭证。原凭证不可用时重新发起。分组、ensure 及授权请求采用已确认的每次 120 秒上限，余额 7 秒、价格和公告 600 秒保持；前台只读取消与后台任务、有副作用的授权操作分别处理。上述本轮配套实现和真实验收状态以待测清单为准，不沿用登录协议检查作为证明。

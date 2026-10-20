@@ -56,6 +56,8 @@ Reseller 仍不提供账户汇总和用量接口。`POST /api/tokenone/account/s
 
 工作台、账户栏与旧版顶栏共用 `/navigation.js` 的 `browserNavigation`，沿用现有按钮。工具校验 one_nav 后采用 Cookie 中的完整地址；公共页面在 Cookie 缺失或无效时回落平台默认首页和充值页。恢复焦点、页面重新可见、展开导航以及普通/中键点击前刷新；不自行解析 Cookie、推导渠道或新增渠道配置查询。导航偏好不参与业务身份或权限。
 
+登录后还会异步加载同一可信分发源的 `/widget.js`，在右下角展示含首页、充值和应用目录的完整 ONE 悬浮菜单。脚本复用同一导航配置，每个文档只加载一次，路由切换持续显示；现有按钮继续保留。菜单不替应用登录或执行充值，脚本故障不影响业务页面，目录故障由菜单提供重试。
+
 服务端 `ONE_NAVIGATION_CONFIG` 只交付可信模块地址和公开 policy，留空使用官方生产分发地址及默认 policy。lab 等非默认部署必须一起配置模块和完整 policy，示例见 [ONE 对接指南](/docs/development/one-integration)。独立渠道可按指南提供 dedicated/current，仍由模块校验且不被 Cookie 覆盖；加载失败时禁用相关链接，登录和业务页面继续可用。CSP 与模块 CORS 须按实际分发源核对。
 
 ## Reseller 截止时间与授权恢复
