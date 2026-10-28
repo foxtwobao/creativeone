@@ -7,5 +7,6 @@ http://creative.lab.home.arpa, http://creativeccpg.lab.home.arpa {
 creative.lab.home.arpa, creativeccpg.lab.home.arpa {
     bind 192.168.10.38
     tls internal
+    encode zstd gzip
     reverse_proxy 192.168.10.38:3002
 }

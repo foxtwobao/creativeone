@@ -1,3 +1,4 @@
+import { useAudioPlayback } from "@/hooks/use-audio-playback";
 import { features } from "@/constant/features";
 import { resolveVideoMode } from "@/lib/video-settings";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -11,11 +12,15 @@ import { useTranslation } from "react-i18next";
 import { requestEdit, requestGeneration, requestImageQuestion, type CanvasGenerationContext } from "@/services/api/image";
 import { canvasTaskStatus, recoverCanvasImage } from "@/services/api/canvas";
 import { VIDEO_POLL_INTERVAL_MS } from "../../../../shared/video-tasks";
+import { canvasAudioText } from "../../../../shared/canvas-audio";
 import { remapCanvasGraph } from "../../../../shared/canvas-archive";
+import { audioInputForConfig } from "@/lib/audio-generation";
+import { fetchModelPricing } from "@/services/api/account-pricing";
+import { modelOptionName } from "@/stores/use-config-store";
 import { preserveCanvasGeneration } from "../../../../shared/canvas-generations";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
+import { audioSubmission, submitAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, resumeVideoGenerationTask, waitForVideoGenerationTask } from "@/services/api/video";
-import { defaultConfig, modelVideoTypeOf, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelAudioTypeOf, defaultConfig, modelVideoTypeOf, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -279,6 +284,7 @@ function InfiniteCanvasPage() {
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
+    const onAudioPlay = useAudioPlayback();
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const videoPollIdsRef = useRef(new Set<string>());
 
@@ -333,6 +339,19 @@ function InfiniteCanvasPage() {
         generationRequestsRef.current.forEach((request) => request.controller.abort());
         generationRequestsRef.current.clear();
     }, [projectId]);
+
+    const completeAudioNodeTask = useCallback(async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, signal: AbortSignal) => {
+        const input = audioInputForConfig(config);
+        const audioInput = "text" in input ? { ...input, text: prompt } : { ...input, description: prompt };
+        const submission = audioSubmission(config, config.model, audioInput, "", canvasAudioText(nodeId, nodesRef.current, connectionsRef.current));
+        const pricing = await fetchModelPricing(signal);
+        const price = pricing.models.find((item) => item.capability === "audio" && item.model === modelOptionName(config.model));
+        if (!price || price.status === "unavailable" || !price.tiers.some((tier) => tier.metrics.length)) throw new Error("报价暂不可用，暂时无法生成。");
+        flushSync(() => setNodes((items) => items.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt, model: config.model, audioInput } } : node)));
+        const canvasContext = await prepareCanvasGeneration(nodeId);
+        await submitAudio(submission, { signal, canvasContext });
+        await refreshProject(projectId);
+    }, [prepareCanvasGeneration, refreshProject, projectId]);
 
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
@@ -1848,6 +1867,12 @@ function InfiniteCanvasPage() {
                 message.success(t("common.addedToAssets"));
                 return;
             }
+            if (node.type === CanvasNodeType.Audio) {
+                if (!node.metadata?.content || !node.metadata.storageKey) return message.error("没有可收藏的音频");
+                await addAsset({ kind: "audio", title: node.title || "画布音频", coverUrl: "", tags: [], source: "画布", data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: 0, height: 0, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "audio/mp4", durationMs: node.metadata.durationMs }, metadata: { source: "canvas", nodeId: node.id, ...(node.metadata.generationTaskId ? { taskId: node.metadata.generationTaskId } : {}) } });
+                message.success(t("common.addedToAssets"));
+                return;
+            }
             if (node.type === CanvasNodeType.Video) {
                 if (!node.metadata?.content) return message.error(t("canvas.projectPage.noVideoToSave"));
                 await addAsset({
@@ -2326,11 +2351,40 @@ function InfiniteCanvasPage() {
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
-            if (!["image", "video"].includes(mode)) { message.info("画布首版支持图片与视频生成；文本和音频可作为素材使用。"); return; }
+            if (!["image", "video", "audio"].includes(mode)) { message.info("文本可作为创作素材使用。"); return; }
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
+                return;
+            }
+
+            if (mode === "audio") {
+                if ([...generationRequestsRef.current.values()].some((item) => item.originNodeId === nodeId)) return;
+                if (!sourceNode || !modelAudioTypeOf(generationConfig, generationConfig.model)) { message.error("请选择可用音频模型"); return; }
+                if (sourceNode.metadata?.generationId) {
+                    try {
+                        const previous = (await canvasTaskStatus(projectId)).tasks.find((task) => task.generationId === sourceNode.metadata?.generationId);
+                        if (previous && ["pending", "running"].includes(previous.status)) { message.info("原音频任务仍在后台处理，请等待结果"); return; }
+                        if (previous?.status === "unknown" && !await new Promise<boolean>((resolve) => modal.confirm({ title: "再次生成音频？", content: "原任务尚未完全确认，可在任务详情恢复已有结果保存。继续生成将创建新任务，可能重复计费。", okText: "再次生成", cancelText: "取消", onOk: () => resolve(true), onCancel: () => resolve(false) }))) return;
+                    } catch (error) { message.error(error instanceof Error ? error.message : "原任务查询失败"); return; }
+                }
+                const sameNode = sourceNode.type === CanvasNodeType.Audio;
+                const audioId = sameNode ? nodeId : nanoid();
+                const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+                setRunningNodeId(nodeId);
+                const controller = startGenerationRequest(audioId, nodeId, nodeId);
+                try {
+                    if (!sameNode) flushSync(() => {
+                        setNodes((items) => [...items, { id: audioId, type: CanvasNodeType.Audio, title: prompt.slice(0, 32) || "音频", position: { x: sourceNode.position.x + sourceNode.width + 96, y: sourceNode.position.y }, width: spec.width, height: spec.height, metadata: { prompt, ...buildAudioGenerationMetadata(generationConfig) } }]);
+                        setConnections((items) => [...items, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
+                    });
+                    await completeAudioNodeTask(audioId, generationConfig, prompt, controller.signal);
+                    message.success("音频任务已受理，后台生成中");
+                } catch (error) {
+                    if (!isGenerationCanceled(error)) message.error(error instanceof Error ? error.message : "音频提交未确认，请查看任务后再操作");
+                    await refreshProject(projectId).catch(() => undefined);
+                } finally { finishGenerationRequest(audioId, controller); setRunningNodeId(null); }
                 return;
             }
 
@@ -2381,7 +2435,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
-            if (!effectivePrompt && (mode === "text" || mode === "audio")) {
+            if (!effectivePrompt && mode === "text") {
                 finishGenerationRequest(nodeId, runController);
                 setRunningNodeId(null);
                 return;
@@ -2584,37 +2638,6 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
-                if (mode === "audio") {
-                    const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
-                    const isEmptyAudioNode = sourceNode?.type === CanvasNodeType.Audio && !sourceNode.metadata?.content;
-                    const audioId = isEmptyAudioNode ? nodeId : nanoid();
-                    const parent = sourceNode?.position || { x: 0, y: 0 };
-                    const audioNode: CanvasNodeData = {
-                        id: audioId,
-                        type: CanvasNodeType.Audio,
-                        title: effectivePrompt.slice(0, 32) || "Generated Audio",
-                        position: isEmptyAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
-                        width: isEmptyAudioNode ? sourceNode.width : spec.width,
-                        height: isEmptyAudioNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig) },
-                    };
-                    pendingChildIds = [audioId];
-                    setNodes((prev) =>
-                        isEmptyAudioNode
-                            ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node))
-                            : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
-                    );
-                    if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
-                    const controller = startGenerationRequest(audioId, nodeId, nodeId, runController);
-                    try {
-                        const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal }), generationConfig.audioFormat);
-                        setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));
-                    } finally {
-                        finishGenerationRequest(audioId, controller);
-                    }
-                    return;
-                }
-
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const textCount = getGenerationCount(String(sourceNode?.metadata?.textCount || 1));
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
@@ -2755,7 +2778,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, prepareCanvasGeneration, startGenerationRequest, t],
+        [completeAudioNodeTask, completeVideoNodeTask, projectId, refreshProject, modal, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, prepareCanvasGeneration, startGenerationRequest, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -2781,6 +2804,15 @@ function InfiniteCanvasPage() {
                     if (recovery === "unknown" && !await new Promise<boolean>((resolve) => modal.confirm({ title: "重新提交图片生成？", content: "原请求是否完成及是否计费尚未确认。重新提交会创建新任务，可能再次产生费用。", okText: "重新生成", cancelText: "取消", onOk: () => resolve(true), onCancel: () => resolve(false) }))) return;
                 }
                 catch (error) { message.error(error instanceof Error ? error.message : "结果恢复失败"); return; }
+            }
+            if (node.type === CanvasNodeType.Audio) {
+                if (previousTask) {
+                    const recovery = await recoverCanvasImage(previousTask).catch((error) => { message.error(error.message); return "error"; });
+                    if (recovery === "error") return;
+                    if (recovery === true || recovery === "active") { await refreshProject(projectId); message.info("原任务正在后台处理或恢复保存，未重新调用模型"); return; }
+                }
+                await handleGenerateNode(node.id, "audio", node.metadata?.prompt || "");
+                return;
             }
             if (![CanvasNodeType.Image, CanvasNodeType.Video].includes(node.type as CanvasNodeType)) { message.info("文本与音频模型生成尚未开放"); return; }
             if (hasResumableVideoTask(node)) {
@@ -2854,12 +2886,6 @@ function InfiniteCanvasPage() {
                     }, context?.referenceVideos || [], context?.referenceAudios || []);
                     return;
                 }
-                if (node.type === CanvasNodeType.Audio) {
-                    const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, prompt, { signal: controller.signal }), generationConfig.audioFormat);
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...audioMetadata(audio), prompt, ...buildAudioGenerationMetadata(generationConfig) } } : item)));
-                    return;
-                }
-
                 const image = useReferenceImages
                     ? await requestEdit(generationConfig, prompt, retryImages, { signal: controller.signal, canvasContext: await prepareCanvasGeneration(node.id, imageId) }).then((items) => items[0])
                     : await requestGeneration(generationConfig, prompt, { signal: controller.signal, canvasContext: await prepareCanvasGeneration(node.id, imageId) }).then((items) => items[0]);
@@ -2931,7 +2957,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, modal, openConfigDialog, pollVideoNodeTask, prepareCanvasGeneration, projectId, refreshProject, startGenerationRequest, t],
+        [handleGenerateNode, completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, modal, openConfigDialog, pollVideoNodeTask, prepareCanvasGeneration, projectId, refreshProject, startGenerationRequest, t],
     );
 
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {
@@ -3030,6 +3056,11 @@ function InfiniteCanvasPage() {
         (payload: InsertAssetPayload) => {
             if (payload.kind === "text") {
                 insertAssistantText(payload.content, payload.title);
+            } else if (payload.kind === "audio") {
+                const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                const node = createCanvasNode(CanvasNodeType.Audio, center, { content: payload.url, storageKey: payload.storageKey, mimeType: payload.mimeType, bytes: payload.bytes, durationMs: payload.durationMs, status: NODE_STATUS_SUCCESS });
+                setNodes((items) => [...items, { ...node, title: payload.title }]);
+                setSelectedNodeIds(new Set([node.id]));
             } else if (payload.kind === "video") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
@@ -3149,7 +3180,7 @@ function InfiniteCanvasPage() {
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
-        <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
+        <main onPlayCapture={onAudioPlay} className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
@@ -3441,7 +3472,7 @@ function InfiniteCanvasPage() {
                     <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
                 </Modal>
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                <AssetPickerModal includeAudio open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
         </main>
     );

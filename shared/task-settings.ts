@@ -15,7 +15,7 @@ export const taskParameterKeys = Object.keys(labels);
 
 export function taskSettings(request: Record<string, any>) {
     const items = Object.entries(request).filter(([key, value]) => !excluded.has(key) && value !== null && value !== "" && ["string", "number", "boolean"].includes(typeof value)).map(([key, value]) => ({
-        key, label: labels[key] || key,
+        key, label: key === "output_format" && request.audio_input ? "交付方式" : labels[key] || key,
         children: key === "duration" && Number(value) === -1 ? "自动" : typeof value === "boolean" ? value ? "开启" : "关闭" : `${values[key]?.[String(value)] || value}${["seconds", "duration"].includes(key) ? " 秒" : key === "n" ? " 张" : ""}`,
     }));
     const content = Array.isArray(request.content) ? request.content : [];
@@ -29,5 +29,12 @@ export function taskSettings(request: Record<string, any>) {
     const roles = [...media, ...content].map((part: any) => part.role || part.type);
     if (roles.includes("reference_image")) items.push({ key: "mode", label: "图片参考方式", children: "参考图" });
     else if (roles.includes("first_frame") || roles.includes("last_frame")) items.push({ key: "mode", label: "图片参考方式", children: roles.includes("last_frame") ? roles.includes("first_frame") ? "首尾帧" : "尾帧" : "首帧" });
+    const audio = request.audio_input;
+    if (audio) {
+        items.push({ key: "audio_mode", label: "创作模式", children: ({ single: "单人配音", duo: "双人配音", song: "歌曲", instrumental: "纯音乐" } as Record<string, string>)[audio.mode] || audio.mode });
+        if (audio.mode === "single") items.push({ key: "voice", label: "音色", children: audio.voice });
+        if (audio.mode === "duo") for (const [index, speaker] of audio.speakers.entries()) items.push({ key: `speaker_${index}`, label: speaker.name, children: speaker.voice });
+        if (audio.lyrics) items.push({ key: "lyrics", label: "歌词", children: audio.lyrics });
+    }
     return items;
 }

@@ -6,6 +6,7 @@ import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import UserLayout from "@/layouts/user-layout";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 
+const AudioPage = lazyWithReload(() => import("@/pages/audio"));
 const AssetsPage = lazyWithReload(() => import("@/pages/assets"));
 const CanvasPage = lazyWithReload(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazyWithReload(() => import("@/pages/canvas/project"));
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
             { path: "/", element: features.originalUi ? <HomePage /> : <Navigate to="/studio" replace /> },
             { path: "/image", element: <ImagePage /> },
             { path: "/studio", element: <ImagePage /> },
+            { path: "/audio", element: <AudioPage /> },
             { path: "/video", element: features.video ? <VideoPage /> : <Navigate to="/studio" replace /> },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },

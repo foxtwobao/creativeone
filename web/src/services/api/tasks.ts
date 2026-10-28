@@ -1,7 +1,7 @@
 import { cloudApi } from "./cloud";
 
-type TaskResult = { text?: string; url?: string; file?: { url: string; storageKey?: string; width?: number; height?: number }; content?: { video_url?: string }; metadata?: { url?: string }; data?: TaskResult | { url?: string }[] };
-export type Task = { id: string; channel_id: string; upstream_id?: string; model: string; capability: string; path: string; status: string; result?: TaskResult; request?: Record<string, any>; error?: string; error_message?: string; created_at: string };
+type TaskResult = { audios?: import("../../../../shared/audio").AudioResult["audios"]; defaultIndex?: number; text?: string; url?: string; file?: { url: string; storageKey?: string; width?: number; height?: number }; content?: { video_url?: string }; metadata?: { url?: string }; data?: TaskResult | { url?: string }[] };
+export type Task = { id: string; title?: string; result_available?: boolean; channel_id: string; upstream_id?: string; model: string; capability: string; path: string; status: string; result?: TaskResult; request?: Record<string, any>; error?: string; error_message?: string; created_at: string };
 
 export const fetchTasks = (signal?: AbortSignal) => cloudApi<{ tasks: Task[] }>("/tasks", { signal });
 export const fetchTaskStatuses = (ids: string[], signal?: AbortSignal) => cloudApi<{ tasks: Pick<Task, "id" | "status">[] }>("/tasks/status", { method: "POST", body: JSON.stringify({ ids }), signal });
@@ -17,3 +17,7 @@ export function taskVideoUrl(task: Task) {
 }
 
 export const fetchWorks = (query: URLSearchParams, signal?: AbortSignal) => cloudApi<{ works: import("../../../../shared/works").Work[]; total: number; activeTasks: Pick<Task, "id" | "status">[] }>(`/works?${query}`, { signal });
+
+export const fetchTask = (id: string) => cloudApi<Task>(`/tasks/${encodeURIComponent(id)}`);
+export const renameTask = (id: string, title: string) => cloudApi(`/tasks/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) });
+export const resumeTaskResult = (id: string) => cloudApi(`/tasks/${encodeURIComponent(id)}/resume-result`, { method: "POST", body: "{}" });

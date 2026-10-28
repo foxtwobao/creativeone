@@ -1,6 +1,6 @@
 export type AdminUser = { id: string; username: string; displayName: string; email: string };
 export type AdminTask = {
-    id: string; user: AdminUser; capability: "image" | "video"; model: string; status: string;
+    id: string; user: AdminUser; capability: "image" | "video" | "audio"; model: string; status: string;
     source: "canvas" | "workbench"; prompt: string; createdAt: string; updatedAt: string;
     hiddenFromWorks: boolean; hiddenFromHistory: boolean;
 };
@@ -11,4 +11,4 @@ export type AdminTaskDetail = AdminTask & {
     references: AdminTaskMedia[]; results: AdminTaskMedia[];
 };
 
-export type AdminTaskStats = { period: "today" | "yesterday" | "week"; images: number; videos: number; succeeded: number; failed: number };
+export type AdminTaskStats = { period: "today" | "yesterday" | "week"; images: number; videos: number; audios: number; succeeded: number; failed: number };

@@ -14,9 +14,9 @@ export async function attachCanvasTask(taskId: string, client: Pick<PoolClient, 
         await client.query("UPDATE generation_tasks SET canvas_attached=true WHERE id=$1", [taskId]);
         return;
     }
-    const file = task.capability === "image" ? task.result?.data?.[0]?.file : task.result?.file;
+    const file = task.capability === "image" ? task.result?.data?.[0]?.file : task.capability === "audio" ? task.result?.audios?.[task.result?.defaultIndex]?.file : task.result?.file;
     const active = ["running", "pending"].includes(task.status);
-    const succeeded = task.status === "succeeded" && file?.url && file?.storageKey;
+    const succeeded = (task.status === "succeeded" || task.capability === "audio") && file?.url && file?.storageKey;
     const errorDetails = succeeded || active ? undefined : taskErrorMessage(task) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "生成失败，请查看生成任务详情。");
     const result = { ...slot, generationTaskId: taskId, status: active ? "loading" as const : succeeded ? "success" as const : "error" as const, errorDetails,
         ...(task.capability === "video" && task.upstream_id ? { videoTaskId: task.upstream_id, videoTaskPath: task.path, videoTaskModel: `${task.channel_id}::${task.model}` } : {}),

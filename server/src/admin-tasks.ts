@@ -34,15 +34,15 @@ adminTasksRouter.get("/admin/users", async (req, res) => {
 });
 adminTasksRouter.get("/admin/tasks", async (req, res) => {
     const query = z.object({ ...pagination, ...audience, from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
-        capability: z.enum(["image", "video"]).optional(), status: z.enum(["pending", "running", "succeeded", "failed", "unknown", "cancelled", "expired"]).optional(), taskId: z.string().default("") }).parse(req.query);
+        capability: z.enum(["image", "video", "audio"]).optional(), status: z.enum(["pending", "running", "succeeded", "failed", "unknown", "cancelled", "expired"]).optional(), taskId: z.string().default("") }).parse(req.query);
     if (query.from && query.to && Date.parse(query.from) > Date.parse(query.to)) throw new HttpError(400, "INVALID_REQUEST");
     const params = [query.userId || null, query.from || null, query.to || null, query.capability || null, query.status || null, query.taskId, query.includeAdmins, [...adminSubjects]];
-    const where = `t.capability IN ('image','video') AND ($1::uuid IS NULL OR t.user_id=$1) AND ($2::timestamptz IS NULL OR t.created_at >= $2)
+    const where = `t.capability IN ('image','video','audio') AND ($1::uuid IS NULL OR t.user_id=$1) AND ($2::timestamptz IS NULL OR t.created_at >= $2)
         AND ($3::timestamptz IS NULL OR t.created_at < $3) AND ($4::text IS NULL OR t.capability=$4) AND ($5::text IS NULL OR t.status=$5)
         AND ($6='' OR t.id::text=$6 OR t.upstream_id=$6) AND ($7::boolean OR NOT (u.subject=ANY($8::text[])))`;
     const [tasks, count] = await Promise.all([
         db.query(`SELECT t.id,t.capability,t.model,t.status,t.canvas_project_id,t.canvas_generation_id,t.created_at,t.updated_at,t.hidden_from_works,t.hidden_from_history,
-            jsonb_build_object('prompt',t.request->'prompt','user_prompt',t.request->'user_prompt','content',t.request->'content') AS request,${userColumns}
+            jsonb_build_object('prompt',t.request->'prompt','user_prompt',t.request->'user_prompt','content',t.request->'content','audio_input',t.request->'audio_input') AS request,${userColumns}
             FROM generation_tasks t JOIN users u ON u.id=t.user_id WHERE ${where} ORDER BY t.created_at DESC,t.id DESC LIMIT $9 OFFSET $10`, [...params, query.pageSize, (query.page-1)*query.pageSize]),
         db.query(`SELECT count(*) FROM generation_tasks t JOIN users u ON u.id=t.user_id WHERE ${where}`, params),
     ]);
@@ -58,21 +58,21 @@ adminTasksRouter.get("/admin/tasks/stats", async (req, res) => {
         UNION ALL SELECT 'week', (today - interval '6 days') AT TIME ZONE 'Asia/Shanghai', (today + interval '1 day') AT TIME ZONE 'Asia/Shanghai', 3 FROM bounds
     ), tasks AS (
         SELECT t.capability,t.status,t.created_at FROM generation_tasks t JOIN users u ON u.id=t.user_id
-        WHERE t.capability IN ('image','video') AND ($1::uuid IS NULL OR t.user_id=$1)
+        WHERE t.capability IN ('image','video','audio') AND ($1::uuid IS NULL OR t.user_id=$1)
             AND ($2::boolean OR NOT (u.subject=ANY($3::text[])))
             AND t.created_at >= (SELECT min(start_at) FROM periods) AND t.created_at < (SELECT max(end_at) FROM periods)
     ) SELECT p.period, count(*) FILTER (WHERE t.capability='image') AS images,
-        count(*) FILTER (WHERE t.capability='video') AS videos, count(*) FILTER (WHERE t.status='succeeded') AS succeeded,
+        count(*) FILTER (WHERE t.capability='video') AS videos, count(*) FILTER (WHERE t.capability='audio') AS audios, count(*) FILTER (WHERE t.status='succeeded') AS succeeded,
         count(*) FILTER (WHERE t.status='failed') AS failed
         FROM periods p LEFT JOIN tasks t ON t.created_at >= p.start_at AND t.created_at < p.end_at
         GROUP BY p.period,p.position ORDER BY p.position`, [query.userId || null, query.includeAdmins, [...adminSubjects]]);
-    res.json({ stats: rows.map(row => ({ period: row.period, images: Number(row.images), videos: Number(row.videos), succeeded: Number(row.succeeded), failed: Number(row.failed) })) });
+    res.json({ stats: rows.map(row => ({ period: row.period, images: Number(row.images), videos: Number(row.videos), audios: Number(row.audios), succeeded: Number(row.succeeded), failed: Number(row.failed) })) });
 });
 adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const { rows } = await db.query(`SELECT t.id,t.user_id,t.capability,t.model,t.status,t.canvas_project_id,t.canvas_generation_id,t.created_at,t.updated_at,t.hidden_from_works,t.hidden_from_history,
         t.request,t.result,t.error,t.upstream_error,t.upstream_id,p.title AS canvas_title,${userColumns}
         FROM generation_tasks t JOIN users u ON u.id=t.user_id LEFT JOIN canvas_projects p ON p.id=t.canvas_project_id AND p.user_id=t.user_id
-        WHERE t.id=$1 AND t.capability IN ('image','video')`, [requireUuid(req.params.id)]);
+        WHERE t.id=$1 AND t.capability IN ('image','video','audio')`, [requireUuid(req.params.id)]);
     const task = rows[0];
     if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
     const request = task.request || {};
@@ -86,7 +86,7 @@ adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const result = task.result?.data && !Array.isArray(task.result.data) ? task.result.data : task.result;
     const videoUrl = result?.file?.url || result?.metadata?.url || result?.content?.video_url || result?.url;
     const outputs = task.capability === "image" ? (result?.data || []).map((item: any) => ({ kind: "image" as const, url: item.file?.url || item.url }))
-        : videoUrl ? [{ kind: "video" as const, url: videoUrl }] : [];
+        : task.capability === "audio" ? (result?.audios || []).flatMap((item: any) => item.file ? [{ kind: "audio" as const, url: item.file.url }] : []) : videoUrl ? [{ kind: "video" as const, url: videoUrl }] : [];
     const localFile = (url: unknown) => typeof url === "string" ? /^\/api\/files\/(image_files|media_files)\/([^/?#]+)$/.exec(url) : null;
     const keys = [...refs, ...outputs].flatMap((item) => { const match = localFile(item.url); return match ? [decodeURIComponent(match[2])] : []; });
     const files = (await db.query("SELECT namespace,key FROM files WHERE user_id=$1 AND key=ANY($2::text[])", [task.user_id, keys])).rows;
@@ -101,7 +101,7 @@ adminTasksRouter.get("/admin/tasks/:id", async (req, res) => {
     const parameters = Object.fromEntries(taskParameterKeys.filter((key) => key in request).map((key) => [key, request[key]]));
     const error = task.error || (task.status === "failed" ? "TOKENONE_GENERATION_FAILED" : null);
     res.json({ task: { ...taskSummary(task), upstreamId: task.upstream_id, canvasTitle: task.canvas_title || null,
-        prompt: generationPrompt(request), sentPrompt: generationRequestPrompt(request), settings: taskSettings(parameters),
+        prompt: generationPrompt(request), sentPrompt: generationRequestPrompt(request), settings: taskSettings({ ...parameters, audio_input: request.audio_input }),
         error: task.upstream_error ? task.upstream_error.code || (task.upstream_error.status ? `HTTP ${task.upstream_error.status}` : "UPSTREAM_ERROR") : (error?.startsWith("TOKENONE_HTTP_") ? "UPSTREAM_ERROR_DETAILS_UNAVAILABLE" : error),
         errorMessage: task.upstream_error?.message || (error?.startsWith("TOKENONE_HTTP_") ? "此任务未保存上游错误详情，无法还原具体原因。" : error ? modelErrorMessage(error) || error : null),
         references: refs.map(media), results: outputs.map(media) } });

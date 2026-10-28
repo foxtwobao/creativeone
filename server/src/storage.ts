@@ -1,4 +1,5 @@
 import multer from "multer";
+import { audioFileType } from "./audio.js";
 import { Router, raw, type Response } from "express";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile, unlink, readFile } from "node:fs/promises";
@@ -7,7 +8,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { db, transaction } from "./db.js";
 import { env } from "./config.js";
-import { HttpError, requireKey } from "./http.js";
+import { HttpError, requireKey, requireUuid } from "./http.js";
 import { storedMediaMetadata } from "./media-metadata.js";
 import { ensureImagePreviewFile, imagePreviewPath } from "./image-preview.js";
 
@@ -140,6 +141,7 @@ export async function collectDeletedFiles(userId: string, candidates: string[] =
 export const storageRouter = Router();
 storageRouter.post("/files/canvas-import", multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES } }).single("file"), async (req, res) => {
     if (!req.file || !/^(image|video|audio)\//.test(req.file.mimetype)) throw new HttpError(415, "UNSUPPORTED_MEDIA");
+    if (req.file.mimetype.startsWith("audio/")) req.file.mimetype = (await audioFileType(req.file.buffer)).mimeType;
     const image = req.file.mimetype.startsWith("image/");
     if (image) {
         const metadata = await sharp(req.file.buffer).metadata().catch(() => null);
@@ -157,7 +159,7 @@ export async function storedFileInfo(userId: string, url: string, client: Pick<t
     if (!rows[0]) throw new HttpError(404, "FILE_NOT_FOUND");
     const file = rows[0];
     const metadata = file.mime_type.startsWith("image/") ? await sharp(resolve(mediaRoot, file.disk_id)).metadata().catch(() => ({} as { width?: number; height?: number })) : await storedMediaMetadata(file.disk_id, file.mime_type);
-    return { url: fileUrl(ns, key), storageKey: key, bytes: Number(file.bytes), mimeType: file.mime_type, width: metadata.width || 0, height: metadata.height || 0, ...("durationMs" in metadata ? { durationMs: metadata.durationMs } : {}) };
+    return { url: fileUrl(ns, key), storageKey: key, bytes: Number(file.bytes), mimeType: file.mime_type, width: metadata.width || 0, height: metadata.height || 0, ...("durationMs" in metadata && typeof metadata.durationMs === "number" ? { durationMs: metadata.durationMs } : {}) };
 }
 export async function inlineStoredFile(userId: string, url: string) {
     const file = await storedFileInfo(userId, url);
@@ -184,6 +186,7 @@ const mediaFields = { storageKey: z.string().optional(), width: z.number(), heig
 const assetInput = z.discriminatedUnion("kind", [
     assetFields.extend({ kind: z.literal("text"), data: z.object({ content: z.string() }) }).strict(),
     assetFields.extend({ kind: z.literal("image"), data: z.object({ ...mediaFields, dataUrl: z.string() }) }).strict(),
+    assetFields.extend({ kind: z.literal("audio"), data: z.object({ ...mediaFields, url: z.string(), durationMs: z.number().optional() }) }).strict(),
     assetFields.extend({ kind: z.literal("video"), data: z.object({ ...mediaFields, url: z.string() }) }).strict(),
 ]);
 type SavedAsset = z.infer<typeof assetInput> & { id: string; createdAt: string; updatedAt: string };
@@ -211,12 +214,25 @@ storageRouter.all(["/assets", "/assets/:id"], async (req, res, next) => {
         if (req.method === "DELETE") { removed = [...fileReferences(assets[index])]; assets.splice(index, 1); }
         else {
             const previous = assets[index];
-            const body = req.method === "POST" ? req.body : assetFields.extend({ kind: z.enum(["text", "image", "video"]), data: z.unknown() }).partial().strict().parse(req.body);
+            const body = req.method === "POST" ? req.body : assetFields.extend({ kind: z.enum(["text", "image", "video", "audio"]), data: z.unknown() }).partial().strict().parse(req.body);
             const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...existing } = previous || {};
             const data = assetInput.parse({ ...existing, ...body });
             for (const reference of fileReferences(data)) {
                 const file = await client.query("SELECT 1 FROM files WHERE user_id=$1 AND key=$2", [userId, reference]);
                 if (!file.rowCount) throw new HttpError(409, "FILE_NOT_SYNCED");
+            }
+            if (data.kind === "audio") {
+                const file = await storedFileInfo(userId, data.data.url, client);
+                if (!file.mimeType.startsWith("audio/")) throw new HttpError(400, "INVALID_AUDIO_FILE");
+                data.data = { ...file, durationMs: file.durationMs };
+                if (data.metadata?.taskId) {
+                    const task = (await client.query("SELECT result,request FROM generation_tasks WHERE id=$1 AND user_id=$2 AND capability='audio'", [requireUuid(String(data.metadata.taskId)), userId])).rows[0];
+                    if (!task?.result?.audios?.some((item: any) => item.file?.storageKey === file.storageKey)) throw new HttpError(400, "INVALID_FILE_REFERENCE");
+                    data.metadata = { ...data.metadata, source: "audio-page", audioType: task.request.audio_type };
+                } else if (data.metadata) {
+                    delete data.metadata.audioType;
+                    if (data.metadata.source === "audio-page") delete data.metadata.source;
+                }
             }
             const now = new Date().toISOString();
             saved = { ...data, id: previous?.id || randomUUID(), createdAt: previous?.createdAt || now, updatedAt: now };

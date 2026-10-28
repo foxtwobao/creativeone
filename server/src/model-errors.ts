@@ -99,6 +99,12 @@ const messages: Record<string, string> = {
     EMAIL_NOT_VERIFIED: "请先在 IDONE 完成邮箱验证，再重新登录。",
     TOKENONE_KEY_SERVICE_NOT_CONFIGURED: "模型 Key 服务尚未配置完成，请联系管理员。",
     TOKENONE_KEY_DATABASE_UNAVAILABLE: "模型 Key 服务暂时不可用，请稍后手动重试或联系管理员。",
+    AUDIO_SAVE_INCOMPLETE: "音频已生成，部分文件尚未保存；已保存的版本可试听和下载，请恢复保存缺失项。",
+    AUDIO_REQUEST_TIMEOUT: "音频处理已超过 15 分钟，暂时无法确认结果；上游可能仍在生成或已计费，请先核对原任务，勿直接重复生成。",
+    INVALID_AUDIO_RESPONSE: "上游未返回约定的音频链接，无法确认结果，请核对任务与账单。",
+    INCOMPLETE_AUDIO_RESPONSE: "上游响应未正常结束，无法确认完整结果，请核对任务与账单。",
+    INVALID_AUDIO_FILE: "下载内容不是有效的受支持音频文件。",
+    MEDIA_HOST_NOT_ALLOWED: "结果下载域名尚未获准，请联系管理员核实域名后恢复保存。",
     UPSTREAM_RESULT_UNKNOWN: "暂时无法确认生成结果，请先查看云端任务，确认后再手动重试，避免重复计费。",
 };
 

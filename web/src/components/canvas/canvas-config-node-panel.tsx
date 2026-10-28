@@ -3,6 +3,9 @@ import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings
 import { Button, Segmented } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { AudioPriceHint } from "@/components/audio-price-hint";
+import { canvasAudioModelPatch } from "@/lib/audio-generation";
+import { modelAudioTypeOf, resolveModelForCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { buildNodeGenerationContext } from "./canvas-node-generation";
@@ -11,7 +14,7 @@ import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
+import { CanvasAudioSettingsPopover } from "./canvas-audio-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
@@ -31,7 +34,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const mode = node.metadata?.generationMode === "video" ? "video" : "image";
+    const mode = node.metadata?.generationMode === "audio" ? "audio" : node.metadata?.generationMode === "video" ? "video" : "image";
     const nodes = useCanvasStore((state) => state.nodes);
     const connections = useCanvasStore((state) => state.connections);
     const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "") : undefined;
@@ -43,7 +46,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
 
     return (
-        <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
+        <div className="flex h-full w-full cursor-move flex-col overflow-y-auto px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="shrink-0 text-sm font-semibold">{t("canvas.configNode.title")}</div>
                 <div className="cursor-default" onMouseDown={(event) => event.stopPropagation()}>
@@ -51,7 +54,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                         size="small"
                         className="canvas-config-mode !rounded-md !p-0.5"
                         value={mode}
-                        onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode })}
+                        onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode, model: resolveModelForCapability(globalConfig, undefined, value as CanvasGenerationMode) })}
                         options={[
                             {
                                 value: "image",
@@ -81,7 +84,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                                 ),
                             },
                             {
-                                value: "audio", disabled: true,
+                                value: "audio",
                                 label: (
                                     <span className="inline-flex items-center gap-1">
                                         <Music2 className="size-3.5" />
@@ -106,18 +109,19 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             </div>
 
             <div className="mb-2 grid min-w-0 cursor-default grid-cols-[minmax(0,1fr)_148px] items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, mode === "video" ? canvasVideoModelPatch(config, model) : { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
+                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, mode === "video" ? canvasVideoModelPatch(config, model) : mode === "audio" ? canvasAudioModelPatch(config, node.metadata, model) : { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
                     <CanvasVideoSettingsPopover config={config} referenceMedia={{ videos: referenceContext?.referenceVideos, audios: referenceContext?.referenceAudios }} referenceImageCount={referenceImageCount} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                 ) : mode === "image" ? (
                     <CanvasImageSettingsPopover referenceImageCount={referenceImageCount} config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
                 ) : mode === "audio" ? (
-                    <CanvasAudioSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                    <CanvasAudioSettingsPopover config={config} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onChange={(audioInput) => onConfigChange(node.id, { audioInput })} />
                 ) : (
                     <CanvasTextSettingsPopover config={config} count={node.metadata?.textCount || 1} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })} onCountChange={(textCount) => onConfigChange(node.id, { textCount })} />
                 )}
             </div>
 
+            {mode === "audio" ? <div className="mb-2"><AudioPriceHint model={config.model} type={modelAudioTypeOf(config, config.model)} /></div> : null}
             <Button
                 type="primary"
                 className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
@@ -162,9 +166,3 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     return { [key]: value };
 }
 
-function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
-    if (key === "audioVoice") return { audioVoice: value };
-    if (key === "audioFormat") return { audioFormat: value };
-    if (key === "audioSpeed") return { audioSpeed: value };
-    return { audioInstructions: value };
-}

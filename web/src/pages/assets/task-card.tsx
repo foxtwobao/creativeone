@@ -38,7 +38,7 @@ export function TaskCard({ work, onRefresh, onRemove, onEdit, onCanvas, compact 
             <div className={compact ? "flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6" : "space-y-3 p-4"}>
                 <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex items-center justify-between gap-2"><Tag className="!m-0">{workKinds[work.kind]}</Tag><Tag color={task.status === "failed" ? "error" : task.status === "unknown" ? "warning" : work.state === "processing" ? "processing" : "default"}>{taskLabels[task.status] || task.status}</Tag></div>
-                <h2 className="truncate text-sm font-medium" title={task.model}>{work.assets[0]?.title || task.model}</h2>
+                <h2 className="truncate text-sm font-medium" title={task.model}>{task.title || work.assets[0]?.title || task.model}</h2>
                 {compact && prompt ? <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm">{prompt}</p> : null}
                 <p className="text-xs text-muted-foreground">{!compact ? "AI 生成 · " : ""}{new Date(task.created_at).toLocaleString()}{work.state === "processing" ? ` · 已等待 ${Math.max(0, Math.floor((Date.now() - Date.parse(task.created_at)) / 60000))} 分钟` : ""}</p>
                 {work.state === "attention" ? <p className="break-words text-xs text-muted-foreground">{task.error_message || "请查看详情处理此任务"}</p> : null}
@@ -53,7 +53,7 @@ export function TaskCard({ work, onRefresh, onRemove, onEdit, onCanvas, compact 
                 </div>
             </div>
         </Card>
-        <Drawer title={work.assets[0]?.title || task.model} open={open} onClose={() => setOpen(false)} size="large">
+        <Drawer title={task.title || work.assets[0]?.title || task.model} open={open} onClose={() => setOpen(false)} size="large">
             <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">{taskLabels[task.status] || task.status} · {task.model}</p>
                 {!task.request ? <p className="text-sm text-muted-foreground">此任务创建时未记录提示词和设定。</p> : <>

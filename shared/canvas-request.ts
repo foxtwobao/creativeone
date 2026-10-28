@@ -1,3 +1,4 @@
+import { audioRequestSnapshot, type AudioModelType } from "./audio.js";
 import { bananaImageBody } from "./image-banana.js";
 import { grokImageBody } from "./image-grok.js";
 import { openAiImageParams } from "./image-openai.js";
@@ -8,8 +9,13 @@ import type { ImageModelType } from "./image-models.js";
 import type { CanvasNodeMetadata } from "../web/src/types/canvas.js";
 
 export const canvasImageReferencePrompt = (prompt: string, count: number) => count ? `参考图片编号：${Array.from({ length: count }, (_, index) => `图片${index + 1}`).join("、")}。请按这些编号理解提示词中的图片引用。\n\n${prompt.trim()}` : prompt;
-export function canvasRequestBody(model: string, capability: "image" | "video", family: ImageModelType | VideoModelType, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "") {
+export function canvasRequestBody(model: string, capability: "image" | "video" | "audio", family: ImageModelType | VideoModelType | AudioModelType, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "", audioContext = "") {
     const scene = metadata.prompt || "";
+    if (capability === "audio") {
+        if (!metadata.audioInput) throw new Error("缺少音频创作参数");
+        const input = "text" in metadata.audioInput ? { ...metadata.audioInput, text: scene } : { ...metadata.audioInput, description: scene };
+        return audioRequestSnapshot(model, family as AudioModelType, input, audioContext);
+    }
     if (capability === "image") {
         const text = canvasImageReferencePrompt(scene, references.images.length), prompt = systemPrompt.trim() ? `${systemPrompt.trim()}\n\n${text}` : text;
         const config = { model, size: metadata.size || "auto", quality: metadata.quality || "auto", background: metadata.background };

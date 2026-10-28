@@ -92,7 +92,7 @@ export default {
         importFailed: "Import failed. Select a valid asset package.",
         deleted: "Asset deleted",
         packageName: "my-assets.zip",
-        kinds: { text: "Text", image: "Image", video: "Video" },
+        kinds: { audio: "音频", text: "Text", image: "Image", video: "Video" },
         fields: {
             title: "Title",
             titleRequired: "Enter a title",
@@ -324,6 +324,7 @@ export default {
         },
     },
     navigation: {
+        audio: "音频创作",
         canvas: "My Canvases",
         image: "Image Studio",
         video: "Video Studio",

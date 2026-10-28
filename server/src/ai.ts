@@ -17,11 +17,13 @@ import { videoTaskPath } from "../../shared/video-tasks.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
 import { readAccountData } from "./account-data.js";
 import { canvasGraphView } from "./canvas-graph.js";
+import { canvasAudioText } from "../../shared/canvas-audio.js";
 import { canvasRequestBody } from "../../shared/canvas-request.js";
+import { audioInputSchema, audioSubmissionSchema, audioSnapshot } from "./audio.js";
 import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 
 const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.MAX_MEDIA_BYTES, fieldSize: env.MAX_JSON_BYTES } }).any();
-const endpoints: Record<string, string> = { "images/generations": "image", "images/edits": "image", "responses": "text", "chat/completions": "text", "audio/speech": "audio", "contents/generations/tasks": "video", videos: "video" };
+const endpoints: Record<string, string> = { "images/generations": "image", "images/edits": "image", "responses": "text", "chat/completions": "text", "contents/generations/tasks": "video", videos: "video" };
 const canvasContextSchema = z.object({
     projectId: z.uuid(),
     nodeId: z.string().trim().min(1),
@@ -54,20 +56,31 @@ aiRouter.post("/tasks/:id/resume-result", async (req, res) => {
     const id = requireUuid(req.params.id), userId = res.locals.user.id;
     await transaction(async (client) => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
-        const changed = await client.query("UPDATE generation_tasks SET status='pending',error=NULL,canvas_attached=false WHERE id=$1 AND user_id=$2 AND capability='image' AND status='unknown' AND upstream_result IS NOT NULL RETURNING id", [id, userId]);
+        const changed = await client.query("UPDATE generation_tasks SET status='pending',error=NULL,canvas_attached=false WHERE id=$1 AND user_id=$2 AND (capability='image' OR capability='audio' AND error='AUDIO_SAVE_INCOMPLETE') AND status='unknown' AND upstream_result IS NOT NULL RETURNING id", [id, userId]);
         if (!changed.rowCount) throw new HttpError(409, "TASK_NOT_RECOVERABLE");
         await attachCanvasTask(id, client);
     });
     res.status(202).json({ canvasTaskId: id });
 });
+aiRouter.get("/audio/submissions/:id", async (req, res) => {
+    const task = (await db.query("SELECT id FROM generation_tasks WHERE user_id=$1 AND capability='audio' AND submission_id=$2", [res.locals.user.id, requireUuid(req.params.id)])).rows[0];
+    if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
+    res.json({ canvasTaskId: task.id });
+});
+aiRouter.patch("/tasks/:id", async (req, res) => {
+    const { title } = z.object({ title: z.string().trim().min(1) }).strict().parse(req.body);
+    const { rows } = await db.query("UPDATE generation_tasks SET title=$3 WHERE id=$1 AND user_id=$2 AND capability='audio' RETURNING id,title", [requireUuid(req.params.id), res.locals.user.id, title]);
+    if (!rows.length) throw new HttpError(404, "TASK_NOT_FOUND");
+    res.json(rows[0]);
+});
 aiRouter.get("/tasks/:id", async (req, res) => {
-    const task = (await db.query("SELECT id,status,result,error,upstream_error,upstream_id,(upstream_result IS NOT NULL) AS result_available FROM generation_tasks WHERE id=$1 AND user_id=$2", [requireUuid(req.params.id), res.locals.user.id])).rows[0];
+    const task = (await db.query("SELECT id,title,model,capability,channel_id,path,request,created_at,status,result,error,upstream_error,upstream_id,(upstream_result IS NOT NULL AND (capability<>'audio' OR error='AUDIO_SAVE_INCOMPLETE')) AS result_available FROM generation_tasks WHERE id=$1 AND user_id=$2", [requireUuid(req.params.id), res.locals.user.id])).rows[0];
     if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
     const { upstream_error, ...publicTask } = task;
     res.json({ ...publicTask, error_message: taskErrorMessage(task) });
 });
 aiRouter.get("/tasks", async (_req, res) => {
-    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
+    const { rows } = await db.query("SELECT id,title,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
     res.json({ tasks: rows.map(({ upstream_error, ...task }) => ({ ...task, error_message: taskErrorMessage({ ...task, upstream_error }) })) });
 });
 aiRouter.delete("/tasks/:id", async (req, res) => {
@@ -87,6 +100,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     if (req.body) delete req.body.user_prompt;
     const canvasContext = req.body?.canvas_context === undefined ? undefined : canvasContextSchema.parse(req.body.canvas_context);
     if (req.body) delete req.body.canvas_context;
+    let audioSubmission: ReturnType<typeof audioSubmissionSchema.parse> | undefined;
     const videoMatch = /^(contents\/generations\/tasks|videos)\/([\w-]+)(\/resume)?$/.exec(path);
     const user = res.locals.user;
     let channel: Channel;
@@ -111,8 +125,14 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     } else {
         channel = (await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows[0];
         if (!channel) throw new HttpError(403, "CHANNEL_UNAVAILABLE");
-        if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && endpoints[path] === channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
+        if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && (endpoints[path] === channel.capability || channel.capability === "audio" && path === "chat/completions"))) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
         if (req.method === "POST" && (!req.body || typeof req.body.model !== "string" || !channel.models.includes(req.body.model))) throw new HttpError(403, "MODEL_NOT_ALLOWED");
+        if (req.method === "POST" && channel.capability === "audio") {
+            audioSubmission = audioSubmissionSchema.parse(req.body);
+            if (!canvasContext && !audioSubmission.submission_id) throw new HttpError(400, "INVALID_REQUEST");
+            if (channel.audio_types?.[req.body.model] !== audioSubmission.audio_type) throw new HttpError(400, "AUDIO_MODEL_TYPE_REQUIRED");
+            req.body = canvasContext ? { model: req.body.model, audio_type: audioSubmission.audio_type, audio_input: audioSubmission.audio_input } : audioSnapshot(req.body.model, audioSubmission.audio_type, audioSubmission.audio_input);
+        }
         if (req.method === "POST" && channel.capability === "image" && !channel.image_types?.[req.body.model]) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
         if (req.method === "POST" && channel.capability === "video") {
             const kind = channel.video_types?.[req.body.model] || "seedance";
@@ -132,9 +152,9 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             : videoRequestCapabilityError(req.body.model, channel.video_types?.[req.body.model] || "seedance", req.body);
         if (error) return res.status(400).json({ error: "MODEL_CAPABILITY_INVALID", message: error, retryable: false, requestId: res.locals.requestId });
     }
-    if (canvasContext && !["image", "video"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
+    if (canvasContext && !["image", "video", "audio"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
     if (canvasContext && req.is("multipart/form-data")) throw new HttpError(400, "INVALID_REQUEST");
-    let requestSnapshot: Record<string, any> = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }) };
+    let requestSnapshot: Record<string, any> = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }), ...(audioSubmission ? { audio_title: audioSubmission.title || "" } : {}) };
     if (!canvasContext && path === "videos") await signWanMedia(user.id, req.body.metadata?.input.media || []);
     if (!canvasContext && path === "contents/generations/tasks") for (const part of req.body.content || []) {
         const url = part.type === "video_url" ? part.video_url?.url : undefined;
@@ -171,6 +191,13 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
     const submission = structuredClone(requestSnapshot);
     const existingTask = await transaction(async (client) => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user.id]);
+        if (audioSubmission?.submission_id && !canvasContext) {
+            const previous = (await client.query("SELECT * FROM generation_tasks WHERE user_id=$1 AND capability='audio' AND submission_id=$2", [user.id, audioSubmission.submission_id])).rows[0];
+            if (previous) {
+                if (previous.channel_id !== channelId || !isDeepStrictEqual(previous.request, requestSnapshot)) throw new HttpError(409, "AUDIO_SUBMISSION_CONFLICT");
+                return previous;
+            }
+        }
         if (canvasContext) {
             const project = (await client.query("SELECT nodes,connections,content_revision FROM canvas_projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE", [canvasContext.projectId, user.id])).rows[0];
             if (!project) throw new HttpError(404, "PROJECT_NOT_FOUND");
@@ -185,10 +212,11 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
                 if (previous.channel_id !== channelId || previous.path !== path || previous.canvas_node_id !== node.id || previous.canvas_output_id !== (canvasContext.outputId ? output.id : null) || !isDeepStrictEqual(previous.request.canvas_submission, submission)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
                 return previous;
             }
-            const savedMetadata = canvasGraphView(project.nodes, project.connections).nodes.find((item) => item.id === (node.clientId || node.id))!.metadata!;
+            const graph = canvasGraphView(project.nodes, project.connections);
+            const savedMetadata = graph.nodes.find((item) => item.id === (node.clientId || node.id))!.metadata!;
             if (savedMetadata?.model !== `${channelId}::${req.body.model}` || typeof savedMetadata?.prompt !== "string" || userPrompt !== undefined && userPrompt !== savedMetadata.prompt) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
             const references = { images: [] as string[], videos: [] as string[], audios: [] as string[] };
-            for (const reference of node.metadata.references || []) {
+            for (const reference of channel.capability === "audio" ? [] : node.metadata.references || []) {
                 const match = /^\/api\/files\/(?:image_files|media_files)\/([^/?#]+)$/.exec(reference);
                 const file = (await client.query("SELECT namespace,key,mime_type FROM files WHERE user_id=$1 AND key=$2", [user.id, match ? decodeURIComponent(match[1]) : reference])).rows[0];
                 if (!file) throw new HttpError(409, "FILE_NOT_SYNCED");
@@ -204,26 +232,27 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
                     const mentions = [...(source.metadata?.composerContent || "").matchAll(/@\[node:([^\]]+)\]/g)].map((match: any) => match[1]);
                     for (const edge of project.connections.filter((edge: any) => edge.toNodeId === source.id && (!mentions.length || mentions.includes(edge.fromNodeId)))) assertReady(project.nodes.find((node: any) => node.id === edge.fromNodeId));
                 } else if (source.type === "group") for (const child of project.nodes.filter((node: any) => node.metadata?.groupId === source.id)) assertReady(child);
-                else if (["image", "video", "audio"].includes(source.type) && (!source.metadata?.storageKey || source.metadata?.status === "loading" && source.metadata?.generationId)) throw new HttpError(409, "CANVAS_REFERENCE_NOT_READY");
+                else if (channel.capability !== "audio" && ["image", "video", "audio"].includes(source.type) && (!source.metadata?.storageKey || source.metadata?.status === "loading" && source.metadata?.generationId)) throw new HttpError(409, "CANVAS_REFERENCE_NOT_READY");
                 else if (source.type === "text" && !source.metadata?.content?.trim()) throw new HttpError(409, "CANVAS_REFERENCE_NOT_READY");
             };
             for (const edge of project.connections.filter((edge: any) => edge.toNodeId === node.id)) assertReady(project.nodes.find((source: any) => source.id === edge.fromNodeId));
-            const family = channel.capability === "image" ? channel.image_types![req.body.model] : channel.video_types?.[req.body.model] || "seedance";
-            try { requestSnapshot = canvasRequestBody(req.body.model, channel.capability as "image" | "video", family, savedMetadata, references, canvasSettings.systemPrompt || ""); }
+            const family = channel.capability === "image" ? channel.image_types![req.body.model] : channel.capability === "audio" ? channel.audio_types![req.body.model] : channel.video_types?.[req.body.model] || "seedance";
+            if (channel.capability === "audio") audioInputSchema.parse(savedMetadata.audioInput);
+            try { requestSnapshot = canvasRequestBody(req.body.model, channel.capability as "image" | "video" | "audio", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : ""); }
             catch { throw new HttpError(400, "MODEL_CAPABILITY_INVALID"); }
-            const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(req.body.model, family as any, requestSnapshot) : videoRequestCapabilityError(req.body.model, family as any, requestSnapshot);
+            const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(req.body.model, family as any, requestSnapshot) : channel.capability === "audio" ? undefined : videoRequestCapabilityError(req.body.model, family as any, requestSnapshot);
             if (capabilityError) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
             if (channel.capability === "video") await assertVideoDurations(user.id, req.body.model, family as VideoModelType, references, client);
-            const expectedPath = channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
+            const expectedPath = channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
             if (path !== expectedPath) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
             await assertReferenceImages(user.id, requestSnapshot, client);
             requestSnapshot = { ...requestSnapshot, user_prompt: savedMetadata.prompt, canvas_source: { node, contentRevision: project.content_revision }, canvas_submission: submission };
         }
         for (const key of fileReferences(requestSnapshot)) if (!(await client.query("SELECT 1 FROM files WHERE user_id=$1 AND key=$2", [user.id, key])).rowCount) throw new HttpError(404, "FILE_NOT_FOUND");
-        await client.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status,provider,request,canvas_project_id,canvas_node_id,canvas_output_index,canvas_generation_id,canvas_output_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$15,$8,$9,$10,$11,$12,$13,$14)", [taskId, user.id, channelId, apiKey.group_id, req.body.model, channel.capability, path, modelProvider, JSON.stringify(requestSnapshot), canvasContext?.projectId || null, canvasContext?.nodeId || null, canvasContext?.outputIndex ?? null, canvasContext?.generationId || null, canvasContext?.outputId || null, canvasContext ? "pending" : "running"]);
+        await client.query("INSERT INTO generation_tasks (id,user_id,channel_id,group_id,model,capability,path,status,provider,request,canvas_project_id,canvas_node_id,canvas_output_index,canvas_generation_id,canvas_output_id,title,submission_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$15,$8,$9,$10,$11,$12,$13,$14,$16,$17)", [taskId, user.id, channelId, apiKey.group_id, req.body.model, channel.capability, path, modelProvider, JSON.stringify(requestSnapshot), canvasContext?.projectId || null, canvasContext?.nodeId || null, canvasContext?.outputIndex ?? null, canvasContext?.generationId || null, canvasContext?.outputId || null, canvasContext || audioSubmission ? "pending" : "running", audioSubmission?.title || null, canvasContext ? null : audioSubmission?.submission_id || null]);
         if (canvasContext) await attachCanvasTask(taskId, client);
     });
-    if (canvasContext) { res.setHeader("X-Generation-Task-Id", existingTask?.id || taskId); return res.status(202).json({ canvasTaskId: existingTask?.id || taskId }); }
+    if (canvasContext || audioSubmission) { res.setHeader("X-Generation-Task-Id", existingTask?.id || taskId); return res.status(202).json({ canvasTaskId: existingTask?.id || taskId }); }
     if (existingTask) {
         res.setHeader("X-Generation-Task-Id", existingTask.id);
         if (["succeeded", "pending"].includes(existingTask.status) && existingTask.result) return res.json(existingTask.result);

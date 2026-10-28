@@ -300,10 +300,12 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 const ASSET_GROUPS: { kind: AssetKind; icon: typeof Square }[] = [
     { kind: "image", icon: ImageIcon },
     { kind: "video", icon: Video },
+    { kind: "audio", icon: Music2 },
     { kind: "text", icon: FileText },
 ];
 
 function buildInsertPayload(asset: Asset): InsertAssetPayload {
+    if (asset.kind === "audio") return { kind: "audio", title: asset.title, ...asset.data };
     if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
     if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
     return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
@@ -455,6 +457,7 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
 }
 
 function AssetCover({ asset }: { asset: Asset }) {
+    if (asset.kind === "audio") return <div className="flex size-full flex-col items-center justify-center gap-2 p-3"><Music2 className="size-7 opacity-60" /><span className="line-clamp-2 text-xs">{asset.title}</span></div>;
     if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
     if (asset.kind === "video") {
         if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;

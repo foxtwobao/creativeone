@@ -1,4 +1,4 @@
-import { FileText, ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
+import { AudioLines, FileText, ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
 import { features } from "./features";
 
 const tools = [
@@ -14,6 +14,7 @@ const tools = [
         slug: "video",
         icon: Video,
     },
+    { slug: "audio", icon: AudioLines },
     {
         slug: "prompts",
         icon: FileText,

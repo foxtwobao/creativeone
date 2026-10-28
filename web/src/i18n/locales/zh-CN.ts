@@ -92,7 +92,7 @@ export default {
         importFailed: "导入失败，请选择有效的资产压缩包",
         deleted: "资产已删除",
         packageName: "我的资产.zip",
-        kinds: { text: "文本", image: "图片", video: "视频" },
+        kinds: { audio: "音频", text: "文本", image: "图片", video: "视频" },
         fields: {
             title: "标题",
             titleRequired: "请输入标题",
@@ -324,6 +324,7 @@ export default {
         },
     },
     navigation: {
+        audio: "音频创作",
         canvas: "我的画布",
         image: "生图工作台",
         video: "视频创作台",

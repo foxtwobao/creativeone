@@ -9,11 +9,15 @@ import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-ang
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
+import { defaultAudioInput } from "../../../../shared/audio";
+import { modelAudioTypeOf } from "@/stores/use-config-store";
+
 export function imageExtension(dataUrl: string) {
     return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
 }
 
 export function audioExtension(mimeType?: string) {
+    if (mimeType?.includes("mp4")) return "m4a";
     if (mimeType?.includes("wav")) return "wav";
     if (mimeType?.includes("opus")) return "opus";
     if (mimeType?.includes("aac")) return "aac";
@@ -100,7 +104,8 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     return {
         ...config,
-        model: resolveModelForCapability(config, node?.metadata?.model, mode),
+        model: mode === "audio" ? node?.metadata?.model || config.audioModel : resolveModelForCapability(config, node?.metadata?.model, mode),
+        audioInput: node?.metadata?.audioInput || defaultAudioInput(modelAudioTypeOf(config, node?.metadata?.model || config.audioModel)),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: mode === "image" ? node?.metadata?.size || config.size || defaultConfig.size : config.size,

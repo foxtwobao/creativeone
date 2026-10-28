@@ -8,6 +8,7 @@ import { Zip, ZipPassThrough } from "fflate";
 import { z } from "zod";
 import { db, transaction } from "./db.js";
 import { env } from "./config.js";
+import { audioInputSchema } from "./audio.js";
 import { HttpError, requireUuid } from "./http.js";
 import { readAccountData, changeAccountData, cleanupAccountFiles } from "./account-data.js";
 import { mergeWorks, workSearchText } from "../../shared/works.js";
@@ -23,6 +24,7 @@ export const businessRouter = Router();
 const configKey = "infinite-canvas:ai_config_store", pluginKey = "infinite-canvas:plugin_store";
 const generationFields = { generationId: z.string().min(1).optional(), generationTaskId: z.string().min(1).optional(), status: z.enum(["idle", "loading", "success", "error"]).optional() };
 const canvasMetadata = z.object({ ...generationFields,
+    audioInput: audioInputSchema.optional(), audioDrafts: z.object({ speech: audioInputSchema.options[0].optional(), music: audioInputSchema.options[1].optional() }).strict().optional(),
     prompt: z.string().optional(), composerContent: z.string().optional(), content: z.string().optional(), model: z.string().optional(),
     size: z.string().optional(), videoSize: z.string().optional(), quality: z.string().optional(), background: z.string().optional(), seconds: z.string().optional(), vquality: z.string().optional(),
     generateAudio: z.string().optional(), watermark: z.string().optional(), videoMode: z.string().optional(), generationMode: z.enum(["image", "video", "text", "audio"]).optional(),
@@ -309,12 +311,13 @@ businessRouter.get("/assets/export", async (_req, res) => {
 });
 
 businessRouter.get("/works", async (req, res) => {
-    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().positive().default(10), view: z.enum(["works", "tasks"]).default("works"), kind: z.string().default("all"), status: z.string().default("all"), source: z.string().default("all"), keyword: z.string().default("") }).parse(req.query);
+    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().positive().default(10), view: z.enum(["works", "tasks"]).default("works"), kind: z.string().default("all"), audioCategory: z.enum(["all", "music", "speech"]).default("all"), status: z.string().default("all"), source: z.string().default("all"), keyword: z.string().default("") }).parse(req.query);
     const assets = await readAssets(res.locals.user.id);
-    const { rows } = await db.query("SELECT id,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
+    const { rows } = await db.query("SELECT id,title,channel_id,upstream_id,model,capability,path,status,result,error,upstream_error,request,created_at,updated_at FROM generation_tasks WHERE user_id=$1 AND NOT hidden_from_works ORDER BY created_at DESC", [res.locals.user.id]);
     const tasks = rows.map(({ upstream_error, ...task }) => ({ ...task, created_at: task.created_at.toISOString(), error_message: taskErrorMessage({ ...task, upstream_error }) }));
     const activeTasks = tasks.filter((task) => ["pending", "running"].includes(task.status)).map(({id,status}) => ({ id, status }));
     const works = mergeWorks(assets, tasks).filter((work) => (query.view === "tasks" ? Boolean(work.task) : work.state === "completed")
+        && (query.audioCategory === "all" || (query.audioCategory === "speech" ? (work.task?.request?.audio_type || work.asset?.metadata?.audioType) === "gemini-tts" : ["lyria", "suno"].includes(String(work.task?.request?.audio_type || work.asset?.metadata?.audioType))))
         && (query.kind === "all" || work.kind === query.kind)
         && (query.view !== "tasks" || query.status === "all" || (query.status === "processing" ? work.state === "processing" : work.task?.status === query.status))
         && (query.view === "tasks" || query.source === "all" || work.source === query.source)

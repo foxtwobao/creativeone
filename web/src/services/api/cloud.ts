@@ -2,10 +2,11 @@ import { useCloudStore } from "@/stores/use-cloud-store";
 import { useAnnouncementStore } from "@/stores/use-announcement-store";
 import type { ImageModelType } from "../../../../shared/image-models";
 import type { VideoModelType } from "../../../../shared/video-models";
+import type { AudioModelType } from "../../../../shared/audio";
 import type { OneNavigationConfig } from "../../../../shared/one-navigation";
 
 export type CloudUser = { id: string; username: string; displayName: string; avatarUrl: string; email: string; emailVerified: boolean; admin: boolean };
-export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; model_descriptions: Record<string, string>; is_default: boolean };
+export type CloudChannel = { id: string; name: string; capability: "image" | "text" | "video" | "audio"; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; is_default: boolean };
 export let cloudSession: { user: CloudUser; csrf: string; maxReferenceImageBytes: number; modelServiceUrl?: string; navigation?: OneNavigationConfig; channels: CloudChannel[] } | null = null;
 const errors: Record<string, string> = {
     ENHANCER_NOT_CONFIGURED: "尚未配置模型服务，当前仅启用登录和数据同步", TOKENONE_NOT_CONFIGURED: "尚未配置 TokenONE 模型服务",
@@ -23,6 +24,7 @@ const errors: Record<string, string> = {
     TOKENONE_GROUP_FORBIDDEN: "当前账号没有该渠道的分组授权或有效订阅", TOKENONE_KEY_UNAVAILABLE: "该渠道的模型服务访问凭据已停用、过期或额度不足",
     TOKENONE_GROUP_UNAVAILABLE: "该渠道的分组不可用，请联系管理员", CHANNEL_UNAVAILABLE: "渠道已停用，请重新选择",
     MODEL_NOT_ALLOWED: "所选模型不在该渠道允许范围内", LOCAL_BLOB_NOT_SYNCABLE: "内容包含尚未上传的本地文件，无法同步",
+    AUDIO_MODEL_TYPE_REQUIRED: "请由管理员配置音频模型的调用类型", INVALID_AUDIO_INPUT: "音频创作参数不完整，请检查输入", AUDIO_SUBMISSION_CONFLICT: "同一次提交的内容已变化，请先确认原任务", TASK_NOT_RECOVERABLE: "任务没有可恢复保存的完整结果",
     INVALID_H3_MODEL: "MiniMax H3 调用类型仅支持 MiniMax-H3 公共模型。",
 };
 export class CloudError extends Error {

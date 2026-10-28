@@ -144,3 +144,8 @@ ALTER TABLE canvas_project_commands ADD COLUMN IF NOT EXISTS undone boolean NOT 
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_result jsonb;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_error jsonb;
+
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS audio_types jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS title text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS submission_id uuid;
+CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_audio_submission ON generation_tasks(user_id,submission_id) WHERE capability='audio' AND submission_id IS NOT NULL;

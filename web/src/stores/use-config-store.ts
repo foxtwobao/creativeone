@@ -8,6 +8,8 @@ import { h3VideoDefaults, videoModelProfile, type VideoModelType } from "../../.
 import { parseVideoResolution } from "../../../shared/media-size";
 
 
+import { audioVoices, defaultSpeechInput, type AudioInput, type AudioModelType } from "../../../shared/audio";
+
 export type ApiCallFormat = "openai" | "gemini";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
@@ -17,6 +19,7 @@ export type ChannelModel = {
     capability: ModelCapability;
     imageType?: ImageModelType;
     videoType?: VideoModelType;
+    audioType?: AudioModelType;
     description?: string;
     script?: string;
 };
@@ -40,6 +43,7 @@ export type AiConfig = {
     videoModel: string;
     textModel: string;
     audioModel: string;
+    audioInput?: AudioInput;
     audioVoice: string;
     audioFormat: string;
     audioSpeed: string;
@@ -72,8 +76,8 @@ export const defaultConfig: AiConfig = {
     videoModel: "",
     textModel: "",
     audioModel: "",
-    audioVoice: "alloy",
-    audioFormat: "mp3",
+    audioVoice: defaultSpeechInput.voice,
+    audioFormat: "wav",
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
@@ -96,9 +100,10 @@ const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "mode
 function applyCloudConfig(config: AiConfig): AiConfig {
     const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
         id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
-        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], description: channel.model_descriptions?.[name] })),
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], audioType: channel.audio_types?.[name], description: channel.model_descriptions?.[name] })),
     }));
     const next = { ...config, channels, models: modelOptionsFromChannels(channels), baseUrl: "", apiKey: "", apiFormat: "openai" as const };
+    next.audioVoice = audioVoices.includes(config.audioVoice) ? config.audioVoice : defaultSpeechInput.voice;
     for (const [key, capability] of [["imageModel", "image"], ["textModel", "text"], ["videoModel", "video"], ["audioModel", "audio"]] as const) {
         const choices = selectableModelsByCapability(next, capability);
         next[key] = choices.includes(next[key]) ? next[key] : choices[0] || "";
@@ -139,6 +144,10 @@ export function modelImageTypeOf(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.imageType;
 }
 
+export function modelAudioTypeOf(config: AiConfig, value: string) {
+    return findChannelModel(config, value)?.model.audioType;
+}
+
 export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelType {
     return findChannelModel(config, value)?.model.videoType || "seedance";
 }
@@ -174,7 +183,7 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability && (capability !== "audio" || model.audioType)).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */

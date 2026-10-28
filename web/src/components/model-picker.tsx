@@ -3,6 +3,7 @@ import { Check, ChevronDown, Cpu, Search, X } from "lucide-react";
 import { Popover } from "radix-ui";
 
 import { cn } from "@/lib/utils";
+import { audioModelTypeLabels } from "../../../shared/audio";
 import { imageModelTypeLabels } from "../../../shared/image-models";
 import { videoModelTypeLabels } from "../../../shared/video-models";
 import { encodeChannelModel, modelOptionLabel, modelOptionName, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
@@ -24,9 +25,9 @@ export function ModelPicker({ config, value = "", onChange, capability, classNam
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [family, setFamily] = useState<string | null>(null);
-    const models = useMemo(() => config.channels.flatMap((channel) => channel.models.filter((model) => !capability || model.capability === capability).map((model) => ({
+    const models = useMemo(() => config.channels.flatMap((channel) => channel.models.filter((model) => (!capability || model.capability === capability) && (model.capability !== "audio" || model.audioType)).map((model) => ({
         value: encodeChannelModel(channel.id, model.name), id: model.name, description: model.description,
-        family: model.capability === "image" && model.imageType ? imageModelTypeLabels[model.imageType] : model.capability === "video" && model.videoType ? videoModelTypeLabels[model.videoType] : "",
+        family: model.capability === "image" && model.imageType ? imageModelTypeLabels[model.imageType] : model.capability === "video" && model.videoType ? videoModelTypeLabels[model.videoType] : model.capability === "audio" && model.audioType ? audioModelTypeLabels[model.audioType] : "",
     }))), [config.channels, capability]);
     const families = [...new Set(models.map((model) => model.family || ""))];
     const search = query.trim().toLocaleLowerCase();
