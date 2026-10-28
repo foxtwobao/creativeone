@@ -73,7 +73,7 @@ export default function AdminTasksPage() {
     if (!admin) return <div className="p-6"><Alert type="error" title="只有管理员可以查询用户任务" /></div>;
     return <main className="h-full overflow-auto bg-background p-4 sm:p-6"><div className="mx-auto max-w-7xl space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h1 className="text-xl font-semibold">用户任务</h1><p className="mt-1 text-sm text-muted-foreground">查询工作台与画布的图片、视频任务，查看生成成果与失败原因。</p></div>
+            <div><h1 className="text-xl font-semibold">用户任务</h1><p className="mt-1 text-sm text-muted-foreground">查询工作台与画布的图片、视频和音频任务，查看生成成果与失败原因。</p></div>
             <Button loading={tasks.isFetching || stats.isFetching} onClick={() => { void tasks.refetch(); void stats.refetch(); }}>刷新</Button>
         </div>
         <section aria-label="任务统计" className="space-y-3">
@@ -86,8 +86,8 @@ export default function AdminTasksPage() {
                 {([['today', '今日'], ['yesterday', '昨日'], ['week', '近一周']] as const).map(([period, label]) => {
                     const values = stats.data?.stats.find(item => item.period === period);
                     return <Card key={period} size="small" title={label}>
-                        <div className="grid grid-cols-4 gap-2">
-                            {([{ key: "images", title: "图片数" }, { key: "videos", title: "视频数" },
+                        <div className="grid grid-cols-5 gap-2">
+                            {([{ key: "images", title: "图片数" }, { key: "videos", title: "视频数" }, { key: "audios", title: "音频数" },
                                 { key: "succeeded", title: "成功", color: token.colorSuccess }, { key: "failed", title: "失败", color: token.colorError }] as const).map(metric =>
                                 <Statistic key={metric.key} title={<span className="text-xs">{metric.title}</span>} loading={stats.isFetching}
                                     formatter={metric.key === "failed" && values && !stats.error ? value => <button type="button"
@@ -113,7 +113,7 @@ export default function AdminTasksPage() {
                 </Form.Item>
                 <Form.Item name="range" label="创建时间（北京时间）"><DatePicker.RangePicker className="w-full" placeholder={["开始日期", "结束日期"]} /></Form.Item>
                 <Form.Item name="taskId" label="任务 ID"><Input allowClear placeholder="本地任务 ID 或上游任务 ID（精确匹配）" /></Form.Item>
-                <Form.Item name="capability" label="类型"><Select allowClear placeholder="全部类型" options={[{ value: "image", label: "图片" }, { value: "video", label: "视频" }]} /></Form.Item>
+                <Form.Item name="capability" label="类型"><Select allowClear placeholder="全部类型" options={[{ value: "image", label: "图片" }, { value: "video", label: "视频" }, { value: "audio", label: "音频" }]} /></Form.Item>
                 <Form.Item name="status" label="状态"><Select allowClear placeholder="全部状态" options={Object.entries(statuses).map(([value, label]) => ({ value, label }))} /></Form.Item>
                 <Form.Item name="includeAdmins" label="包含管理员" valuePropName="checked"><Switch aria-label="包含管理员" /></Form.Item>
                 <div className="flex items-end gap-2 pb-6 sm:col-span-2 lg:col-span-3"><Button type="primary" htmlType="submit">查询</Button><Button onClick={() => { form.resetFields(); setFilters(""); setPage(1); setUserKeyword(""); setUserPage(1); }}>重置</Button></div>
@@ -126,7 +126,7 @@ export default function AdminTasksPage() {
                 { title: "创建时间", width: 180, render: (_, row) => formatTime(row.createdAt) },
                 { title: "用户", width: 220, render: (_, row) => <div><p>{row.user.displayName || row.user.username}</p><p className="break-all text-xs text-muted-foreground">{row.user.email}</p></div> },
                 { title: "来源", width: 85, render: (_, row) => row.source === "canvas" ? "画布" : "工作台" },
-                { title: "类型", width: 70, render: (_, row) => row.capability === "image" ? "图片" : "视频" },
+                { title: "类型", width: 70, render: (_, row) => row.capability === "image" ? "图片" : row.capability === "audio" ? "音频" : "视频" },
                 { title: "模型", dataIndex: "model", width: 180 },
                 { title: "提示词", width: 250, render: (_, row) => <p className="line-clamp-2 whitespace-pre-wrap break-words">{row.prompt || "未记录提示词"}</p> },
                 { title: "状态", width: 150, render: (_, row) => <div className="space-y-1">{statusTag(row.status)}{row.hiddenFromWorks || row.hiddenFromHistory ? <p className="text-xs text-muted-foreground">用户已移除记录</p> : null}</div> },

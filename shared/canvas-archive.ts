@@ -1,6 +1,6 @@
 import type { CanvasNodeData, CanvasConnection } from "../web/src/types/canvas.js";
 
-const metadataKeys = new Set("content composerContent prompt fontSize generationMode generationType model reasoningEffort size videoSize quality background count textCount texts primaryTextId seconds vquality generateAudio watermark videoMode audioVoice audioFormat audioSpeed audioInstructions references naturalWidth naturalHeight freeResize images primaryImageId storageKey mimeType bytes durationMs groupId".split(" "));
+const metadataKeys = new Set("content composerContent prompt fontSize generationMode generationType model reasoningEffort size videoSize quality background count textCount texts primaryTextId seconds vquality generateAudio watermark videoMode audioInput audioDrafts audioVoice audioFormat audioSpeed audioInstructions references naturalWidth naturalHeight freeResize images primaryImageId storageKey mimeType bytes durationMs groupId".split(" "));
 export function canvasArchiveMediaValid(nodes: CanvasNodeData[]) {
     return nodes.every(({ type, metadata }) => (!metadata?.content || !["image", "video", "audio"].includes(type) || Boolean(metadata.storageKey))
         && (metadata?.images || []).every((image) => !image.content || Boolean(image.storageKey))

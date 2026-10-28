@@ -3,6 +3,11 @@ import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { canvasAudioText } from "../../../../shared/canvas-audio";
+import { AudioPriceHint } from "@/components/audio-price-hint";
+import { AudioTaskDrawer } from "@/components/audio-task-drawer";
+import { canvasAudioModelPatch } from "@/lib/audio-generation";
+import { modelAudioTypeOf } from "@/stores/use-config-store";
 import { buildGenerationConfig, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { buildNodeGenerationContext } from "./canvas-node-generation";
@@ -12,7 +17,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
-import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
+import { CanvasAudioSettingsPopover } from "./canvas-audio-settings-popover";
 import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
@@ -49,9 +54,11 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
+    const [taskOpen, setTaskOpen] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const connections = useCanvasStore((state) => state.connections);
     const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, prompt) : undefined;
+    const hasAudioText = mode === "audio" && Boolean(canvasAudioText(node.id, nodes, connections));
     const referenceImageCount = referenceContext?.imageCount || 0;
 
     // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
@@ -68,7 +75,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if ((!text && !hasAudioText) || isRunning) return;
         onGenerate(node.id, mode, text);
     };
 
@@ -121,8 +128,8 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                         </>
                     ) : mode === "audio" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, canvasAudioModelPatch(config, node.metadata, model))} capability="audio" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onChange={(audioInput) => onConfigChange(node.id, { audioInput })} />
                         </>
                     ) : (
                         <>
@@ -135,7 +142,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     type="primary"
                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
+                    disabled={!isRunning && !prompt.trim() && !hasAudioText}
                     onClick={() => (isRunning ? onStop(node.id) : submit())}
                     aria-label={t(isRunning ? "canvas.promptPanel.stopGeneration" : "canvas.promptPanel.generate")}
                 >
@@ -152,6 +159,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     </span>
                 </Button>
             </div>
+            {mode === "audio" ? <div className="mt-3 border-t pt-3" style={{ borderColor: theme.toolbar.border }}><AudioPriceHint model={config.model} type={modelAudioTypeOf(config, config.model)} />{node.metadata?.generationTaskId ? <Button type="text" size="small" onClick={() => setTaskOpen(true)}>查看任务全部版本</Button> : null}<AudioTaskDrawer taskId={taskOpen ? node.metadata?.generationTaskId : undefined} onClose={() => setTaskOpen(false)} /></div> : null}
             <Modal title={t("canvas.promptPanel.editorTitle")} open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
                     <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
@@ -170,7 +178,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
 }
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
-    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video || type === CanvasNodeType.Audio ? "video" : "image";
+    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Audio ? "audio" : type === CanvasNodeType.Video ? "video" : "image";
 }
 
 function videoConfigPatch(key: keyof AiConfig, value: string) {
@@ -181,9 +189,3 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     return { [key]: value };
 }
 
-function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
-    if (key === "audioVoice") return { audioVoice: value };
-    if (key === "audioFormat") return { audioFormat: value };
-    if (key === "audioSpeed") return { audioSpeed: value };
-    return { audioInstructions: value };
-}

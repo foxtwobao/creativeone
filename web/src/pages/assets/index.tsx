@@ -1,10 +1,12 @@
 import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Alert, App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tabs, Tag, Typography } from "antd";
 import { useSearchParams } from "react-router-dom";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
+import { useAudioPlayback } from "@/hooks/use-audio-playback";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/file-storage";
@@ -13,9 +15,11 @@ import { cn } from "@/lib/utils";
 import { assetCoverUrl, useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { workKinds, type Work, type WorkKind } from "./works";
+import { AudioWorkCard } from "@/pages/audio/audio-work-card";
 import { TaskCard } from "./task-card";
 import { useWorkTasks } from "./use-work-tasks";
 import { removeTaskFromWorks } from "@/services/api/tasks";
+import { uploadAudio } from "@/services/api/audio";
 import { WorkCanvasModal } from "./work-canvas-modal";
 import { features } from "@/constant/features";
 
@@ -35,19 +39,26 @@ const kindOptions = ["all", "image", "video", "audio", "text"] as const;
 
 export default function AssetsPage() {
     const { message, modal } = App.useApp();
+    const queryClient = useQueryClient();
     const { t } = useTranslation();
     const copyText = useCopyText();
     const [form] = Form.useForm<AssetFormValues>();
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
+    const onPlay = useAudioPlayback();
     const assetInputRef = useRef<HTMLInputElement>(null);
+    const audioInputRef = useRef<HTMLInputElement>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState<WorkKind | "all">("all");
     const [searchParams, setSearchParams] = useSearchParams();
+    const requestedKind = searchParams.get("kind");
+    const kindFilter = kindOptions.includes(requestedKind as typeof kindOptions[number]) ? requestedKind as WorkKind | "all" : "all";
+    const setKindFilter = (kind: WorkKind | "all") => setSearchParams((params) => { const next = new URLSearchParams(params); if (kind === "all") next.delete("kind"); else next.set("kind", kind); return next; });
     const taskView = searchParams.get("view") === "tasks";
+    const [audioCategory, setAudioCategory] = useState("all");
+    const [uploadingAudio, setUploadingAudio] = useState(false);
     const [statusFilter, setStatusFilter] = useState("all");
     const [sourceFilter, setSourceFilter] = useState<Work["source"] | "all">("all");
     const [canvasWork, setCanvasWork] = useState<Work | null>(null);
@@ -64,7 +75,7 @@ export default function AssetsPage() {
     const tags = Form.useWatch("tags", form) || [];
     const content = Form.useWatch("content", form) || "";
 
-    const worksQuery = new URLSearchParams({ page: String(page), pageSize: String(pageSize), view: taskView ? "tasks" : "works", kind: kindFilter, status: statusFilter, source: sourceFilter, keyword }).toString();
+    const worksQuery = new URLSearchParams({ page: String(page), pageSize: String(pageSize), view: taskView ? "tasks" : "works", kind: kindFilter, audioCategory: kindFilter === "audio" ? audioCategory : "all", status: statusFilter, source: sourceFilter, keyword }).toString();
     const { works: visibleAssets, total: totalWorks, activeTasks, error: taskError, loading: tasksLoading, load: loadTasks } = useWorkTasks(worksQuery);
     const processingCount = activeTasks.length;
     useEffect(() => { if (!tasksLoading && !taskError) setPage((value) => Math.min(value, Math.max(1, Math.ceil(totalWorks/pageSize)))); }, [totalWorks, pageSize, tasksLoading, taskError]);
@@ -81,6 +92,19 @@ export default function AssetsPage() {
         try {
             await loadTasks();
         } catch (error) { message.error(error instanceof Error ? error.message : "作品刷新失败"); }
+    };
+
+    const uploadAudioAsset = async (file?: File) => {
+        if (!file || uploadingAudio) return;
+        setUploadingAudio(true);
+        try {
+            const saved = await uploadAudio(file);
+            await addAsset({ kind: "audio", title: file.name.replace(/\.[^.]+$/, ""), coverUrl: "", tags: [], source: "上传音频", data: { ...saved, width: 0, height: 0 } });
+            setPage(1); setAudioCategory("all"); setSourceFilter("all"); setKeyword("");
+            message.success("音频已上传");
+            await queryClient.invalidateQueries({ queryKey: ["works"] });
+        } catch (error) { message.error(error instanceof Error ? error.message : "上传失败"); }
+        finally { setUploadingAudio(false); }
     };
 
     const openEdit = (asset: Asset) => {
@@ -222,7 +246,7 @@ export default function AssetsPage() {
                     </div>
 
                     <div className="mx-auto mt-6 max-w-6xl">
-                        <Tabs activeKey={taskView ? "tasks" : "works"} onChange={(key) => { setPage(1); setSearchParams(key === "tasks" ? { view: "tasks" } : {}); }} items={[{ key: "works", label: "我的作品" }, { key: "tasks", label: `生成任务${processingCount ? ` · ${processingCount} 进行中` : ""}` }]} />
+                        <Tabs activeKey={taskView ? "tasks" : "works"} onChange={(key) => { setPage(1); setSearchParams((params) => { const next = new URLSearchParams(params); if (key === "tasks") next.set("view", "tasks"); else next.delete("view"); return next; }); }} items={[{ key: "works", label: "我的作品" }, { key: "tasks", label: `生成任务${processingCount ? ` · ${processingCount} 进行中` : ""}` }]} />
                     </div>
 
                     <div className="mx-auto mt-8 w-full max-w-2xl">
@@ -266,6 +290,7 @@ export default function AssetsPage() {
                             </div>
                             <div className="flex flex-wrap items-center gap-4">
                                 <Button type="text" loading={tasksLoading} onClick={() => void refreshWorks()}>刷新</Button>
+                                {!taskView && kindFilter === "audio" ? <Button type="text" icon={<Upload size={15} />} loading={uploadingAudio} onClick={() => audioInputRef.current?.click()}>上传音频</Button> : null}
                                 <button
                                     hidden={taskView}
                                     type="button"
@@ -294,6 +319,7 @@ export default function AssetsPage() {
                         </div>
                         <div className="flex flex-wrap items-center gap-3">
                             {taskView ? <Select aria-label="任务状态" value={statusFilter} className="min-w-36" onChange={(value) => { setStatusFilter(value); setPage(1); }} options={[{ value: "all", label: "全部状态" }, { value: "processing", label: "生成中" }, { value: "unknown", label: "需处理" }, { value: "failed", label: "生成失败" }, { value: "succeeded", label: "已完成" }, { value: "cancelled", label: "已取消" }, { value: "expired", label: "已过期" }]} /> : <Select aria-label="作品来源" value={sourceFilter} className="min-w-36" onChange={(value) => { setSourceFilter(value); setPage(1); }} options={[{ value: "all", label: "全部来源" }, { value: "generated", label: "AI 生成" }, { value: "uploaded", label: "上传 / 手动添加" }]} />}
+                            {kindFilter === "audio" ? <Select aria-label="音频分类" value={audioCategory} className="min-w-32" onChange={(value) => { setAudioCategory(value); setPage(1); }} options={[{ value: "all", label: "全部音频" }, { value: "music", label: "音乐" }, { value: "speech", label: "配音" }]} /> : null}
                             <span className="text-xs text-muted-foreground">共 {totalWorks} {taskView ? "个任务" : "件作品"}</span>
                         </div>
                     </div>
@@ -301,8 +327,8 @@ export default function AssetsPage() {
 
                 <div className="mx-auto flex max-w-7xl flex-col gap-5">
                     {taskError ? <Alert type="warning" title="生成任务暂时无法更新" description={taskError} /> : null}
-                    <div className={taskView ? "flex flex-col gap-3" : "grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}>
-                        {visibleAssets.map((work) => work.task ? (
+                    <div className={taskView ? "flex flex-col gap-3" : "grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"} onPlayCapture={onPlay}>
+                        {visibleAssets.map((work) => work.kind === "audio" ? <AudioWorkCard key={work.id} work={work} onRefresh={loadTasks} onCanvas={setCanvasWork} /> : work.task ? (
                             <TaskCard key={`${taskView}:${work.id}`} compact={taskView} work={work} onRefresh={loadTasks} onRemove={() => removeWork(work)} onEdit={openEdit} onCanvas={() => setCanvasWork(work)} />
                         ) : work.asset ? (
                             <AssetCard key={work.id} asset={work.asset} onOpen={() => setPreviewAsset(work.asset!)} onEdit={() => openEdit(work.asset!)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(work.asset!)} onCanvas={() => setCanvasWork(work)} />
@@ -437,6 +463,7 @@ export default function AssetsPage() {
             <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
 
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
+            <input ref={audioInputRef} type="file" accept="audio/*,.m4a" className="hidden" onChange={(event) => { void uploadAudioAsset(event.target.files?.[0]); event.target.value = ""; }} />
 
             <Modal title={t("assets.deleteTitle")} open={Boolean(deletingAsset)} onCancel={() => setDeletingAsset(null)} onOk={() => confirmDelete().catch((error) => message.error(error.message))} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("assets.deleteConfirm", { name: deletingAsset?.title })}
@@ -547,7 +574,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
                         </Typography.Text>
                         {asset.kind === "text" ? (
                             <Typography.Paragraph className="mt-2 whitespace-pre-wrap">{asset.data.content}</Typography.Paragraph>
-                        ) : asset.kind === "video" ? (
+                        ) : asset.kind === "audio" ? <p>请在音频作品卡片中试听。</p> : asset.kind === "video" ? (
                             <video src={asset.data.url} controls preload="none" className="mt-2 aspect-video w-full rounded-lg bg-black" />
                         ) : (
                             <Typography.Text className="mt-2 block">
@@ -579,13 +606,13 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
     );
 }
 
-async function readAssetMediaBlob(asset: Extract<Asset, { kind: "image" | "video" }>) {
+async function readAssetMediaBlob(asset: Extract<Asset, { kind: "image" | "video" | "audio" }>) {
     const storageKey = asset.data.storageKey;
     if (storageKey) {
         const stored = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
         if (stored) return stored;
     }
-    const url = asset.kind === "video" ? asset.data.url : asset.data.dataUrl || asset.coverUrl;
+    const url = asset.kind === "image" ? asset.data.dataUrl || asset.coverUrl : asset.data.url;
     if (!url) return null;
     const response = await fetch(url);
     return response.ok ? response.blob() : null;

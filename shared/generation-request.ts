@@ -1,3 +1,4 @@
+import { audioPrompt } from "./audio.js";
 import { imageSizePresets } from "./image-models.js";
 
 // These fields come from the saved request, never from model names or current preferences.
@@ -11,6 +12,7 @@ export function generationRequestPrompt(request?: Record<string, any> | null): s
 }
 
 export function generationPrompt(request?: Record<string, any> | null): string {
+    if (request?.audio_input) return audioPrompt(request.audio_input);
     return typeof request?.user_prompt === "string" ? request.user_prompt : generationRequestPrompt(request);
 }
 

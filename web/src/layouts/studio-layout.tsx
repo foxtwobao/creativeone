@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bot, Images, Maximize2, Menu, PanelLeftClose, PenLine, Settings2, Sparkles, Video, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Bot, Images, Maximize2, Menu, PanelLeftClose, PenLine, Settings2, Sparkles, Video, X } from "lucide-react";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useInterfaceStore } from "@/stores/use-interface-store";
@@ -14,6 +14,7 @@ const links = [
     { to: "/prompts", label: "灵感广场", icon: Sparkles },
     { to: "/canvas", label: "画布ONE", icon: Maximize2 },
     { to: "/video", label: "视频创作", icon: Video },
+    { to: "/audio", label: "音频创作", icon: AudioLines },
     { to: "/assets", label: "我的作品", icon: Images },
 ].filter(({ to }) => (to !== "/canvas" || features.canvas) && (to !== "/video" || features.video));
 

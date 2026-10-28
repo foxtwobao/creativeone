@@ -1,3 +1,4 @@
+import { AudioPlayer } from "@/components/audio-player";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
@@ -726,7 +727,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{t("canvas.node.audio")}</span>
             </div>
-            <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+            <div data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}><AudioPlayer key={node.metadata.content} url={node.metadata.content} /></div>
         </div>
     );
 }

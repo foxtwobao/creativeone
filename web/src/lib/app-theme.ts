@@ -6,6 +6,8 @@ const neutral = {
         primary: "#171717",
         primaryHover: "#000000",
         primaryText: "#ffffff",
+        disabledBg: "#eeeeee",
+        disabledText: "#666666",
         elevatedBg: "#ffffff",
         itemHoverBg: "rgba(23, 23, 23, 0.06)",
         itemSelectedBg: "rgba(23, 23, 23, 0.1)",
@@ -18,6 +20,8 @@ const neutral = {
         primary: "#fafafa",
         primaryHover: "#ffffff",
         primaryText: "#171717",
+        disabledBg: "#303135",
+        disabledText: "#c4c4c4",
         elevatedBg: "#1c1917",
         itemHoverBg: "rgba(250, 250, 249, 0.08)",
         itemSelectedBg: "rgba(250, 250, 249, 0.12)",
@@ -50,6 +54,9 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         components: {
             Button: {
                 primaryShadow: "none",
+                colorBgContainerDisabled: color.disabledBg,
+                colorTextDisabled: color.disabledText,
+                opacityLoading: 1,
             },
             Dropdown: {
                 colorBgElevated: color.elevatedBg,

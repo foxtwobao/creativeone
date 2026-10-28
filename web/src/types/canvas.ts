@@ -72,6 +72,8 @@ export type CanvasNodeMetadata = {
     generateAudio?: string;
     watermark?: string;
     videoMode?: string;
+    audioDrafts?: { speech?: import("../../../shared/audio").SpeechInput; music?: import("../../../shared/audio").MusicInput };
+    audioInput?: import("../../../shared/audio").AudioInput;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;

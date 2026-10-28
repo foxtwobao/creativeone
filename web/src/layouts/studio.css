@@ -13,7 +13,8 @@
 }
 .dark .studio-shell { --studio-bg: #18191b; --studio-panel: #202124; --studio-text: #eeeef0; --studio-muted: #92959e; --studio-line: #2e3035; --studio-hover: #292b30; --studio-active: #243449; --studio-accent: #80b7fa; }
 .studio-shell button { cursor: pointer; }
-.studio-shell button:disabled { cursor: not-allowed; opacity: .4; }
+.studio-shell button:disabled { cursor: not-allowed; }
+.studio-shell button:disabled:not(.ant-btn) { opacity: .4; }
 .studio-shell button:focus-visible, .studio-shell a:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 3px; }
 .studio-sidebar { width: 264px; flex-shrink: 0; display: flex; flex-direction: column; padding: 22px 14px 16px; border-right: 1px solid var(--studio-line); background: var(--studio-panel); }
 .studio-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 6px 28px; }

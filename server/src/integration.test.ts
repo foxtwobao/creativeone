@@ -1242,9 +1242,9 @@ test("admin task stats use Shanghai day boundaries and exclude administrators by
     }
     const stats = (await (await call(`/admin/tasks/stats?userId=${owner}`, admin)).json()).stats;
     assert.deepEqual(stats, [
-        { period: "today", images: 1, videos: 0, succeeded: 1, failed: 0 },
-        { period: "yesterday", images: 0, videos: 1, succeeded: 0, failed: 1 },
-        { period: "week", images: 2, videos: 1, succeeded: 1, failed: 1 },
+        { period: "today", images: 1, videos: 0, audios: 0, succeeded: 1, failed: 0 },
+        { period: "yesterday", images: 0, videos: 1, audios: 0, succeeded: 0, failed: 1 },
+        { period: "week", images: 2, videos: 1, audios: 0, succeeded: 1, failed: 1 },
     ]);
     const excluded = (await (await call(`/admin/tasks/stats?userId=${admin}`, admin)).json()).stats;
     assert.ok(excluded.every((row: any) => row.images + row.videos === 0));

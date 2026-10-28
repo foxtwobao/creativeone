@@ -93,6 +93,7 @@ function fileExtension(mimeType: string, storageKey: string) {
     if (mimeType.includes("jpeg")) return "jpg";
     if (mimeType.includes("webp")) return "webp";
     if (mimeType.includes("gif")) return "gif";
+    if (mimeType.startsWith("audio/") && mimeType.includes("mp4")) return "m4a";
     if (mimeType.includes("mp4")) return "mp4";
     if (mimeType.includes("webm")) return "webm";
     if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";

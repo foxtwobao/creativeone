@@ -1,3 +1,4 @@
+import { audioInputForConfig } from "@/lib/audio-generation";
 import { getNodeSpec, NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -53,13 +54,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
 }
 
 export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetadata {
-    return {
-        model: config.model,
-        audioVoice: config.audioVoice,
-        audioFormat: config.audioFormat,
-        audioSpeed: config.audioSpeed,
-        audioInstructions: config.audioInstructions,
-    };
+    return { model: config.model, audioInput: structuredClone(audioInputForConfig(config)) };
 }
 
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {

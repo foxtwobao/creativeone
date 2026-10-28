@@ -20,14 +20,14 @@ export function WorkCanvasModal({ work, onClose }: { work: Work | null; onClose:
         if (!work || !hydrated) return;
         setSaving(true);
         try {
-            const title = work.asset?.title || work.assets[0]?.title || work.task!.model;
+            const title = work.task?.title || work.asset?.title || work.assets[0]?.title || work.task!.model;
             const type = { image: CanvasNodeType.Image, video: CanvasNodeType.Video, audio: CanvasNodeType.Audio, text: CanvasNodeType.Text }[work.kind];
             const media = work.task ? taskMedia(work.task) : assetMedia(work.asset!);
             const text = work.asset?.kind === "text" ? work.asset.data.content : work.task?.result?.text;
             const entries: WorkMedia[] = work.kind === "text" ? [{ url: text || "" }] : media;
             const nodes = await Promise.all(entries.map(async (item, index) => {
                 const size = item;
-                const node = createCanvasNode(type, { x: 360 + index * 700, y: 300 }, { content: item.url, storageKey: "storageKey" in item ? item.storageKey : undefined, status: "success", naturalWidth: "width" in size ? size.width : undefined, naturalHeight: "height" in size ? size.height : undefined });
+                const node = createCanvasNode(type, { x: 360 + index * 700, y: 300 }, { content: item.url, storageKey: "storageKey" in item ? item.storageKey : undefined, status: "success", bytes: item.bytes, mimeType: item.mimeType, durationMs: item.durationMs, naturalWidth: "width" in size ? size.width : undefined, naturalHeight: "height" in size ? size.height : undefined });
                 return { ...node, title, ...("width" in size && "height" in size && size.width && size.height ? fitNodeSize(size.width, size.height) : {}) };
             }));
             const store = useCanvasStore.getState();
