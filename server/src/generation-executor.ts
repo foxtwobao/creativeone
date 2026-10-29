@@ -85,7 +85,7 @@ export async function executeMediaTask(taskId: string) {
         if (!locked) return;
         const task = (await owner.query("SELECT * FROM generation_tasks WHERE id=$1", [taskId])).rows[0];
         if (!task || task.upstream_id || !["pending", "running"].includes(task.status)) return;
-        if (task.status === "running" && task.execution_token && !(task.capability === "audio" && task.upstream_result)) {
+        if (task.status === "running" && task.execution_token && !(["audio", "text"].includes(task.capability) && task.upstream_result)) {
             const video = task.capability === "video" ? task.upstream_result?.data || task.upstream_result : undefined;
             const upstreamId = video?.id || video?.task_id;
             const knownVideo = typeof upstreamId === "string" && /^[\w-]+$/.test(upstreamId);
@@ -93,7 +93,7 @@ export async function executeMediaTask(taskId: string) {
             await finishCanvasTask(taskId);
             return;
         }
-        if (task.capability === "audio" && task.upstream_result && task.execution_token) await owner.query("UPDATE generation_tasks SET execution_token=NULL WHERE id=$1", [taskId]);
+        if (["audio", "text"].includes(task.capability) && task.upstream_result && task.execution_token) await owner.query("UPDATE generation_tasks SET execution_token=NULL WHERE id=$1", [taskId]);
         const claimed = await owner.query("UPDATE generation_tasks SET status='running',execution_token=$2,updated_at=now() WHERE id=$1 AND execution_token IS NULL AND status IN ('pending','running') RETURNING *", [taskId, token]);
         if (!claimed.rowCount) return;
         const publish = async (status: string, result: any, error: string | null, upstreamId: string | null = null) => {
@@ -130,7 +130,11 @@ export async function executeMediaTask(taskId: string) {
                 if (result?.error) { await saveError(upstreamErrorDetails(result)); await publish("failed", null, "TOKENONE_GENERATION_FAILED"); return; }
                 await db.query("UPDATE generation_tasks SET upstream_result=$3 WHERE id=$1 AND execution_token=$2", [taskId, token, JSON.stringify(result)]);
             } else dispatched = true;
-            if (task.capability === "image") {
+            if (task.capability === "text") {
+                const text = result.output_text || result.output?.filter((item: any) => item.type === "message").flatMap((item: any) => item.content || []).filter((item: any) => item.type === "output_text").map((item: any) => item.text || "").join("");
+                if (result.status !== "completed" || typeof text !== "string" || !text.trim()) { await publish("failed", null, "INVALID_TEXT_RESPONSE"); return; }
+                await publish("succeeded", { text }, null);
+            } else if (task.capability === "image") {
                 const images = await imageBytes(result, signal);
                 await publish("succeeded", (client: Pick<typeof db, "query">) => storeImages(task.user_id, result, images, client), null);
             } else if (task.capability === "audio") {
@@ -181,7 +185,7 @@ export async function executeMediaTask(taskId: string) {
 export function startGenerationWorker() {
     const active = new Set<string>();
     const tick = async () => {
-        const { rows } = await db.query("SELECT id FROM generation_tasks WHERE capability IN ('image','video','audio') AND upstream_id IS NULL AND (status='pending' OR (status='running' AND execution_token IS NOT NULL)) ORDER BY created_at");
+        const { rows } = await db.query("SELECT id FROM generation_tasks WHERE (capability IN ('image','video','audio') OR capability='text' AND canvas_project_id IS NOT NULL) AND upstream_id IS NULL AND (status='pending' OR (status='running' AND execution_token IS NOT NULL)) ORDER BY created_at");
         for (const { id } of rows) if (!active.has(id)) {
             active.add(id);
             void executeMediaTask(id).catch(() => console.error(JSON.stringify({ taskId: id, code: "GENERATION_WORKER_FAILED" }))).finally(() => active.delete(id));

@@ -152,7 +152,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             : videoRequestCapabilityError(req.body.model, channel.video_types?.[req.body.model] || "seedance", req.body);
         if (error) return res.status(400).json({ error: "MODEL_CAPABILITY_INVALID", message: error, retryable: false, requestId: res.locals.requestId });
     }
-    if (canvasContext && !["image", "video", "audio"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
+    if (canvasContext && !["image", "video", "audio", "text"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
     if (canvasContext && req.is("multipart/form-data")) throw new HttpError(400, "INVALID_REQUEST");
     let requestSnapshot: Record<string, any> = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }), ...(audioSubmission ? { audio_title: audioSubmission.title || "" } : {}) };
     if (!canvasContext && path === "videos") await signWanMedia(user.id, req.body.metadata?.input.media || []);
@@ -187,7 +187,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             body = form;
         } else { headers["Content-Type"] = "application/json"; body = JSON.stringify(req.body); }
     }
-    const canvasSettings = canvasContext && channel.capability === "image" ? (await readAccountData(user.id, "infinite-canvas:ai_config_store", { config: {} }, "preferences")).config : {};
+    const canvasSettings = canvasContext && ["image", "text"].includes(channel.capability) ? (await readAccountData(user.id, "infinite-canvas:ai_config_store", { config: {} }, "preferences")).config : {};
     const submission = structuredClone(requestSnapshot);
     const existingTask = await transaction(async (client) => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user.id]);
@@ -202,7 +202,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             const project = (await client.query("SELECT nodes,connections,content_revision FROM canvas_projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR SHARE", [canvasContext.projectId, user.id])).rows[0];
             if (!project) throw new HttpError(404, "PROJECT_NOT_FOUND");
             const node = project.nodes.find((node: { id?: string; clientId?: string }) => node.id === canvasContext.nodeId || node.clientId === canvasContext.nodeId);
-            const output = canvasContext.outputId ? node?.metadata?.images?.find((image: { id: string; clientId?: string }) => image.id === canvasContext.outputId || image.clientId === canvasContext.outputId) : node?.metadata;
+            const output = canvasContext.outputId ? node?.metadata?.[channel.capability === "text" ? "texts" : "images"]?.find((image: { id: string; clientId?: string }) => image.id === canvasContext.outputId || image.clientId === canvasContext.outputId) : node?.metadata;
             if (!output || output.generationId !== canvasContext.generationId) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
             canvasContext.nodeId = node.id;
             if (canvasContext.outputId) canvasContext.outputId = output.id;
@@ -224,6 +224,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
                 if (!target) throw new HttpError(400, "INVALID_FILE_REFERENCE");
                 target.push(`/api/files/${file.namespace}/${encodeURIComponent(file.key)}`);
             }
+            if (channel.capability === "text" && (references.videos.length || references.audios.length)) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
             const visited = new Set<string>();
             const assertReady = (source: any) => {
                 if (!source || source.id === node.id || visited.has(source.id)) return;
@@ -238,12 +239,12 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             for (const edge of project.connections.filter((edge: any) => edge.toNodeId === node.id)) assertReady(project.nodes.find((source: any) => source.id === edge.fromNodeId));
             const family = channel.capability === "image" ? channel.image_types![req.body.model] : channel.capability === "audio" ? channel.audio_types![req.body.model] : channel.video_types?.[req.body.model] || "seedance";
             if (channel.capability === "audio") audioInputSchema.parse(savedMetadata.audioInput);
-            try { requestSnapshot = canvasRequestBody(req.body.model, channel.capability as "image" | "video" | "audio", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : ""); }
+            try { requestSnapshot = canvasRequestBody(req.body.model, channel.capability as "image" | "video" | "audio" | "text", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : ""); }
             catch { throw new HttpError(400, "MODEL_CAPABILITY_INVALID"); }
-            const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(req.body.model, family as any, requestSnapshot) : channel.capability === "audio" ? undefined : videoRequestCapabilityError(req.body.model, family as any, requestSnapshot);
+            const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(req.body.model, family as any, requestSnapshot) : ["audio", "text"].includes(channel.capability) ? undefined : videoRequestCapabilityError(req.body.model, family as any, requestSnapshot);
             if (capabilityError) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
             if (channel.capability === "video") await assertVideoDurations(user.id, req.body.model, family as VideoModelType, references, client);
-            const expectedPath = channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
+            const expectedPath = channel.capability === "text" ? "responses" : channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
             if (path !== expectedPath) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
             await assertReferenceImages(user.id, requestSnapshot, client);
             requestSnapshot = { ...requestSnapshot, user_prompt: savedMetadata.prompt, canvas_source: { node, contentRevision: project.content_revision }, canvas_submission: submission };

@@ -9,20 +9,27 @@ export async function attachCanvasTask(taskId: string, client: Pick<PoolClient, 
     const project = (await client.query("SELECT nodes FROM canvas_projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE", [task.canvas_project_id, task.user_id])).rows[0];
     const nodes: CanvasNodeData[] = project?.nodes || [];
     const node = nodes.find((item) => item.id === task.canvas_node_id);
-    const slot = task.canvas_output_id ? node?.metadata?.images?.find((image) => image.id === task.canvas_output_id) : node?.metadata;
+    const slot = task.canvas_output_id ? node?.metadata?.[task.capability === "text" ? "texts" : "images"]?.find((image) => image.id === task.canvas_output_id) : node?.metadata;
     if (!slot || slot.generationId !== task.canvas_generation_id) {
         await client.query("UPDATE generation_tasks SET canvas_attached=true WHERE id=$1", [taskId]);
         return;
     }
     const file = task.capability === "image" ? task.result?.data?.[0]?.file : task.capability === "audio" ? task.result?.audios?.[task.result?.defaultIndex]?.file : task.result?.file;
     const active = ["running", "pending"].includes(task.status);
-    const succeeded = (task.status === "succeeded" || task.capability === "audio") && file?.url && file?.storageKey;
+    const text = task.capability === "text" && task.status === "succeeded" ? task.result?.text : undefined;
+    const succeeded = Boolean(text) || (task.status === "succeeded" || task.capability === "audio") && file?.url && file?.storageKey;
     const errorDetails = succeeded || active ? undefined : taskErrorMessage(task) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "生成失败，请查看生成任务详情。");
     const result = { ...slot, generationTaskId: taskId, status: active ? "loading" as const : succeeded ? "success" as const : "error" as const, errorDetails,
         ...(task.capability === "video" && task.upstream_id ? { videoTaskId: task.upstream_id, videoTaskPath: task.path, videoTaskModel: `${task.channel_id}::${task.model}` } : {}),
-        ...(succeeded ? { content: file.url, storageKey: file.storageKey, naturalWidth: file.width, naturalHeight: file.height, bytes: file.bytes, mimeType: file.mimeType, ...(file.durationMs === undefined ? {} : { durationMs: file.durationMs }) } : {}) };
+        ...(text ? { content: text } : succeeded ? { content: file.url, storageKey: file.storageKey, naturalWidth: file.width, naturalHeight: file.height, bytes: file.bytes, mimeType: file.mimeType, ...(file.durationMs === undefined ? {} : { durationMs: file.durationMs }) } : {}) };
     const metadata = { ...node!.metadata };
-    if (task.canvas_output_id) {
+    if (task.canvas_output_id && task.capability === "text") {
+        metadata.texts = metadata.texts!.map((item) => item.id === task.canvas_output_id ? { ...item, ...result } : item);
+        const primary = metadata.texts.find((item) => item.id === metadata.primaryTextId && item.status === "success" && item.content) || metadata.texts.find((item) => item.status === "success" && item.content);
+        if (primary) Object.assign(metadata, { content: primary.content, primaryTextId: primary.id });
+        metadata.status = metadata.texts.some((item) => item.status === "loading") ? "loading" : primary ? "success" : "error";
+        metadata.errorDetails = primary ? undefined : errorDetails;
+    } else if (task.canvas_output_id) {
         metadata.images = metadata.images!.map((image) => image.id === task.canvas_output_id ? { ...image, ...result } : image);
         const primary = metadata.images.find((image) => image.id === metadata.primaryImageId && image.status === "success" && image.content) || metadata.images.find((image) => image.status === "success" && image.content);
         if (primary) Object.assign(metadata, { content: primary.content, storageKey: primary.storageKey, naturalWidth: primary.naturalWidth, naturalHeight: primary.naturalHeight, bytes: primary.bytes, mimeType: primary.mimeType, primaryImageId: primary.id });
@@ -64,6 +71,8 @@ export async function recoverUnacceptedCanvasSlots(userId: string, projectId: st
                 changed = true; return { ...slot, status: "error", errorDetails: "这次生成尚未受理，请手动重新生成。" };
             };
             const metadata = fail(node.metadata);
+            const texts = metadata.texts?.map(fail);
+            if (texts?.some((text, index) => text !== metadata.texts![index])) return { ...node, metadata: { ...metadata, texts, status: texts.some((text) => text.status === "loading") ? "loading" : texts.some((text) => text.status === "success") ? "success" : "error" } };
             const images = metadata.images?.map(fail);
             if (images?.some((image, index) => image !== metadata.images![index])) return { ...node, metadata: { ...metadata, images, status: images.some((image) => image.status === "loading") ? "loading" : images.some((image) => image.status === "success") ? "success" : "error" } };
             return metadata === node.metadata ? node : { ...node, metadata };

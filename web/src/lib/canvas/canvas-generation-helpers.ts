@@ -137,7 +137,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) =>
         node.metadata?.status === "loading"
             ? node.type === CanvasNodeType.Config ? { ...node, metadata: { ...node.metadata, status: "idle" as const, errorDetails: undefined } }
-            : hasResumableVideoTask(node) || node.metadata.generationId || node.metadata.images?.some((image) => image.generationId)
+            : hasResumableVideoTask(node) || node.metadata.generationId || node.metadata.images?.some((image) => image.generationId) || node.metadata.texts?.some((text) => text.generationId)
                 ? node
                 : {
                       ...node,
