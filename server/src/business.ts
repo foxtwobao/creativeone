@@ -47,7 +47,7 @@ const editCommand = z.object({ type: z.literal("edit_project"), patch: projectPa
 const commandInput = z.object({ operationId: z.string().trim().min(1).max(200), baseRevision: z.coerce.number().int().positive(), baseGenerationRevision: z.number().int().nonnegative().default(0), command: z.discriminatedUnion("type", [editCommand, z.object({ type: z.literal("restore_edit"), sourceOperationId: z.string().min(1), direction: z.enum(["undo", "redo"]) }).strict()]) }).strict();
 function stripCanvasTaskIds(node: z.infer<typeof canvasNode>): CanvasNodeData {
     const metadata = node.metadata as CanvasNodeData["metadata"];
-    return { ...node, ...(metadata ? { metadata: { ...metadata, generationTaskId: undefined, ...(Array.isArray(metadata.images) ? { images: metadata.images.map((image) => ({ ...image, generationTaskId: undefined })) } : {}) } } : {}) } as CanvasNodeData;
+    return { ...node, ...(metadata ? { metadata: { ...metadata, generationTaskId: undefined, texts: metadata.texts?.map((text) => ({ ...text, generationTaskId: undefined })), ...(Array.isArray(metadata.images) ? { images: metadata.images.map((image) => ({ ...image, generationTaskId: undefined })) } : {}) } } : {}) } as CanvasNodeData;
 }
 
 function canvasProject(row: any) {
@@ -110,6 +110,7 @@ businessRouter.get("/projects/:id/task-status", async (req, res) => {
     const id = requireUuid(req.params.id), userId = res.locals.user.id;
     const project = (await db.query(`SELECT content_revision,ARRAY(
         SELECT node->'metadata'->>'generationId' FROM jsonb_array_elements(nodes) node WHERE node->'metadata'->>'generationId' IS NOT NULL
+        UNION SELECT text->>'generationId' FROM jsonb_array_elements(nodes) node CROSS JOIN LATERAL jsonb_array_elements(COALESCE(node->'metadata'->'texts','[]'::jsonb)) text WHERE text->>'generationId' IS NOT NULL
         UNION SELECT image->>'generationId' FROM jsonb_array_elements(nodes) node CROSS JOIN LATERAL jsonb_array_elements(COALESCE(node->'metadata'->'images','[]'::jsonb)) image WHERE image->>'generationId' IS NOT NULL
     ) AS operations FROM canvas_projects WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, [id, userId])).rows[0];
     if (!project) throw new HttpError(404, "PROJECT_NOT_FOUND");
@@ -192,8 +193,8 @@ businessRouter.post("/projects/:id/commands", async (req, res) => {
                     if (!incoming.metadata?.storageKey || incoming.metadata.storageKey === old?.metadata?.storageKey) throw new HttpError(400, "INVALID_FILE_REFERENCE");
                     incoming = { ...incoming, metadata: { ...incoming.metadata, generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined } };
                 }
-                const markers = [incoming.metadata, ...incoming.metadata?.images || []].filter((slot) => slot?.status === "loading" && slot.generationId).map((slot) => slot!.generationId);
-                const currentMarkers = new Set([old?.metadata?.generationId, ...old?.metadata?.images?.map((image) => image.generationId) || []]);
+                const markers = [incoming.metadata, ...incoming.metadata?.images || [], ...incoming.metadata?.texts || []].filter((slot) => slot?.status === "loading" && slot.generationId).map((slot) => slot!.generationId);
+                const currentMarkers = new Set([old?.metadata?.generationId, ...old?.metadata?.images?.map((image) => image.generationId) || [], ...old?.metadata?.texts?.map((text) => text.generationId) || []]);
                 const newMarkers = markers.filter((marker) => !currentMarkers.has(marker));
                 if (input.command.type === "edit_project" && newMarkers.length && (await client.query("SELECT 1 FROM generation_tasks WHERE user_id=$1 AND canvas_project_id=$2 AND canvas_generation_id=ANY($3::text[])", [userId, id, newMarkers])).rowCount) throw new HttpError(409, "CANVAS_GENERATION_ALREADY_ACCEPTED");
                 nodes.set(edit.node.id, preserveCanvasGeneration(incoming, edit.replaceResult ? undefined : old)); deletedNodes.delete(edit.node.id);

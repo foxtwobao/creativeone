@@ -455,7 +455,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
-    if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
+    if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length) return <TextContent {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
@@ -538,7 +538,7 @@ function MissingPluginContent({ theme, type }: Pick<NodeContentRendererProps, "t
     );
 }
 
-function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, batchExpanded, onContentChange, onStopEditing, onToggleBatch, onSetBatchPrimary }: NodeContentRendererProps) {
+function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, batchExpanded, onContentChange, onStopEditing, onToggleBatch, onSetBatchPrimary, onRetryBatchImage }: NodeContentRendererProps) {
     const { t } = useTranslation();
     const fontSize = node.metadata?.fontSize || 14;
     const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
@@ -555,7 +555,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
             {batchExpanded
                 ? texts
                       .filter((text) => text.id !== primaryTextId)
-                      .map((text, index) => <ExpandedTextCard key={text.id} node={node} text={text} index={index} onSetPrimary={() => onSetBatchPrimary?.(text.id)} />)
+                      .map((text, index) => <ExpandedTextCard key={text.id} node={node} text={text} index={index} onSetPrimary={() => onSetBatchPrimary?.(text.id)} onRetry={() => onRetryBatchImage?.(text.id)} />)
                 : null}
             <div className="flex h-full w-full flex-col overflow-hidden rounded-3xl">
                 {isEditingContent ? (
@@ -580,7 +580,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                         {content}
                     </div>
                 ) : primaryText ? (
-                    <TextSlotStatus text={primaryText} />
+                    <TextSlotStatus text={primaryText} onRetry={() => onRetryBatchImage?.(primaryText.id)} />
                 ) : (
                     <div className="p-4 font-mono" style={{ color: theme.node.placeholder }}>
                         {t("canvas.node.editText")}
@@ -608,7 +608,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
     );
 }
 
-function ExpandedTextCard({ node, text, index, onSetPrimary }: { node: CanvasNodeData; text: CanvasNodeText; index: number; onSetPrimary: () => void }) {
+function ExpandedTextCard({ node, text, index, onSetPrimary, onRetry }: { node: CanvasNodeData; text: CanvasNodeText; index: number; onSetPrimary: () => void; onRetry: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const count = node.metadata?.texts?.length || 0;
@@ -650,13 +650,13 @@ function ExpandedTextCard({ node, text, index, onSetPrimary }: { node: CanvasNod
                     </button>
                 </>
             ) : (
-                <TextSlotStatus text={text} />
+                <TextSlotStatus text={text} onRetry={onRetry} />
             )}
         </div>
     );
 }
 
-function TextSlotStatus({ text }: { text: CanvasNodeText }) {
+function TextSlotStatus({ text, onRetry }: { text: CanvasNodeText; onRetry: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const failed = text.status === "error";
@@ -664,6 +664,7 @@ function TextSlotStatus({ text }: { text: CanvasNodeText }) {
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: theme.node.fill, color: failed ? theme.node.text : theme.node.activeStroke }}>
             {failed ? <span className="text-xs leading-5">{text.errorDetails || t("canvas.node.failed")}</span> : loading ? <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} /> : <span className="text-xs">{t("apiErrors.noContent")}</span>}
+            {failed ? <button type="button" className="rounded px-2 py-1 text-xs hover:bg-black/5 dark:hover:bg-white/10" onClick={(event) => (event.stopPropagation(), onRetry())}>重新生成</button> : null}
             {loading ? <span className="text-[10px] tracking-[0.2em]">{t("canvas.node.generating")}</span> : null}
         </div>
     );

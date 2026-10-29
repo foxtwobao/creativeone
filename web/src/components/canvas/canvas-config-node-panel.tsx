@@ -34,7 +34,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const mode = node.metadata?.generationMode === "audio" ? "audio" : node.metadata?.generationMode === "video" ? "video" : "image";
+    const mode = node.metadata?.generationMode === "text" ? "text" : node.metadata?.generationMode === "audio" ? "audio" : node.metadata?.generationMode === "video" ? "video" : "image";
     const nodes = useCanvasStore((state) => state.nodes);
     const connections = useCanvasStore((state) => state.connections);
     const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "") : undefined;
@@ -66,7 +66,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                                 ),
                             },
                             {
-                                value: "text", disabled: true,
+                                value: "text",
                                 label: (
                                     <span className="inline-flex items-center gap-1">
                                         <MessageSquare className="size-3.5" />

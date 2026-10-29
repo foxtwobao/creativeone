@@ -10,6 +10,7 @@ const messages: Record<string, string> = {
     INVALID_CANVAS_ARCHIVE: "画布文件格式无效、引用缺失或素材已损坏",
     CANVAS_PLUGINS_DISABLED: "画布第三方插件尚未开放",
     REFERENCE_DURATION_UNKNOWN: "无法读取参考媒体的真实时长，请重新上传可解析的视频或音频后生成",
+    INVALID_TEXT_RESPONSE: "模型未返回完整的文本结果，请查看任务后再决定是否重新生成",
     INVALID_IMAGE_RESPONSE: "图片结果尚未完整保存，请查看原任务，勿重复提交",
     PROJECT_NOT_FOUND: "画布不存在、已删除或当前账号无权访问。",
     PROJECT_REVISION_CONFLICT: "画布已在其他页面更新，请先重新加载云端内容，再继续编辑。",

@@ -97,3 +97,12 @@ test("copying an active generation produces independent idle nodes and remapped 
     assert.equal(copy.metadata?.prompt, `@[node:${copy.id}]`);
     assert.equal(source.metadata?.status, "loading");
 });
+
+test("text completion survives stale snapshots and remains editable across primary changes", () => {
+    const slot = (id: string) => ({ id, generationId: `op-${id}`, generationTaskId: `task-${id}`, content: id, status: "success" as const });
+    const saved: CanvasNodeData = { ...output, type: "text", metadata: { texts: [slot("a"), slot("b")], primaryTextId: "a", content: "a", status: "success" } };
+    const stale: CanvasNodeData = { ...saved, metadata: { ...saved.metadata, texts: saved.metadata!.texts!.map((text) => ({ ...text, content: "", status: "loading" })) } };
+    assert.equal(preserveCanvasGeneration(stale, saved).metadata?.content, "a");
+    const edited = { ...saved, metadata: { ...saved.metadata, primaryTextId: "b", texts: saved.metadata!.texts!.map((text) => text.id === "b" ? { ...text, content: "用户编辑", edited: true } : text) } };
+    assert.equal(preserveCanvasGeneration(edited, saved).metadata?.content, "用户编辑");
+});

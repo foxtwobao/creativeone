@@ -1,3 +1,5 @@
+import { decodeChannelModel } from "@/stores/use-config-store";
+import type { CanvasGenerationContext } from "./image";
 import { cloudApi } from "./cloud";
 
 export const canvasTaskStatus = (id: string) => cloudApi<{ contentRevision: number; tasks: Array<{ id: string; status: string; generationId: string }> }>(`/projects/${id}/task-status`);
@@ -34,4 +36,10 @@ export async function recoverCanvasImage(taskId: string) {
     if (task.status !== "unknown" || !task.result_available) return false;
     await cloudApi(`/tasks/${taskId}/resume-result`, { method: "POST" });
     return true;
+}
+
+export async function submitCanvasText(selectedModel: string, canvasContext: CanvasGenerationContext, signal?: AbortSignal) {
+    const model = decodeChannelModel(selectedModel);
+    if (!model) throw new Error("请选择文本模型");
+    return cloudApi<{ canvasTaskId: string }>(`/ai/${model.channelId}/v1/responses`, { method: "POST", signal, body: JSON.stringify({ model: model.model, canvas_context: canvasContext }) });
 }

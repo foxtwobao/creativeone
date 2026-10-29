@@ -9,8 +9,12 @@ import type { ImageModelType } from "./image-models.js";
 import type { CanvasNodeMetadata } from "../web/src/types/canvas.js";
 
 export const canvasImageReferencePrompt = (prompt: string, count: number) => count ? `参考图片编号：${Array.from({ length: count }, (_, index) => `图片${index + 1}`).join("、")}。请按这些编号理解提示词中的图片引用。\n\n${prompt.trim()}` : prompt;
-export function canvasRequestBody(model: string, capability: "image" | "video" | "audio", family: ImageModelType | VideoModelType | AudioModelType, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "", audioContext = "") {
+export function canvasRequestBody(model: string, capability: "image" | "video" | "audio" | "text", family: ImageModelType | VideoModelType | AudioModelType, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "", audioContext = "") {
     const scene = metadata.prompt || "";
+    if (capability === "text") return { model, stream: false, input: [
+        ...(systemPrompt.trim() ? [{ role: "system", content: systemPrompt.trim() }] : []),
+        { role: "user", content: [{ type: "input_text", text: scene }, ...references.images.map((image_url) => ({ type: "input_image", image_url }))] },
+    ], ...(metadata.reasoningEffort && metadata.reasoningEffort !== "auto" ? { reasoning: { effort: metadata.reasoningEffort } } : {}) };
     if (capability === "audio") {
         if (!metadata.audioInput) throw new Error("缺少音频创作参数");
         const input = "text" in metadata.audioInput ? { ...metadata.audioInput, text: scene } : { ...metadata.audioInput, description: scene };

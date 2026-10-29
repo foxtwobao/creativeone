@@ -40,6 +40,9 @@ export type CanvasNodeImage = {
 };
 
 export type CanvasNodeText = {
+    edited?: boolean;
+    generationId?: string;
+    generationTaskId?: string;
     id: string;
     status: CanvasNodeStatus;
     errorDetails?: string;
