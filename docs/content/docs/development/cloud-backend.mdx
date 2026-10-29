@@ -111,12 +111,12 @@ Compose 使用项目独立的 `postgres`、`media` 两个命名卷，数据库�
 
 ## 镜像工作流
 
-`.github/workflows/docker-image.yml` 只发布服务器版 `creativeone`，支持 `linux/amd64` 与 `linux/arm64`。沿用仓库 Secrets `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`，不会读取或上传本地 `.env`。Docker 构建上下文排除依赖目录、构建产物、密钥文件及数据目录。
+`.github/workflows/docker-image.yml` 只发布服务器版 `creativeone` 的 `linux/amd64` 镜像，在 AMD64 Runner 上原生构建，不构建 ARM64 或启用 QEMU。沿用仓库 Secrets `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`，不会读取或上传本地 `.env`。Docker 构建上下文排除依赖目录、构建产物、密钥文件及数据目录。
 
 - `main` 相关变更推送：构建并发布 `latest`、分支和 `sha-` 标签。
 - `v*` 标签推送：发布版本与 `sha-` 标签，不覆盖 `latest`。
 - 手动运行：发布所选分支/标签及 `sha-` 标签，只有选择 `main` 才更新 `latest`。
-- Pull Request：只构建，不登录 Docker Hub、不推送镜像。
+- Pull Request：不自动触发镜像构建；需要验证时手动运行对应分支。
 
 前端和后端同一镜像、同一提交，不再需要 `creativeone-server` 镜像。原文档镜像和 GitHub Pages 改为仅手动触发，不参与服务器版本的自动发布。保留原有上游项目文档作参考；当前服务器部署以本页为准。
 
