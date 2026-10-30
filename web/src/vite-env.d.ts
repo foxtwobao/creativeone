@@ -4,8 +4,6 @@ declare const __APP_VERSION__: string;
 declare const __APP_RELEASES__: import("@/lib/release").ReleaseInfo[];
 
 interface ImportMetaEnv {
-    // Opt in to the server Agent in the lab; release builds stay closed by default.
-    readonly VITE_SERVER_AGENT_ENABLED?: string;
     // Comma-separated local development plugin URLs, refetched on every startup without caching or persistence.
     readonly VITE_DEV_PLUGINS?: string;
     // Optional build-time analytics configuration, with one independent variable per provider.

@@ -183,6 +183,7 @@ function InfiniteCanvasPage() {
     const projectId = params.id || "";
     const localAgentConnected = useAgentStore((state) => state.connected);
     const localAgentActivity = useAgentStore((state) => state.activity);
+    const serverAgentEnabled=useServerAgentStore(state=>state.enabled);
     const localAgentEnabled = useAgentStore((state) => state.enabled);
     const fragmentBootstrap = useAgentStore((state) => state.fragmentBootstrap);
     const agentPanelOpen = useAgentStore((state) => state.panelOpen);
@@ -3441,7 +3442,7 @@ function InfiniteCanvasPage() {
 
                 <AssetPickerModal includeAudio open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
-            {features.serverAgent ? <Suspense fallback={null}><CanvasServerAgentPanel selectedNodeIds={[...selectedNodeIds]} onFlush={async () => {
+            {serverAgentEnabled ? <Suspense fallback={null}><CanvasServerAgentPanel selectedNodeIds={[...selectedNodeIds]} onFlush={async () => {
                 updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
                 await flushCanvasPersistence();
             }} onFocusNode={focusNode} /></Suspense> : null}

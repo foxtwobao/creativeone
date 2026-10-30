@@ -4,7 +4,8 @@ export type AgentRun = {id:string;threadId:string;submissionId:string;goal:strin
 export type AgentThread = {id:string;projectId:string;title:string;activeRunId:string|null;creativeState:any;runs:AgentRun[];items:Array<{threadId:string;turnId:string;itemId:string;role:string;text:string;detail?:any}>};
 export type AgentAttachment={kind:"text";title:string;text:string}|{kind:"image"|"video"|"audio";title:string;url:string};
 export type AgentSubmission = {submissionId:string;goal:string;selectedNodeIds:string[];model:string;baseRevision:number;baseGenerationRevision:number;skillIds?:string[];attachments?:AgentAttachment[];clientId?:string};
-export const getAgentConfig=() => cloudApi<{enabled:boolean;models:string[];imageModels:string[];inputCharacters:number;pollIntervalMs?:number}>("/agent/config");
+export type AgentAvailability={enabled:boolean;models:string[];imageModels:string[];inputCharacters:number;pollIntervalMs?:number};
+export const getAgentConfig=(signal?:AbortSignal) => cloudApi<AgentAvailability>("/agent/config",{signal});
 export const listAgentThreads=(project:string) => cloudApi<{threads:Array<{id:string;title:string;activeRunId:string|null}>}>(`/projects/${project}/agent/threads`);
 export const getAgentThread=(id:string,signal?:AbortSignal) => cloudApi<AgentThread>(`/agent/threads/${id}`,{signal});
 export const createAgentThread=(project:string,title:string) => cloudApi<{id:string}>(`/projects/${project}/agent/threads`,{method:"POST",body:JSON.stringify({title})});

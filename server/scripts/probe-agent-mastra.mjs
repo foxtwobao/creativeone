@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 const database=process.env.TEST_DATABASE_URL;
 if (!database || !new URL(database).pathname.endsWith('_test')) throw new Error('Isolated test database required');
-Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:'http://localhost:3001',APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:'',IDONE_ISSUER:'https://idone.test',IDONE_DISCOVERY_URL:'',IDONE_ALLOW_HTTP:'false',IDONE_CLIENT_ID:'test',IDONE_CLIENT_SECRET:'test',ONE_NAVIGATION_CONFIG:'',ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:'https://enhancer.test',ENHANCER_APP_CREDENTIAL:'test',TOKENONE_BASE_URL:'https://tokenone.test',SERVER_AGENT_CONFIG:''});
+Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:'http://localhost:3001',APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:'',IDONE_ISSUER:'https://idone.test',IDONE_DISCOVERY_URL:'',IDONE_ALLOW_HTTP:'false',IDONE_CLIENT_ID:'test',IDONE_CLIENT_SECRET:'test',ONE_NAVIGATION_CONFIG:'',ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:'https://enhancer.test',ENHANCER_APP_CREDENTIAL:'test',TOKENONE_BASE_URL:'https://tokenone.test'});
 const root=process.env.MASTRA_EVAL_MODULE_ROOT;
 const {Mastra}=await import(pathToFileURL(join(root,'@mastra/core/dist/mastra/index.js')));
 const {createWorkflow,createStep}=await import(pathToFileURL(join(root,'@mastra/core/dist/workflows/index.js')));

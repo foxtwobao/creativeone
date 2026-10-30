@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdmin } from "../auth.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -6,7 +7,7 @@ import { db, transaction } from "../db.js";
 import { HttpError, requireUuid } from "../http.js";
 import { findCanvasProject } from "../business.js";
 import { modelProvider } from "../tokenone.js";
-import { agentConfig, AGENT_PROTOCOL_VERSION, AGENT_STORAGE_VERSION } from "./config.js";
+import { readAgentConfig,readAgentSettings,saveAgentSettings, AGENT_PROTOCOL_VERSION, AGENT_STORAGE_VERSION } from "./config.js";
 import { emptyCheckpoint, contextCheckpoint } from "./memory.js";
 import { coreRules } from "./skills.js";
 import { storedFileInfo } from "../storage.js";
@@ -20,9 +21,9 @@ import { assertCanvasManifest } from "./canvas-edit.js";
 
 const attachmentSchema=z.discriminatedUnion("kind",[z.object({kind:z.literal("text"),title:z.string(),text:z.string()}).strict(),z.object({kind:z.enum(["image","video","audio"]),title:z.string(),url:z.string()}).strict()]);
 export const runInputSchema=z.object({submissionId:z.uuid(),goal:z.string().trim().min(1),selectedNodeIds:z.array(z.string().min(1)),model:z.string().min(1),baseRevision:z.number().int().positive(),baseGenerationRevision:z.number().int().nonnegative(),skillIds:z.array(z.string().min(1)).optional(),attachments:z.array(attachmentSchema).optional(),clientId:z.uuid().optional()}).strict();
-const enabled=() => { if (!agentConfig) throw new HttpError(503,"AGENT_DISABLED"); return agentConfig; };
+const enabled=async() => {const config=await readAgentConfig();if(!config.enabled)throw new HttpError(503,"AGENT_DISABLED");return config;};
 export async function acceptRun(userId:string,threadId:string,value:unknown) {
-    const limits=enabled(),input=runInputSchema.parse(value);
+    const limits=await enabled(),input=runInputSchema.parse(value);
     return transaction(async client => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE",[userId]);
         const thread=(await client.query("SELECT * FROM agent_threads WHERE id=$1 AND user_id=$2 FOR UPDATE",[threadId,userId])).rows[0];
@@ -67,7 +68,7 @@ async function pendingCall(client:Client,run:Run) {
     return call;
 }
 export async function confirmRun(userId:string,id:string,value:unknown) {
-    enabled();
+    await enabled();
     const input=z.object({waitVersion:z.number().int(),approve:z.boolean()}).strict().parse(value);
     return transaction(async client => {
         const run=await lockRun(client,id,userId);
@@ -86,7 +87,7 @@ export async function confirmRun(userId:string,id:string,value:unknown) {
     });
 }
 export async function inputRun(userId:string,id:string,value:unknown) {
-    enabled();
+    await enabled();
     const input=z.object({waitVersion:z.number().int(),action:z.enum(["reply","continue_budget","refresh","retry_authorization","continue_successes","resume_tasks","retry_compaction","correct_tool_arguments","end"]),text:z.string().optional(),answers:z.record(z.string(),z.string().trim().min(1)).optional()}).strict().parse(value);
     return transaction(async client => {
         let run=await lockRun(client,id,userId);
@@ -157,13 +158,15 @@ export async function cancelRun(userId:string,id:string) {
     cancelActiveRun(id);
 }
 export const agentRouter=Router();
-agentRouter.get("/agent/skills",async (_req,res) => {enabled();res.json({skills:await listSkills(db,res.locals.user.id)});});
-agentRouter.get("/agent/skills/:id",async (req,res) => {enabled();res.json({skill:await readSkill(db,res.locals.user.id,req.params.id)});});
-agentRouter.post("/agent/skills",async (req,res) => {enabled();res.status(201).json({skill:await transaction(client => saveSkill(client,res.locals.user.id,req.body))});});
-agentRouter.patch("/agent/skills/:id",async (req,res) => {enabled();res.json({skill:await transaction(client => saveSkill(client,res.locals.user.id,req.body,requireUuid(req.params.id)))});});
-agentRouter.delete("/agent/skills/:id",async (req,res) => {enabled();const input=z.object({version:z.number().int().positive()}).strict().parse(req.body);await transaction(client => deleteSkill(client,res.locals.user.id,requireUuid(req.params.id),input.version));res.json({ok:true});});
+agentRouter.get("/agent/skills",async (_req,res) => {await enabled();res.json({skills:await listSkills(db,res.locals.user.id)});});
+agentRouter.get("/agent/skills/:id",async (req,res) => {await enabled();res.json({skill:await readSkill(db,res.locals.user.id,req.params.id)});});
+agentRouter.post("/agent/skills",async (req,res) => {await enabled();res.status(201).json({skill:await transaction(client => saveSkill(client,res.locals.user.id,req.body))});});
+agentRouter.patch("/agent/skills/:id",async (req,res) => {await enabled();res.json({skill:await transaction(client => saveSkill(client,res.locals.user.id,req.body,requireUuid(req.params.id)))});});
+agentRouter.delete("/agent/skills/:id",async (req,res) => {await enabled();const input=z.object({version:z.number().int().positive()}).strict().parse(req.body);await transaction(client => deleteSkill(client,res.locals.user.id,requireUuid(req.params.id),input.version));res.json({ok:true});});
 
-agentRouter.get("/agent/config",(_req,res) => res.json({enabled:Boolean(agentConfig),protocolVersion:AGENT_PROTOCOL_VERSION,models:agentConfig?.verifiedModels.map(entry => entry.model) || [],imageModels:agentConfig?.verifiedModels.filter(entry=>entry.imageInput).map(entry=>entry.model) || [],inputCharacters:agentConfig?.inputCharacters,pollIntervalMs:agentConfig?.pollIntervalMs}));
+agentRouter.get("/agent/config",async(_req,res) => {const config=await readAgentConfig();res.json({enabled:config.enabled,protocolVersion:AGENT_PROTOCOL_VERSION,models:config.verifiedModels.map(entry=>entry.model),imageModels:config.verifiedModels.filter(entry=>entry.imageInput).map(entry=>entry.model),inputCharacters:config.inputCharacters,pollIntervalMs:config.pollIntervalMs});});
+agentRouter.get("/admin/agent",requireAdmin,async(_req,res)=>res.json({settings:await readAgentSettings()}));
+agentRouter.put("/admin/agent",requireAdmin,async(req,res)=>res.json({settings:await saveAgentSettings(req.body)}));
 agentRouter.get("/agent/ui-actions/:clientId",async(req,res)=>res.json({active:Boolean((await db.query("SELECT 1 FROM agent_runs WHERE user_id=$1 AND input->>'clientId'=$2 AND status IN ('queued','running','waiting_tasks','waiting_confirmation','waiting_input') LIMIT 1",[res.locals.user.id,requireUuid(req.params.clientId)])).rowCount),actions:(await db.query("SELECT id,payload FROM agent_ui_actions WHERE user_id=$1 AND client_id=$2 AND NOT acknowledged ORDER BY created_at,id",[res.locals.user.id,requireUuid(req.params.clientId)])).rows}));
 agentRouter.post("/agent/ui-actions/:id/ack",async(req,res)=>{
     const input=z.object({clientId:z.uuid(),error:z.string().optional()}).strict().parse(req.body);
@@ -176,7 +179,7 @@ agentRouter.get("/projects/:id/agent/threads",async (req,res) => {
     res.json({threads:rows});
 });
 agentRouter.post("/projects/:id/agent/threads",async (req,res) => {
-    enabled();
+    await enabled();
     const projectId=requireUuid(req.params.id),userId=res.locals.user.id,title=z.object({title:z.string().trim().min(1)}).strict().parse(req.body).title,id=randomUUID();
     await transaction(async client => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE",[userId]);

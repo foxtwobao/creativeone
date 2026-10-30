@@ -40,9 +40,8 @@ export async function prepareAgentCompaction(client,directory,limits) {
     } catch (error) {await client.query('ROLLBACK');throw error;}
 }
 if (process.argv[1]===fileURLToPath(import.meta.url)) {
-    const {agentConfig}=await import('../src/agent/config.ts');
-    if (!agentConfig) throw new Error('Configure reviewed Agent limits before preparing checkpoints');
+    const {readAgentConfig}=await import('../src/agent/config.ts');
     const client=new pg.Client({connectionString:process.env.DATABASE_URL});await client.connect();
-    try {console.log(JSON.stringify(await prepareAgentCompaction(client,fileURLToPath(new URL('../data/agent-backups',import.meta.url)),agentConfig)));}
+    try {const agentConfig=await readAgentConfig(client);if(!agentConfig.enabled)throw new Error('Enable Agent settings in the admin page before preparing checkpoints');console.log(JSON.stringify(await prepareAgentCompaction(client,fileURLToPath(new URL('../data/agent-backups',import.meta.url)),agentConfig)));}
     finally {await client.end();}
 }

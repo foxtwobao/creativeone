@@ -218,3 +218,9 @@ CREATE TABLE IF NOT EXISTS agent_ui_actions (
     acknowledged boolean NOT NULL DEFAULT false, error text, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS agent_ui_actions_pending ON agent_ui_actions(user_id,client_id,created_at) WHERE NOT acknowledged;
+
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS model_capabilities jsonb NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS agent_settings (
+    id boolean PRIMARY KEY DEFAULT true CHECK(id), value jsonb NOT NULL,
+    revision bigint NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now()
+);

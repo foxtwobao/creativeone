@@ -3,7 +3,9 @@ import { agentImageInputNotice } from "../../shared/agent.js";
 
 const messages: Record<string, string> = {
     AGENT_OPERATION_CONFLICT: "工具调用标识对应的参数已变化，已拒绝重复执行。",
-    AGENT_DISABLED: "画布助手尚未开放，需先确认运行边界并完成联调。",
+    AGENT_DISABLED: "创作助手已关闭，请联系管理员在后台启用。",
+    AGENT_CONFIG_CHANGED:"配置已被其他管理员更新，请重新加载后再保存。",
+    INVALID_MODEL_CAPABILITIES:"模型能力配置无效，请核对所属模型及文本图片输入设置。",
     AGENT_THREAD_NOT_FOUND: "会话不存在或不属于当前画布。", AGENT_RUN_NOT_FOUND: "运行不存在或无权访问。",
     AGENT_THREAD_BUSY: "当前会话仍有活动运行，请继续、停止或新建会话。", AGENT_SUBMISSION_CONFLICT: "原提交内容已变化，请先确认原运行。",
     AGENT_MODEL_UNAVAILABLE: "此模型尚未验证 Agent 原生工具调用，或已停用，请联系管理员。",

@@ -22,6 +22,7 @@ const links = [
 
 export default function StudioLayout({ children }: { children: ReactNode }) {
     useServerAgentActions();
+    const serverAgentEnabled=useServerAgentStore(state=>state.enabled);
     const agentProject=useServerAgentStore(state=>state.lastProjectId);
     const { homeLink, refresh } = useOneNavigation();
     const { pathname } = useLocation();
@@ -50,7 +51,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
                     </header>
                     <nav className="studio-navigation" aria-label="主导航">
                         <a {...homeLink} className="studio-nav-item aria-disabled:opacity-40"><span>首页</span></a>
-                        {features.serverAgent&&agentProject?<button className="studio-nav-item" onClick={()=>{useServerAgentStore.setState({open:true});navigate(`/canvas/${agentProject}`);}}><Bot size={18}/><span>返回创作助手</span></button>:null}
+                        {serverAgentEnabled&&agentProject?<button className="studio-nav-item" onClick={()=>{useServerAgentStore.setState({open:true});navigate(`/canvas/${agentProject}`);}}><Bot size={18}/><span>返回创作助手</span></button>:null}
                         {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
                         {features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
                     </nav>
