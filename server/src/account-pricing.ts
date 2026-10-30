@@ -32,6 +32,31 @@ const pricingSchema = z.object({
     ])),
 });
 
+export async function readModelPricing(requestId: string, signal: AbortSignal): Promise<ModelPricing> {
+    const [upstream, channels] = await Promise.all([
+        enhancer("/pricing", requestId, undefined, signal),
+        db.query<{ capability: ModelPrice["capability"]; models: string[]; model_descriptions: Record<string, string> }>("SELECT capability,models,model_descriptions FROM channels WHERE enabled ORDER BY capability"),
+    ]);
+    const pricing = pricingSchema.safeParse(upstream);
+    if (!pricing.success) throw new HttpError(503, "MODEL_PRICING_UNAVAILABLE");
+    const byModel = new Map(pricing.data.models.map((item) => [item.model, item]));
+    const result: ModelPricing = { queriedAt: pricing.data.queried_at, currency: pricing.data.currency,
+        models: channels.rows.flatMap((channel) => channel.models.map((model): ModelPrice => {
+            const entry = byModel.get(model);
+            return { model, capability: channel.capability, description: channel.model_descriptions[model] || "",
+                status: entry?.status || "unavailable",
+                note: entry?.reason ? reasons[entry.reason] : !entry ? reasons.missing_pricing : undefined,
+                tiers: entry?.tiers.map((tier) => ({ condition: tier.condition,
+                    metrics: tier.prices.map((price) => ({ metric: price.metric, usageKey: price.usage_key, label: price.label,
+                        minAmount: price.min_amount, maxAmount: new Decimal(price.min_amount).eq(price.max_amount) ? price.min_amount : price.max_amount,
+                        unit: price.unit, unitLabel: price.unit_label })),
+                })) || [],
+            };
+        })),
+    };
+    return result;
+}
+
 export const accountPricingRouter = Router();
 accountPricingRouter.get("/account/balance", async (_req, res) => {
     const controller = new AbortController();
@@ -54,27 +79,7 @@ accountPricingRouter.get("/model-pricing", async (_req, res) => {
     // Retain the existing caller deadline; Reseller owns its upstream request limits.
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(600_000)]);
     try {
-        const [upstream, channels] = await Promise.all([
-            enhancer("/pricing", res.locals.requestId, undefined, signal),
-            db.query<{ capability: ModelPrice["capability"]; models: string[]; model_descriptions: Record<string, string> }>("SELECT capability,models,model_descriptions FROM channels WHERE enabled ORDER BY capability"),
-        ]);
-        const pricing = pricingSchema.safeParse(upstream);
-        if (!pricing.success) throw new HttpError(503, "MODEL_PRICING_UNAVAILABLE");
-        const byModel = new Map(pricing.data.models.map((item) => [item.model, item]));
-        const result: ModelPricing = { queriedAt: pricing.data.queried_at, currency: pricing.data.currency,
-            models: channels.rows.flatMap((channel) => channel.models.map((model): ModelPrice => {
-                const entry = byModel.get(model);
-                return { model, capability: channel.capability, description: channel.model_descriptions[model] || "",
-                    status: entry?.status || "unavailable",
-                    note: entry?.reason ? reasons[entry.reason] : !entry ? reasons.missing_pricing : undefined,
-                    tiers: entry?.tiers.map((tier) => ({ condition: tier.condition,
-                        metrics: tier.prices.map((price) => ({ metric: price.metric, usageKey: price.usage_key, label: price.label,
-                            minAmount: price.min_amount, maxAmount: new Decimal(price.min_amount).eq(price.max_amount) ? price.min_amount : price.max_amount,
-                            unit: price.unit, unitLabel: price.unit_label })),
-                    })) || [],
-                };
-            })),
-        };
+        const result = await readModelPricing(res.locals.requestId, signal);
         res.setHeader("Cache-Control", "no-store");
         res.json(result);
     } catch (error) {

@@ -1,7 +1,9 @@
+import { acknowledgeAgentUiAction } from "@/services/api/server-agent";
+import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { useAudioPlayback } from "@/hooks/use-audio-playback";
 import { features } from "@/constant/features";
 import { resolveVideoMode } from "@/lib/video-settings";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -52,6 +54,7 @@ import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -154,6 +157,8 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
         metadata: { ...item.metadata, ...videoMetadata(video), ...extra },
     };
 }
+
+const CanvasServerAgentPanel = lazy(() => import("@/components/canvas/canvas-server-agent-panel"));
 
 export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
@@ -277,6 +282,23 @@ function InfiniteCanvasPage() {
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
+    const agentCanvasAction=useServerAgentStore(state=>state.canvasAction),applyingAgentAction=useRef("");
+    useEffect(()=>{
+        if(!agentCanvasAction || agentCanvasAction.payload.projectId!==projectId || !currentProject || applyingAgentAction.current===agentCanvasAction.id)return;
+        const action=agentCanvasAction;applyingAgentAction.current=action.id;
+        void (async()=>{
+            try{
+                await flushCanvasPersistence();await useCanvasStore.getState().refreshProject(projectId);
+                const project=useCanvasStore.getState().openProject(projectId);
+                if(!project || location.pathname!==`/canvas/${projectId}`)throw new Error("浏览器已离开目标画布，未执行选区或视口操作");
+                if(action.payload.type==="select_nodes")setSelectedNodeIds(new Set(action.payload.nodeIds.map((id:string)=>{const node=project.nodes.find(node=>node.id===id||(node as any).entityId===id);if(!node)throw new Error("待选择的节点已删除");return node.id;})));
+                else setViewport(action.payload.viewport);
+                await acknowledgeAgentUiAction(action.id,useServerAgentStore.getState().clientId);
+            }catch(error){message.error((error as Error).message);await acknowledgeAgentUiAction(action.id,useServerAgentStore.getState().clientId,(error as Error).message).catch(()=>useServerAgentStore.setState({actionWatchId:null}));}
+            finally{useServerAgentStore.setState({canvasAction:null});}
+        })();
+    },[agentCanvasAction,projectId,currentProject?.id,message]);
+
     const focusAnimRef = useRef<number | null>(null);
     const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
@@ -3125,7 +3147,7 @@ function InfiniteCanvasPage() {
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
-        <main onPlayCapture={onAudioPlay} className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
+        <main onPlayCapture={onAudioPlay} className="relative flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
@@ -3419,6 +3441,10 @@ function InfiniteCanvasPage() {
 
                 <AssetPickerModal includeAudio open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
+            {features.serverAgent ? <Suspense fallback={null}><CanvasServerAgentPanel selectedNodeIds={[...selectedNodeIds]} onFlush={async () => {
+                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
+                await flushCanvasPersistence();
+            }} onFocusNode={focusNode} /></Suspense> : null}
         </main>
     );
 }

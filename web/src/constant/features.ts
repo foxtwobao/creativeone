@@ -4,6 +4,7 @@ export const features = {
     video: true,
     canvas: true,
     canvasAgent: false,
+    serverAgent: import.meta.env.VITE_SERVER_AGENT_ENABLED === "true",
     canvasPlugins: false,
     originalUi: false,
     imageAdvancedSettings: false,

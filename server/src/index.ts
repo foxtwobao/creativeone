@@ -19,6 +19,8 @@ import { startVideoWorker } from "./video-tasks.js";
 import { adminTasksRouter } from "./admin-tasks.js";
 import { accountPricingRouter } from "./account-pricing.js";
 import { announcementsRouter } from "./announcements.js";
+import { agentRouter } from "./agent/routes.js";
+import { startAgentWorker } from "./agent/worker.js";
 
 await initializeDatabase();
 // Task recovery is performed by the worker only after acquiring its session lock.
@@ -32,7 +34,7 @@ app.use("/api/auth/reseller/callback", resellerCallbackRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", requireUser, csrf);
 app.use("/api", (req, res, next) => req.method === "PUT" && req.path.startsWith("/files/") ? next() : express.json({ limit: env.MAX_JSON_BYTES })(req, res, next));
-app.use("/api", resellerRouter, channelRouter, accountPricingRouter, announcementsRouter, adminTasksRouter, promptsRouter, historyRouter, businessRouter, storageRouter, aiRouter);
+app.use("/api", resellerRouter, channelRouter, accountPricingRouter, announcementsRouter, adminTasksRouter, promptsRouter, historyRouter, businessRouter, storageRouter, aiRouter, agentRouter);
 app.use("/api", (_req, _res) => { throw new HttpError(404, "NOT_FOUND"); });
 const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     const status = error instanceof HttpError ? error.status : error instanceof ZodError || error.type === "entity.parse.failed" ? 400 : error.type === "entity.too.large" || error.code === "LIMIT_FILE_SIZE" ? 413 : 500;
@@ -48,4 +50,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     startGenerationWorker();
     startVideoWorker();
     startPromptWorker();
+    startAgentWorker();
 }

@@ -1,3 +1,5 @@
+import WorkbenchAgentNotice from "@/components/workbench-agent-notice";
+import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { fetchGenerationHistory, removeGenerationHistory } from "@/services/api/history";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { cloudSession } from "@/services/api/cloud";
@@ -103,6 +105,7 @@ export default function ImagePage() {
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [running, setRunning] = useState(false);
+    const agentTaskIds=useServerAgentStore(state=>state.workbenchTasks?.image);
     const [logPage, setLogPage] = useState(1);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -181,6 +184,7 @@ export default function ImagePage() {
     };
 
     const generate = async () => {
+        if(agentTaskIds?.length){message.info("助手已受理本次创作，请查看原任务或先新建创作。");return;}
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
         const text = prompt.trim();
@@ -235,6 +239,7 @@ export default function ImagePage() {
         processedCommandRef.current = imageCommand.nonce;
         clearImageCommand();
         if (typeof imageCommand.prompt === "string") setPrompt(imageCommand.prompt);
+        if (imageCommand.references) setReferences(imageCommand.references);
         if (imageCommand.run && running) {
             if (imageCommand.taskId) updateAgentTask(imageCommand.taskId, { status: "failed", error: t("imageWorkbench.busy") });
             return;
@@ -290,6 +295,7 @@ export default function ImagePage() {
     };
 
     const createSession = () => {
+        useServerAgentStore.setState(state=>({workbenchTasks:{...state.workbenchTasks,image:[]}}));
         setPrompt("");
         setReferences([]);
         setResults([]);
@@ -372,6 +378,7 @@ export default function ImagePage() {
 
     return (
         <div className={studio ? "studio-workbench" : "flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100"}>
+            <WorkbenchAgentNotice kind="image"/>
             {studio ? <main className={`studio-stage ${results.length ? "has-results" : ""}`}>
                 <div className="studio-page-tools"><span>创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
                 <section className="studio-compose-area">
@@ -387,7 +394,7 @@ export default function ImagePage() {
                         <div className="studio-input-row">
                             <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
                             <Input.TextArea aria-label="创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述你的灵感，让想象发生…" onChange={(event) => setPrompt(event.target.value)} />
-                            <button className="studio-send" aria-label="开始生成" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
+                            <button className="studio-send" aria-label="开始生成" disabled={!canGenerate || running || Boolean(agentTaskIds?.length)} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
                         </div>
                         <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-2">
                             <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" className="max-w-[min(70vw,320px)]" onMissingConfig={() => openConfigDialog(false)} />
@@ -520,7 +527,7 @@ export default function ImagePage() {
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running || Boolean(agentTaskIds?.length)} onClick={() => void generate()}>
                                 {t("workbench.generate")}
                             </Button>
                         </div>
