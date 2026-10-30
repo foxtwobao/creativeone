@@ -1,4 +1,5 @@
 import pg from "pg";
+import { agentSettingsDefaults } from "../../../shared/agent-settings.js";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import { APICallError } from "ai";
@@ -9,7 +10,7 @@ import { findCanvasProject } from "../business.js";
 import { modelErrorMessage } from "../model-errors.js";
 import { HttpError } from "../http.js";
 import { readModelPricing } from "../account-pricing.js";
-import { agentConfig, AGENT_STORAGE_VERSION } from "./config.js";
+import { readAgentConfig,readAgentSettings, AGENT_STORAGE_VERSION } from "./config.js";
 import { agentEvents } from "./events.js";
 import { agentDecision, expandAgentImages } from "./model.js";
 import { applyCompaction, contextCheckpoint, modelContext, planCompaction, estimatedInputTokens, isContextRejection } from "./memory.js";
@@ -45,7 +46,8 @@ export async function resolveTaskWait(client:Client,run:Run,tasks:unknown[]) {
 }
 
 export async function executeAgentRun(id:string) {
-    if (!agentConfig || active.has(id) || active.size >= agentConfig.globalConcurrency) return;
+    const agentConfig=await readAgentConfig();
+    if (!agentConfig.enabled || active.has(id) || active.size >= agentConfig.globalConcurrency) return;
     const controller=new AbortController(),owner=new pg.Client({connectionString:env.DATABASE_URL,application_name:"creativeone-agent"});
     active.set(id,controller);
     let disconnected=false;
@@ -58,12 +60,11 @@ export async function executeAgentRun(id:string) {
         if (!await lock(`agent-run:${id}`)) return;
         const initial=(await owner.query("SELECT user_id FROM agent_runs WHERE id=$1 AND status IN ('queued','running')",[id])).rows[0];
         if (!initial) return;
-        let account=false,capacity=false;
-        for (let slot=0;slot<agentConfig.accountConcurrency;slot++) if (await lock(`agent-account:${initial.user_id}:${slot}`)) {account=true;break;}
-        if (!account) return;
-        for (let slot=0;slot<agentConfig.globalConcurrency;slot++) if (await lock(`agent-global:${slot}`)) {capacity=true;break;}
-        if (!capacity) return;
         const claimed=await transaction(async client => {
+            await client.query("SELECT pg_advisory_xact_lock(hashtextextended('agent-dispatch',0))");
+            const config=await readAgentConfig(client);
+            const busy=(await client.query(`SELECT count(*) AS total,count(*) FILTER(WHERE r.user_id=$1) AS account FROM agent_runs r WHERE r.status='running' AND r.id<>$2 AND EXISTS(SELECT 1 FROM pg_locks l WHERE l.locktype='advisory' AND l.granted AND l.objsubid=1 AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.classid::bigint=((hashtextextended('agent-run:'||r.id::text,0)>>32)&4294967295) AND l.objid::bigint=(hashtextextended('agent-run:'||r.id::text,0)&4294967295))`,[initial.user_id,id])).rows[0];
+            if(!config.enabled || Number(busy.total)>=config.globalConcurrency || Number(busy.account)>=config.accountConcurrency)return false;
             const run=await lockRun(client,id,initial.user_id);
             const thread=(await client.query("SELECT active_run_id FROM agent_threads WHERE id=$1",[run.thread_id])).rows[0];
             if (thread.active_run_id !== id || !["queued","running"].includes(run.status)) return false;
@@ -79,6 +80,8 @@ export async function executeAgentRun(id:string) {
         },owner);
         if (!claimed) return;
         while (!controller.signal.aborted) {
+            const currentConfig=await readAgentConfig(owner);
+            if(!currentConfig.enabled)return;
             const state=await transaction(async client => {
                 const run=await lockRun(client,id,initial.user_id,token);
                 const step=(await client.query("SELECT * FROM agent_steps WHERE run_id=$1 ORDER BY step DESC LIMIT 1",[id])).rows[0];
@@ -168,13 +171,16 @@ export async function executeAgentRun(id:string) {
                 continue;
             }
             // Authorization is checked for every request, before recording dispatch intent.
-            if (run.model_config.provider !== modelProvider || !agentConfig.verifiedModels.some(entry => entry.model === run.model_config.model)) throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
+            if (run.model_config.provider !== modelProvider || !currentConfig.verifiedModels.some(entry => entry.model === run.model_config.model)) throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
             const channel=(await owner.query("SELECT id FROM channels WHERE id=$1 AND enabled AND capability='text' AND models ? $2",[run.model_config.channelId,run.model_config.model])).rows[0];
             if (!channel) throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
             const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(run.model_config.limits.requestTimeoutMs)]);
             const user=(await owner.query("SELECT * FROM users WHERE id=$1",[run.user_id])).rows[0];
             const key=await ensureKey(user,id,{signal});
             const messages=state.request!.kind === "compaction" ? state.request!.messages : await expandAgentImages(run.user_id,state.request!.messages,run.model_config.imageInput);
+            const dispatchConfig=await readAgentConfig(owner);
+            if(!dispatchConfig.enabled)return;
+            if(!dispatchConfig.verifiedModels.some(entry=>entry.model===run.model_config.model))throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
             const step=await transaction(async client => {
                 run=await lockRun(client,id,initial.user_id,token);
                 await assertSources(run,await findCanvasProject(run.user_id,run.project_id,client));
@@ -257,7 +263,8 @@ export async function executeAgentRun(id:string) {
     }
 }
 export async function scanAgentRuns() {
-    if (!agentConfig) return;
+    const agentConfig=await readAgentConfig();
+    if (!agentConfig.enabled) return;
     for (const [id,controller] of active) {
         const row=(await db.query("SELECT status FROM agent_runs WHERE id=$1",[id])).rows[0];
         if (!row || row.status !== "running") controller.abort();
@@ -270,18 +277,15 @@ export async function scanAgentRuns() {
     const rows=(await db.query("SELECT id FROM agent_runs WHERE status IN ('queued','running') AND storage_version=$1 ORDER BY created_at",[AGENT_STORAGE_VERSION])).rows;
     for (const {id} of rows) {
         if (active.size >= agentConfig.globalConcurrency) break;
-        if (!active.has(id)) void executeAgentRun(id);
+        if (!active.has(id)) void executeAgentRun(id).catch(()=>console.error(JSON.stringify({code:"AGENT_EXECUTION_FAILED",runId:id})));
     }
 }
 export function startAgentWorker() {
-    if (!agentConfig) return;
-    let scanning=false;
-    const tick=async () => {
-        if (scanning) return;
-        scanning=true;
-        try {await scanAgentRuns();} catch {console.error(JSON.stringify({code:"AGENT_SCAN_FAILED"}));}
-        finally {scanning=false;}
+    let timer:ReturnType<typeof setTimeout>,stopped=false;
+    const tick=async()=>{
+        let delay=agentSettingsDefaults.scanIntervalMs;
+        try{await scanAgentRuns();delay=(await readAgentSettings()).scanIntervalMs;}catch{console.error(JSON.stringify({code:"AGENT_SCAN_FAILED"}));}
+        if(!stopped)timer=setTimeout(()=>void tick(),delay);
     };
-    void tick();
-    return setInterval(() => void tick(),agentConfig.scanIntervalMs);
+    void tick();return()=>{stopped=true;clearTimeout(timer);};
 }

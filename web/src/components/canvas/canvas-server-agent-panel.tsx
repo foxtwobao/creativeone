@@ -14,7 +14,7 @@ import CanvasServerAgentSkills from "./canvas-server-agent-skills";
 import CanvasServerAgentTimeline from "./canvas-server-agent-timeline";
 import { actions, nodeLabels } from "./canvas-server-agent-format";
 import { CloudError } from "@/services/api/cloud";
-import { answerAgentRun, cancelAgentRun, confirmAgentRun, createAgentThread, getAgentConfig, getAgentThread, listenAgentThread, listAgentThreads, submitAgentRun, type AgentThread } from "@/services/api/server-agent";
+import { answerAgentRun, cancelAgentRun, confirmAgentRun, createAgentThread, getAgentThread, listenAgentThread, listAgentThreads, submitAgentRun, type AgentThread } from "@/services/api/server-agent";
 
 const statuses:Record<string,string>={queued:"已受理 · 排队中",running:"正在处理",waiting_input:"等待补充",waiting_confirmation:"等待确认",waiting_tasks:"后台生成中",completed:"已完成",failed:"执行失败",cancelled:"已停止",unknown:"模型结果待确认"};
 const taskLabels:Record<string,string>={pending:"后台处理中",running:"正在生成",succeeded:"成功",failed:"失败",unknown:"结果待确认",cancelled:"已取消",expired:"已过期"};
@@ -29,7 +29,7 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
     const resizeStart=useRef<{x:number;width:number}|null>(null);
     const threadId=useServerAgentStore(state => state.threadIds[projectId]);
     const pending=useServerAgentStore(state => state.pending[projectId]);
-    const [config,setConfig]=useState<Awaited<ReturnType<typeof getAgentConfig>>>();
+    const config=useServerAgentStore(state=>state.config);
     const [threads,setThreads]=useState<Array<{id:string;title:string}>>([]);
     const [thread,setThread]=useState<AgentThread>();
     const [draft,setDraft]=useState(""),[model,setModel]=useState(""),[selectedSkills,setSelectedSkills]=useState<string[]>([]),[presetsOpen,setPresetsOpen]=useState(false);
@@ -90,9 +90,9 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
     useEffect(() => {
         if (!open) return;
         let live=true;
-        Promise.all([getAgentConfig(),listAgentThreads(projectId)]).then(([next,list]) => {
+        Promise.all([useServerAgentStore.getState().loadConfig(),listAgentThreads(projectId)]).then(([next,list]) => {
             if (!live) return;
-            setConfig(next);setThreads(list.threads);useServerAgentStore.setState({lastProjectId:projectId,pollIntervalMs:next.enabled?next.pollIntervalMs:undefined});
+            setThreads(list.threads);useServerAgentStore.setState({lastProjectId:projectId,pollIntervalMs:next.enabled?next.pollIntervalMs:undefined});
             setModel(current => next.models.includes(current) ? current : next.models[0] || "");
             if (!useServerAgentStore.getState().threadIds[projectId] && list.threads[0]) useServerAgentStore.getState().select(projectId,list.threads[0].id);
         }).catch(error => {if (live) setError(error.message);});
@@ -112,7 +112,7 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
         const tick=async () => {
             if (document.hidden || inFlight || mutating.current) return;
             inFlight=true;
-            try {await refresh(controller.signal);} catch (error) {if (!controller.signal.aborted) setError((error as Error).message);} finally {inFlight=false;}
+            try {await Promise.all([refresh(controller.signal),useServerAgentStore.getState().loadConfig(controller.signal)]);} catch (error) {if (!controller.signal.aborted) setError((error as Error).message);} finally {inFlight=false;}
         };
         const timer=setInterval(() => void tick(),config.pollIntervalMs);
         const visible=() => {if (!document.hidden) void tick();};

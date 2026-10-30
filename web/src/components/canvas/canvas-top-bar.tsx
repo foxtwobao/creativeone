@@ -57,6 +57,7 @@ export function CanvasTopBar({
     onToggleAgent: () => void;
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
+    const serverAgentEnabled=useServerAgentStore(state=>state.enabled);
     const serverAgentOpen = useServerAgentStore((state) => state.open);
     const toggleServerAgent = useServerAgentStore((state) => state.toggle);
     const { t } = useTranslation();
@@ -79,7 +80,7 @@ export function CanvasTopBar({
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
                 <div className="pointer-events-auto flex min-w-0 items-center gap-2">
-                    {features.serverAgent ? <button type="button" aria-label={serverAgentOpen ? "收起创作助手" : "打开创作助手"} aria-pressed={serverAgentOpen} onClick={toggleServerAgent} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>创作助手</button> : null}
+                    {serverAgentEnabled ? <button type="button" aria-label={serverAgentOpen ? "收起创作助手" : "打开创作助手"} aria-pressed={serverAgentOpen} onClick={toggleServerAgent} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>创作助手</button> : null}
                     <Tooltip title={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}>
                         <button
                             type="button"

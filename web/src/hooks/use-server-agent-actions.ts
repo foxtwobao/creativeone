@@ -4,12 +4,21 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { flushCanvasPersistence } from "@/stores/canvas/use-canvas-store";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { acknowledgeAgentUiAction, getAgentUiActions, type AgentUiAction } from "@/services/api/server-agent";
-import { cloudApi } from "@/services/api/cloud";
+import { cloudApi,cloudSession } from "@/services/api/cloud";
+import { useCloudStore } from "@/stores/use-cloud-store";
 
 export function useServerAgentActions() {
     const navigate=useNavigate(),{pathname}=useLocation(),{message}=App.useApp();
     const browser=useRef({navigate,pathname,message});browser.current={navigate,pathname,message};
     const interval=useServerAgentStore(state=>state.pollIntervalMs),watchId=useServerAgentStore(state=>state.actionWatchId);
+    const sessionError=useCloudStore(state=>state.errors.session);
+    useEffect(()=>{
+        const controller=new AbortController();
+        if(!cloudSession||sessionError){useServerAgentStore.setState({enabled:false,config:undefined,pollIntervalMs:undefined});return;}
+        const refresh=()=>{if(!document.hidden)void useServerAgentStore.getState().loadConfig(controller.signal).catch(()=>{if(!controller.signal.aborted)useServerAgentStore.setState({enabled:false});});};
+        refresh();document.addEventListener("visibilitychange",refresh);
+        return()=>{controller.abort();document.removeEventListener("visibilitychange",refresh);};
+    },[pathname,sessionError]);
     useEffect(()=>{
         if(!interval || !watchId)return;
         const controller=new AbortController();let running=false;

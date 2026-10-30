@@ -1,3 +1,4 @@
+import { readAgentConfig } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { findCanvasProject } from "../business.js";
@@ -38,7 +39,7 @@ export async function queueUiAction(client:Client,run:Run,payload:unknown) {
 }
 export async function workbenchManifest(client:Client,run:Run,name:string,input:any) {
     const kind=name === "workbench_image_generate" ? "image" : "video";
-    if (!run.model_config.limits.verifiedMediaModels.includes(input.model)) throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
+    if (!run.model_config.limits.verifiedMediaModels.includes(input.model) || !(await readAgentConfig(client)).verifiedMediaModels.includes(input.model)) throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
     if (input.count>run.model_config.limits.mediaBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
     const channel=(await client.query("SELECT * FROM channels WHERE enabled AND capability=$1 AND models ? $2 ORDER BY id",[kind,input.model])).rows[0];
     if(!channel)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");

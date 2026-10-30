@@ -15,7 +15,7 @@ import { videoTaskPath } from "../../../shared/video-tasks.js";
 import { videoModelProfile } from "../../../shared/video-models.js";
 import { imageModelProfile } from "../../../shared/image-models.js";
 import { audioVoices, audioRequestBody } from "../../../shared/audio.js";
-import { agentConfig } from "./config.js";
+import { readAgentConfig,type AgentConfig } from "./config.js";
 import { agentImageInputNotice } from "../../../shared/agent.js";
 import { loadSkill, readSkillFile } from "./skill-store.js";
 import { canvasToolSchemas, canvasToolDescriptions, executeCanvasTool } from "./canvas-edit.js";
@@ -103,7 +103,7 @@ async function modelChannel(client:Client,kind:string,model:string):Promise<Chan
     if (!channel || kind === "image" && !channel.image_types?.[model] || kind === "audio" && !channel.audio_types?.[model]) throw new HttpError(400,"MODEL_NOT_ALLOWED");
     return channel;
 }
-const textGenerationModel=(run:Run,model:string)=>{
+const textGenerationModel=(run:Run,model:string,agentConfig:AgentConfig)=>{
     const saved=run.model_config.limits.verifiedModels.find((entry:{model:string;imageInput:boolean})=>entry.model===model),current=agentConfig?.verifiedModels.find(entry=>entry.model===model);
     return saved&&current ? {imageInput:saved.imageInput&&current.imageInput} : undefined;
 };
@@ -119,6 +119,7 @@ async function referenceFiles(client:Client,userId:string,nodes:any[]) {
     return refs;
 }
 export async function mediaManifest(client:Client,run:Run,nodeIds:string[]) {
+    const currentConfig=await readAgentConfig(client);if(!currentConfig.enabled)throw new HttpError(503,"AGENT_DISABLED");
     const project = await findCanvasProject(run.user_id,run.project_id,client,true);
     await assertSources(run,project);
     if (new Set(nodeIds).size !== nodeIds.length || nodeIds.length > run.model_config.limits.mediaBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
@@ -132,7 +133,7 @@ export async function mediaManifest(client:Client,run:Run,nodeIds:string[]) {
         const upstream = project.connections.filter((edge:any) => edge.toNodeId === node.id).map((edge:any) => getNode(project,edge.fromNodeId));
         let taskId:string|undefined;
         if(node.type === "text"){
-            const modelConfig=textGenerationModel(run,model);
+            const modelConfig=textGenerationModel(run,model,currentConfig);
             if(!modelConfig)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
             if(node.metadata.generationMode!=="text" || node.metadata.texts?.length || !node.metadata.generationTaskId && (node.metadata.content || node.metadata.generationId))throw new ToolParameterError("已有正文或生成结果不能覆盖；请按用户明确的新版本要求准备独立文本输出。","AGENT_NODE_NOT_EDITABLE");
             for(const url of node.metadata.references || [])if(!modelConfig.imageInput || !(await storedFileInfo(run.user_id,url,client)).mimeType.startsWith("image/"))throw new ToolParameterError("目标文本模型未启用图片理解，或引用不是图片；本次未提交生成。");
@@ -165,6 +166,7 @@ export async function associatedTasks(client:Client,run:Run) {
 }
 
 export async function executeTool(client:Client,run:Run,call:any,external:{ groupId?:string; pricing?:unknown }={}):Promise<any> {
+    const currentConfig=await readAgentConfig(client);if(!currentConfig.enabled)throw new HttpError(503,"AGENT_DISABLED");
     const name=call.toolName as keyof typeof toolSchemas;
     if (!Object.hasOwn(toolSchemas,name)) throw new HttpError(400,"AGENT_INVALID_TOOL");
     const input:any=toolSchemas[name].parse(call.input);
@@ -224,7 +226,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
         const channels=(await client.query("SELECT * FROM channels WHERE enabled")).rows;
         return { models:channels.flatMap(channel => channel.models.map((model:string) => {
             let capabilities:unknown,parameters:unknown;
-            if (channel.capability === "text") {const target=textGenerationModel(run,model);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
+            if (channel.capability === "text") {const target=textGenerationModel(run,model,currentConfig);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
             if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=imageModelProfile(model,channel.image_types[model]);capabilities=profile;}
             if (channel.capability === "video") { const {family,...profile}=videoModelProfile(model,channel.video_types[model] || "seedance"); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,seconds:{...profile.duration,integer:true,valueType:"string"},videoMode:["frames","reference"]}; }
             if (channel.capability === "audio" && channel.audio_types[model]) capabilities={modes:channel.audio_types[model] === "gemini-tts" ? ["single","duo"] : ["song","instrumental"],voices:channel.audio_types[model] === "gemini-tts" ? audioVoices : []};
@@ -280,7 +282,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             const referenceNodes=spec.referenceNodeIds.map((id:string) => getNode(project,id));
             const refs=await referenceFiles(client,run.user_id,referenceNodes);
             if(spec.kind === "text"){
-                const target=textGenerationModel(run,spec.model);
+                const target=textGenerationModel(run,spec.model,currentConfig);
                 if(!target)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
                 if(refs.videos.length || refs.audios.length || refs.images.length && !target.imageInput)throw new ToolParameterError("独立文本任务只接收图片参考，且目标文本模型须启用图片理解；本次未创建节点。");
             }
@@ -332,6 +334,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
     }
     if (name === "submit_generation") {
         const manifest=await mediaManifest(client,run,input.nodeIds);
+        const agentConfig=currentConfig;
         if (manifest.nodes.some(node => node.kind!=="text" && (!run.model_config.limits.verifiedMediaModels.includes(node.parameters.model) || !agentConfig?.verifiedMediaModels.includes(node.parameters.model || "")))) throw new HttpError(400,"AGENT_MEDIA_UNVERIFIED");
         const reusedTaskIds=manifest.nodes.flatMap(node=>node.taskId?[node.taskId]:[]),reuseOnly=reusedTaskIds.length===manifest.nodes.length;
         if (!reuseOnly && (run.wait?.type !== "media" || run.wait.callId !== call.toolCallId || !run.wait.approved)) {

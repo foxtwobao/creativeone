@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Form, Input, Modal, Select, Switch, Table, Tag } from "antd";
+import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
+import type { ModelCapabilities } from "../../../../../shared/agent-settings";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { imageModelTypes, imageModelTypeLabels, type ImageModelType } from "../../../../../shared/image-models";
 import { videoModelTypes, videoModelTypeLabels, type VideoModelType } from "../../../../../shared/video-models";
 
 import { audioModelTypes, audioModelTypeLabels, type AudioModelType } from "../../../../../shared/audio";
 
-type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; default_model: string; enabled: boolean };
+type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; model_capabilities:Record<string,ModelCapabilities>;default_model: string; enabled: boolean };
 type Group = { id: string; name: string; status: string; is_default: boolean };
 const capabilities = [{ value: "image", label: "图片生成 / 编辑" }, { value: "text", label: "聊天 / 文本生成" }, { value: "video", label: "视频生成" }, { value: "audio", label: "音频生成" }];
 
@@ -46,7 +48,7 @@ export default function ChannelsPage() {
     const edit = (channel: Channel) => {
         setEditing(channel.capability);
         form.resetFields();
-        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, audio_types: channel.audio_types, video_types: Object.fromEntries(channel.models.map((model) => [model, channel.video_types?.[model] || "seedance"])), model_descriptions: channel.model_descriptions, default_model: channel.default_model, enabled: channel.enabled });
+        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, audio_types: channel.audio_types, video_types: Object.fromEntries(channel.models.map((model) => [model, channel.video_types?.[model] || "seedance"])), model_descriptions: channel.model_descriptions, model_capabilities:channel.model_capabilities,default_model: channel.default_model, enabled: channel.enabled });
         if (!modelsLoading) void loadModels();
     };
     const save = async () => {
@@ -58,13 +60,14 @@ export default function ChannelsPage() {
             const image_types = editing === "image" ? Object.fromEntries(models.map((model) => [model, values.image_types[model]])) : {};
             const video_types = editing === "video" ? Object.fromEntries(models.map((model) => [model, values.video_types[model]])) : {};
             const audio_types = editing === "audio" ? Object.fromEntries(models.map((model) => [model, values.audio_types[model]])) : {};
+            const model_capabilities=Object.fromEntries(models.map(model=>[model,{agentEnabled:Boolean(values.model_capabilities?.[model]?.agentEnabled),imageInput:editing==="text"&&Boolean(values.model_capabilities?.[model]?.imageInput)}]));
             const model_descriptions = Object.fromEntries(models.filter((model) => values.model_descriptions?.[model]?.trim()).map((model) => [model, values.model_descriptions[model].trim()]));
-            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, video_types, audio_types, model_descriptions }) });
-            setEditing(null); await load(); message.success("配置已保存，重新加载页面后生效");
+            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, video_types, audio_types, model_descriptions,model_capabilities }) });
+            setEditing(null); await load(); void useServerAgentStore.getState().loadConfig().catch(()=>message.warning("配置已保存，请刷新页面更新助手入口。"));message.success("配置已保存，重新加载页面后生效");
         } catch (error) { message.error(error instanceof Error ? error.message : "保存失败"); }
         finally { setSaving(false); }
     };
-    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, video_types: {}, audio_types: {}, model_descriptions: {}, default_model: "", enabled: false });
+    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, video_types: {}, audio_types: {}, model_descriptions: {}, model_capabilities:{},default_model: "", enabled: false });
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-5">
         <h1 className="text-xl font-semibold">功能模型配置</h1>
         <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Reseller 管理的应用默认分组。</p>
@@ -96,6 +99,8 @@ export default function ChannelsPage() {
                         {editing === "image" || editing === "video" || editing === "audio" ? <Form.Item name={[editing === "image" ? "image_types" : editing === "audio" ? "audio_types" : "video_types", model]} label="调用类型" rules={[{ required: true, message: "请选择调用类型" }]}>
                         <Select aria-label={`${model} 的调用类型`} options={editing === "image" ? imageModelTypes.map((value) => ({ value, label: imageModelTypeLabels[value] })) : editing === "audio" ? audioModelTypes.map((value) => ({ value, label: audioModelTypeLabels[value] })) : videoModelTypes.map((value) => ({ value, label: videoModelTypeLabels[value] }))} />
                         </Form.Item> : null}
+                        <Form.Item name={["model_capabilities",model,"agentEnabled"]} label="允许创作助手调用" valuePropName="checked" extra={editing==="text"?"仅在已验证支持 Responses 原生工具调用后开启，同时用于独立文本任务。":"仅在已验收该模型生成链路后开启；每批仍须用户确认。"}><Switch aria-label={`${model} 允许创作助手调用`}/></Form.Item>
+                        {editing==="text"?<Form.Item name={["model_capabilities",model,"imageInput"]} label="支持图片理解" valuePropName="checked" extra="仅在已验证图片输入后开启，与图片生成模型无关。"><Switch aria-label={`${model} 支持图片理解`}/></Form.Item>:null}
                         <Form.Item name={["model_descriptions", model]} label="描述（可选）"><Input.TextArea aria-label={`${model} 的描述`} autoSize placeholder="填写希望在模型列表中展示的说明" /></Form.Item>
                     </div>)}
                 </div> : null}

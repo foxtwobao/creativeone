@@ -11,7 +11,7 @@ const database=process.env.TEST_DATABASE_URL;
 const testMedia=await mkdtemp(join(tmpdir(),"creativeone-agent-media-"));
 process.env.MEDIA_DIR=testMedia;
 if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error("Provide an isolated *_test database");
-Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:"http://localhost:3001",APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:"",IDONE_ISSUER:"https://idone.test",IDONE_DISCOVERY_URL:"",IDONE_ALLOW_HTTP:"false",ONE_NAVIGATION_CONFIG:"",IDONE_CLIENT_ID:"test",IDONE_CLIENT_SECRET:"test",ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:"https://enhancer.test",ENHANCER_APP_CREDENTIAL:"test",TOKENONE_BASE_URL:"https://tokenone.test",SERVER_AGENT_CONFIG:JSON.stringify({verifiedModels:[{model:"agent-model",protocol:"responses",imageInput:false},{model:"writer-model",protocol:"responses",imageInput:false},{model:"vision-writer-model",protocol:"responses",imageInput:true}],verifiedMediaModels:["image-model","video-model","audio-model","lyria-model","suno-model","wan3.0-video-prime"]})});
+Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:"http://localhost:3001",APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:"",IDONE_ISSUER:"https://idone.test",IDONE_DISCOVERY_URL:"",IDONE_ALLOW_HTTP:"false",ONE_NAVIGATION_CONFIG:"",IDONE_CLIENT_ID:"test",IDONE_CLIENT_SECRET:"test",ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:"https://enhancer.test",ENHANCER_APP_CREDENTIAL:"test",TOKENONE_BASE_URL:"https://tokenone.test"});
 const {db,initializeDatabase,transaction}=await import("./db.js");
 const {applyCanvasCommand,findCanvasProject}=await import("./business.js");
 const {acceptRun,inputRun,confirmRun,cancelRun}=await import("./agent/routes.js");
@@ -19,7 +19,9 @@ const {executeAgentRun,scanAgentRuns,settleTaskWait}=await import("./agent/worke
 const {lockRun,readThread,saveReceipt}=await import("./agent/state.js");
 const {executeTool,toolArgumentErrors}=await import("./agent/tools.js");
 const {agentDecision}=await import("./agent/model.js");
-const {agentConfig}=await import("./agent/config.js");
+const {readAgentConfig,readAgentSettings,saveAgentSettings}=await import("./agent/config.js");
+const {agentSettingsDefaults}=await import("../../shared/agent-settings.js");
+let agentConfig:Awaited<ReturnType<typeof readAgentConfig>>;
 const {planCompaction,modelContext,emptyCheckpoint,estimatedTokens}=await import("./agent/memory.js");
 let imageChannel:string;
 const responses:any[]=[];
@@ -56,6 +58,8 @@ before(async () => {
         if (kind === "image") imageChannel=id;
     }
     await db.query("INSERT INTO channels(id,name,capability,models,audio_types) VALUES($1,'audio','audio',$2,$3)",[randomUUID(),JSON.stringify(["audio-model","lyria-model","suno-model"]),JSON.stringify({"audio-model":"gemini-tts","lyria-model":"lyria","suno-model":"suno"})]);
+    await db.query("UPDATE channels SET model_capabilities=(SELECT jsonb_object_agg(model,jsonb_build_object('agentEnabled',model<>'unverified-text','imageInput',model='vision-writer-model')) FROM jsonb_array_elements_text(models) model)");
+    await saveAgentSettings({...agentSettingsDefaults,enabled:true,revision:0});agentConfig=await readAgentConfig();
 });
 after(async () => {fixture.restore();await db.end();await rm(testMedia,{recursive:true,force:true});});
 test("SDK parses native tools, forwards tool results and usage without executing effects",async () => {
@@ -604,9 +608,9 @@ test("workbench drafts and UI actions bind to the originating browser without ac
     const actions=(await db.query("SELECT * FROM agent_ui_actions WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;assert.equal(actions.length,3);assert.ok(actions.every(action=>action.user_id===ctx.user&&action.client_id===clientId));assert.equal(actions[0].payload.type,"workbench");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
 
-async function agentHttpFixture() {
+async function agentHttpFixture(admins:string[]=[]) {
     const express=(await import("express")).default,{agentRouter}=await import("./agent/routes.js"),http=await import("node:http");
-    const app=express();app.use(express.json());app.use((req,res,next)=>{res.locals.user={id:String(req.headers["x-test-user"])} as any;next();});app.use("/api",agentRouter);app.use((error:any,_req:any,res:any,_next:any)=>res.status(error.status||400).json({error:error.code||error.message}));
+    const app=express();app.use(express.json());app.use((req,res,next)=>{res.locals.user={id:String(req.headers["x-test-user"]),subject:admins.includes(String(req.headers["x-test-user"]))?process.env.ADMIN_SUBJECTS:String(req.headers["x-test-user"]),admin:admins.includes(String(req.headers["x-test-user"]))} as any;next();});app.use("/api",(await import("./tokenone.js")).channelRouter,agentRouter);app.use((error:any,_req:any,res:any,_next:any)=>res.status(error.status||400).json({error:error.code||error.message}));
     const server=http.createServer(app);await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const port=(server.address() as any).port;
     const call=(user:string,method:string,path:string,body?:unknown)=>new Promise<{status:number;body:any}>((resolve,reject)=>{
         const request=http.request({hostname:"127.0.0.1",port,path:`/api${path}`,method,headers:{"x-test-user":user,"Content-Type":"application/json",...(body?{"Content-Length":Buffer.byteLength(JSON.stringify(body))}:{})}},response=>{let text="";response.setEncoding("utf8");response.on("data",chunk=>text+=chunk);response.on("end",()=>resolve({status:response.statusCode!,body:text?JSON.parse(text):null}));});request.on("error",reject);request.end(body?JSON.stringify(body):undefined);
@@ -678,9 +682,9 @@ test("direct asset saving creates no canvas copy and prompt search uses the norm
 });
 test("vision-capable runs expand only owned images and later text-only runs retain history without sending pixels",async()=>{
     const ctx=await setup(),{saveFile}=await import("./storage.js"),{expandAgentImages}=await import("./agent/model.js");await cancelRun(ctx.user,ctx.id);
-    const png=await (await import("sharp")).default({create:{width:2,height:1,channels:3,background:"white"}}).png().toBuffer(),url=await saveFile(ctx.user,"image_files",`image:${randomUUID()}`,png,"image/png"),config=agentConfig!.verifiedModels[0];
-    let accepted:any;config.imageInput=true;
-    try{accepted=await acceptRun(ctx.user,ctx.thread,{...ctx.input,submissionId:randomUUID(),attachments:[{kind:"image",title:"视觉参考",url}]});}finally{config.imageInput=false;}
+    const png=await (await import("sharp")).default({create:{width:2,height:1,channels:3,background:"white"}}).png().toBuffer(),url=await saveFile(ctx.user,"image_files",`image:${randomUUID()}`,png,"image/png");
+    let accepted:any;await db.query("UPDATE channels SET model_capabilities=jsonb_set(model_capabilities,'{agent-model,imageInput}','true') WHERE capability='text'");
+    try{accepted=await acceptRun(ctx.user,ctx.thread,{...ctx.input,submissionId:randomUUID(),attachments:[{kind:"image",title:"视觉参考",url}]});}finally{await db.query("UPDATE channels SET model_capabilities=jsonb_set(model_capabilities,'{agent-model,imageInput}','false') WHERE capability='text'");}
     responses.push(modelText("已收到视觉输入"));await executeAgentRun(accepted.id);assert.ok(fixture.requests.at(-1).input.some((message:any)=>Array.isArray(message.content)&&message.content.some((part:any)=>part.type==="input_image"&&part.image_url.startsWith("data:image/png;base64,"))));
     const next=await acceptRun(ctx.user,ctx.thread,{...ctx.input,submissionId:randomUUID(),goal:"仅按文字继续"});responses.push(modelText("继续文字创作"));await executeAgentRun(next.id);assert.ok(!fixture.requests.at(-1).input.some((message:any)=>Array.isArray(message.content)&&message.content.some((part:any)=>part.type==="input_image")));assert.ok(JSON.stringify((await record(next.id)).context).includes(url));
     const other=await setup();await assert.rejects(()=>expandAgentImages(other.user,[{role:"user",content:[{type:"image",image:url}]}]),{code:"FILE_NOT_FOUND"});
@@ -756,8 +760,8 @@ test("text task references use the target model capability and enforce account a
     const spec={...textJob(ctx),referenceNodeIds:[imageId]};await assert.rejects(()=>recordedTool(ctx,"prepare_text_generation",{nodes:[spec]}),{code:"MODEL_CAPABILITY_INVALID"});await assert.rejects(()=>recordedTool(ctx,"prepare_text_generation",{nodes:[{...textJob(ctx),model:"unverified-text"}]}),{code:"AGENT_MODEL_UNAVAILABLE"});
     const prepared=await recordedTool(ctx,"prepare_text_generation",{nodes:[{...spec,model:"vision-writer-model"}]}),target=prepared.nodes.find((node:any)=>node.type==="text");assert.equal((await record(ctx.id)).model_config.imageInput,false);assert.deepEqual(target.parameters,{model:"vision-writer-model"});
     const other=await setup();await assert.rejects(()=>recordedTool(other,"prepare_text_generation",{nodes:[{...textJob(other),model:"vision-writer-model",referenceNodeIds:[imageId]}]}),{code:"CANVAS_NODE_NOT_FOUND"});
-    const config=agentConfig!.verifiedModels.find(model=>model.model==="vision-writer-model")!;config.imageInput=false;
-    try{await assert.rejects(()=>recordedTool(ctx,"submit_generation",{nodeIds:[target.id]}),{code:"MODEL_CAPABILITY_INVALID"});}finally{config.imageInput=true;}
+    await db.query("UPDATE channels SET model_capabilities=jsonb_set(model_capabilities,'{vision-writer-model,imageInput}','false') WHERE capability='text'");
+    try{await assert.rejects(()=>recordedTool(ctx,"submit_generation",{nodeIds:[target.id]}),{code:"MODEL_CAPABILITY_INVALID"});}finally{await db.query("UPDATE channels SET model_capabilities=jsonb_set(model_capabilities,'{vision-writer-model,imageInput}','true') WHERE capability='text'");}
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
     responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);const waiting=await record(ctx.id);await confirmRun(ctx.user,ctx.id,{waitVersion:waiting.wait_version,approve:true});responses.push(modelText("图像理解任务已受理"));await executeAgentRun(ctx.id);
     const task=(await db.query("SELECT id FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0],{executeMediaTask}=await import("./generation-executor.js");responses.push(modelText("图像中的场景描述"));await executeMediaTask(task.id);assert.equal(fixture.requests.at(-1).model,"vision-writer-model");assert.ok(fixture.requests.at(-1).input[0].content.some((part:any)=>part.type==="input_image"&&part.image_url.startsWith("data:image/png;base64,")));await cancelRun(ctx.user,ctx.id);await cancelRun(other.user,other.id);
@@ -784,4 +788,95 @@ test("mixed generation batches confirm new text and media while reusing the orig
     responses.push(modelTool("submit_generation",{nodeIds:[first.target.id,text.id,image.id]}));await executeAgentRun(next.id);const run=await record(next.id);assert.equal(run.status,"waiting_confirmation");assert.equal(run.wait.manifest.nodes[0].taskId,first.task.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");
     await confirmRun(next.user,next.id,{waitVersion:run.wait_version,approve:true});responses.push(modelText("新文本与图片已受理，原文本任务复用。"));await executeAgentRun(next.id);
     const tasks=(await db.query("SELECT id,capability FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows;assert.equal(tasks.length,3);assert.equal(tasks.filter(task=>task.capability==="text").length,2);const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='submit_generation'",[next.id])).rows[0].result;assert.deepEqual(receipt.reusedTaskIds,[first.task.id]);assert.equal(receipt.taskIds.length,3);await executeAgentRun(next.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"3");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
+});
+
+async function updateSettings(patch:Partial<typeof agentSettingsDefaults>){return saveAgentSettings({...await readAgentSettings(),...patch});}
+test("admin settings require admin rights, validate complete boundaries and reject stale revisions",async()=>{
+    const admin=randomUUID(),api=await agentHttpFixture([admin]),original=await readAgentSettings();
+    try{
+        assert.equal((await api.call(randomUUID(),"GET","/admin/agent")).status,403);
+        assert.equal((await api.call(randomUUID(),"PUT","/admin/agent",original)).status,403);
+        assert.deepEqual((await api.call(admin,"GET","/admin/agent")).body.settings,original);
+        for(const patch of [{globalConcurrency:0},{accountConcurrency:original.globalConcurrency+1},{decisionBudget:1.5},{contextTokens:original.recentContextTokens+original.summaryTokens},{outputTokens:0},{extra:1}])assert.equal((await api.call(admin,"PUT","/admin/agent",{...original,...patch})).status,400);
+        assert.deepEqual(await readAgentSettings(),original);
+        const writes=await Promise.all([api.call(admin,"PUT","/admin/agent",{...original,decisionBudget:12}),api.call(admin,"PUT","/admin/agent",{...original,decisionBudget:18})]);
+        assert.deepEqual(writes.map(result=>result.status).sort(),[200,409]);
+        assert.equal((await readAgentSettings()).revision,original.revision+1);
+        const visible=(await api.call(randomUUID(),"GET","/agent/config")).body;
+        assert.deepEqual(Object.keys(visible).sort(),["enabled","imageModels","inputCharacters","models","pollIntervalMs","protocolVersion"].sort());assert.equal(JSON.stringify(visible).includes("revision"),false);
+    }finally{await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});await api.close();}
+});
+test("missing database settings stay off and environment JSON cannot override database configuration",async()=>{
+    const original=await readAgentSettings(),oldEnv=process.env.SERVER_AGENT_CONFIG;
+    try{
+        await db.query("DELETE FROM agent_settings");process.env.SERVER_AGENT_CONFIG=JSON.stringify({...agentSettingsDefaults,enabled:true,decisionBudget:999});
+        assert.deepEqual(await readAgentSettings(),{...agentSettingsDefaults,revision:0});assert.equal((await readAgentConfig()).enabled,false);
+        const api=await agentHttpFixture();try{assert.equal((await api.call(randomUUID(),"GET","/agent/skills")).status,503);}finally{await api.close();}
+        await assert.rejects(()=>setup(),{code:"AGENT_DISABLED"});
+        await saveAgentSettings({...agentSettingsDefaults,enabled:true,revision:0});assert.equal((await readAgentConfig()).decisionBudget,24);
+    }finally{if(oldEnv===undefined)delete process.env.SERVER_AGENT_CONFIG;else process.env.SERVER_AGENT_CONFIG=oldEnv;await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+});
+test("new runs adopt admin budgets while old runs keep exact limits and pause at their own call counts",async()=>{
+    const original=await readAgentSettings(),old=await setup(),snapshot=(await record(old.id)).model_config;
+    try{
+        await updateSettings({decisionBudget:2,contextTokens:100000,recentContextTokens:20000,summaryTokens:4000});
+        const next=await setup(),run=await record(next.id);assert.equal(run.model_config.limits.decisionBudget,2);assert.equal(run.model_config.limits.summaryTokens,4000);assert.equal(run.model_config.limits.contextTokens,100000);assert.equal(run.model_config.limits.recentContextTokens,20000);
+        assert.deepEqual((await record(old.id)).model_config,snapshot);
+        responses.push(modelTool("read_canvas",{}),modelTool("read_canvas",{}));await executeAgentRun(next.id);
+        assert.equal((await record(next.id)).wait.type,"budget");assert.equal((await record(next.id)).decision_count,2);
+        await db.query("UPDATE agent_runs SET decision_count=23 WHERE id=$1",[old.id]);responses.push(modelTool("read_canvas",{}));await executeAgentRun(old.id);
+        assert.equal((await record(old.id)).decision_count,24);assert.equal((await record(old.id)).wait.type,"budget");assert.deepEqual((await record(old.id)).model_config,snapshot);
+        await cancelRun(next.user,next.id);
+    }finally{await cancelRun(old.user,old.id);await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+});
+function heldReply(body:any){let enter!:()=>void,release!:()=>void;const entered=new Promise<void>(resolve=>enter=resolve),wait=new Promise<void>(resolve=>release=resolve);return {entered,release,response:async()=>{enter();await wait;return Response.json(body);}};}
+async function sibling(ctx:Awaited<ReturnType<typeof setup>>){const thread=randomUUID();await db.query("INSERT INTO agent_threads(id,user_id,project_id,title) VALUES($1,$2,$3,'同账号并发')",[thread,ctx.user,ctx.project]);const input={...ctx.input,submissionId:randomUUID()};return {...ctx,thread,input,id:(await acceptRun(ctx.user,thread,input)).id};}
+for(const scope of ["global","account"] as const)test(`lowering ${scope} concurrency blocks new workers while an existing worker remains occupied`,{timeout:15000},async()=>{
+    const original=await readAgentSettings();await updateSettings({globalConcurrency:2,accountConcurrency:scope==="account"?2:1});
+    const first=await setup(),second=scope==="account"?await sibling(first):await setup(),third=scope==="account"?await sibling(first):await setup();
+    const gate1=heldReply(modelText("第一项完成")),gate2=heldReply(modelText("第二项完成"));let task1:Promise<void>|undefined,task2:Promise<void>|undefined;
+    try{
+        responses.push(gate1.response);task1=executeAgentRun(first.id);await gate1.entered;
+        responses.push(gate2.response);task2=executeAgentRun(second.id);await gate2.entered;
+        await updateSettings(scope==="global"?{globalConcurrency:1}:{accountConcurrency:1});
+        gate1.release();await task1;const before=fixture.requests.length;
+        await executeAgentRun(third.id);assert.equal(fixture.requests.length,before);assert.equal((await record(third.id)).status,"queued");
+        gate2.release();await task2;responses.push(modelText("名额释放后执行"));await executeAgentRun(third.id);assert.equal((await record(third.id)).status,"completed");assert.equal(fixture.requests.length,before+1);
+    }finally{gate1.release();gate2.release();await Promise.allSettled([task1,task2]);await cancelRun(third.user,third.id);await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+});
+test("disabling saves an in-flight response and reenabling executes its saved tool exactly once",{timeout:15000},async()=>{
+    const original=await readAgentSettings(),ctx=await setup(),gate=heldReply(modelTool("create_text_nodes",{nodes:[{title:"保存的决策",text:"用户要求的正文",sourceNodeIds:[ctx.source]}]})),before=fixture.requests.length;let work:Promise<void>|undefined;
+    try{
+        responses.push(gate.response);work=executeAgentRun(ctx.id);await gate.entered;await updateSettings({enabled:false});gate.release();await work;
+        assert.equal((await db.query("SELECT status FROM agent_steps WHERE run_id=$1",[ctx.id])).rows[0].status,"decided");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
+        await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+1);
+        await updateSettings({enabled:true});responses.push(modelText("完成保存"));await executeAgentRun(ctx.id);
+        assert.equal((await record(ctx.id)).status,"completed");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);assert.equal(fixture.requests.length,before+2);
+        assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1 AND name='create_text_nodes'",[ctx.id])).rows[0].count,"1");
+    }finally{gate.release();await work;await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+});
+test("model capability administration persists eligibility and rejects unrelated models and nontext vision",async()=>{
+    const admin=randomUUID(),api=await agentHttpFixture([admin]),channels=(await db.query("SELECT * FROM channels")).rows,text=channels.find(row=>row.capability==="text"),image=channels.find(row=>row.capability==="image");
+    const payload=(row:any)=>({models:row.models,default_model:row.models[0],image_types:row.image_types,video_types:row.video_types,audio_types:row.audio_types,model_descriptions:row.model_descriptions,model_capabilities:row.model_capabilities,enabled:row.enabled});
+    try{
+        assert.equal((await api.call(randomUUID(),"PUT","/admin/channels/text",payload(text))).status,403);
+        assert.equal((await api.call(admin,"PUT","/admin/channels/text",{...payload(text),model_capabilities:{unknown:{agentEnabled:true,imageInput:false}}})).status,400);
+        assert.equal((await api.call(admin,"PUT","/admin/channels/image",{...payload(image),model_capabilities:{"image-model":{agentEnabled:true,imageInput:true}}})).status,400);
+        const ctx=await setup(),prepared=await recordedTool(ctx,"prepare_text_generation",{nodes:[textJob(ctx)]}),target=prepared.nodes.find((node:any)=>node.type==="text");
+        const flags={...text.model_capabilities,"agent-model":{agentEnabled:true,imageInput:true},"writer-model":{agentEnabled:false,imageInput:false}};
+        assert.equal((await api.call(admin,"PUT","/admin/channels/text",{...payload(text),model_capabilities:flags})).status,200);
+        const current=await readAgentConfig();assert.equal(current.verifiedModels.some(model=>model.model==="writer-model"),false);assert.equal(current.verifiedModels.find(model=>model.model==="agent-model")?.imageInput,true);
+        const newer=await setup();assert.equal((await record(newer.id)).model_config.imageInput,true);assert.equal((await record(ctx.id)).model_config.imageInput,false);
+        await assert.rejects(()=>recordedTool(ctx,"submit_generation",{nodeIds:[target.id]}),{code:"AGENT_MODEL_UNAVAILABLE"});assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+        await cancelRun(ctx.user,ctx.id);await cancelRun(newer.user,newer.id);
+    }finally{for(const row of channels)await db.query("UPDATE channels SET model_capabilities=$2 WHERE id=$1",[row.id,JSON.stringify(row.model_capabilities)]);await api.close();}
+});
+
+test("database dispatch capacity accounts for workers held by other connections and ignores released stale statuses",async()=>{
+    const original=await readAgentSettings(),occupied=await setup(),next=await setup(),owner=new pg.Client({connectionString:database});
+    try{
+        await updateSettings({globalConcurrency:1});await owner.connect();await owner.query("SELECT pg_advisory_lock(hashtextextended($1,0))",[`agent-run:${occupied.id}`]);await db.query("UPDATE agent_runs SET status='running' WHERE id=$1",[occupied.id]);
+        const before=fixture.requests.length;await executeAgentRun(next.id);assert.equal((await record(next.id)).status,"queued");assert.equal(fixture.requests.length,before);
+        await owner.query("SELECT pg_advisory_unlock_all()");responses.push(modelText("旧连接已释放"));await executeAgentRun(next.id);assert.equal((await record(next.id)).status,"completed");
+    }finally{await owner.end();await cancelRun(occupied.user,occupied.id);await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
 });
