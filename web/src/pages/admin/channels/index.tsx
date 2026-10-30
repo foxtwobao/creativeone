@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, App, Button, Form, Input, Modal, Select, Switch, Table, Tag } from "antd";
+import { Alert, App, Button, Checkbox, Form, Input, Modal, Select, Switch, Table, Tag } from "antd";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import type { ModelCapabilities } from "../../../../../shared/agent-settings";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
@@ -25,6 +25,8 @@ export default function ChannelsPage() {
     const [loading, setLoading] = useState(true);
     const [form] = Form.useForm();
     const selectedModels: string[] = Form.useWatch("models", form) || [];
+    const modelCapabilities: Record<string, ModelCapabilities> | undefined = Form.useWatch("model_capabilities", form);
+    const agentEnabledCount = selectedModels.filter((model) => modelCapabilities?.[model]?.agentEnabled).length;
     const load = async () => {
         setLoading(true);
         try {
@@ -93,6 +95,11 @@ export default function ChannelsPage() {
                     <span className="ml-2 text-xs text-muted-foreground">刷新仅更新候选列表，不会自动添加到允许的模型</span>
                 </div>
                 {selectedModels.length ? <div className="mb-4 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Checkbox checked={agentEnabledCount === selectedModels.length} indeterminate={agentEnabledCount > 0 && agentEnabledCount < selectedModels.length} disabled={saving} onChange={({ target: { checked } }) => selectedModels.forEach((model) => form.setFieldValue(["model_capabilities", model, "agentEnabled"], checked))}>全部允许创作助手调用</Checkbox>
+                        <span className="text-xs text-muted-foreground">已允许 {agentEnabledCount} / {selectedModels.length}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">批量操作当前功能已配置的模型，点击「确定」后保存。</p>
                     <p className="text-xs text-muted-foreground">创作页按调用类型分类。描述可选，仅用于帮助选择模型。</p>
                     {selectedModels.map((model) => <div key={model}>
                         <p className="mb-2 break-all text-sm font-medium">{model}</p>
