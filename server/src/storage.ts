@@ -127,7 +127,7 @@ export async function collectDeletedFiles(userId: string, candidates: string[] =
     const deleted = await transaction(async (client) => {
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
         await client.query("UPDATE files SET delete_requested=true WHERE user_id=$1 AND key=ANY($2::text[])", [userId, candidates]);
-        const documents = await client.query("SELECT value FROM documents WHERE user_id=$1 AND NOT deleted UNION ALL SELECT jsonb_build_object('nodes',nodes,'connections',connections,'chatSessions',chat_sessions) AS value FROM canvas_projects WHERE user_id=$1 AND deleted_at IS NULL UNION ALL SELECT c.inverse AS value FROM canvas_project_commands c JOIN canvas_projects p ON p.id=c.project_id WHERE p.user_id=$1 AND p.deleted_at IS NULL AND c.inverse IS NOT NULL UNION ALL SELECT result AS value FROM generation_tasks WHERE user_id=$1 AND result IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history) UNION ALL SELECT request AS value FROM generation_tasks WHERE user_id=$1 AND request IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history)", [userId]);
+        const documents = await client.query("SELECT value FROM documents WHERE user_id=$1 AND NOT deleted UNION ALL SELECT jsonb_build_object('nodes',nodes,'connections',connections,'chatSessions',chat_sessions) AS value FROM canvas_projects WHERE user_id=$1 AND deleted_at IS NULL UNION ALL SELECT c.inverse AS value FROM canvas_project_commands c JOIN canvas_projects p ON p.id=c.project_id WHERE p.user_id=$1 AND p.deleted_at IS NULL AND c.inverse IS NOT NULL UNION ALL SELECT result AS value FROM generation_tasks WHERE user_id=$1 AND result IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history) UNION ALL SELECT request AS value FROM generation_tasks WHERE user_id=$1 AND request IS NOT NULL AND NOT (hidden_from_works AND hidden_from_history) UNION ALL SELECT input AS value FROM agent_runs WHERE user_id=$1 UNION ALL SELECT context AS value FROM agent_runs WHERE user_id=$1 UNION ALL SELECT a.result AS value FROM agent_tool_receipts a JOIN agent_runs r ON r.id=a.run_id WHERE r.user_id=$1", [userId]);
         const references = new Set<string>();
         for (const row of documents.rows) fileReferences(row.value, references);
         const { rows } = await client.query("DELETE FROM files WHERE user_id=$1 AND (delete_requested OR key=ANY($3::text[])) AND NOT (key=ANY($2::text[])) RETURNING disk_id", [userId, [...references], candidates]);
@@ -199,6 +199,15 @@ export async function readAssets(userId: string, client: Pick<typeof db, "query"
         return asset.kind === "image" ? { ...asset, data: { ...asset.data, dataUrl: url } } : { ...asset, data: { ...asset.data, url } };
     });
 }
+export async function addTextOrImageAsset(userId:string,value:unknown,client:Pick<typeof db,"query">) {
+    const data=assetInput.parse(value);
+    if (!["text","image"].includes(data.kind)) throw new HttpError(400,"INVALID_FILE_REFERENCE");
+    await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE",[userId]);
+    for (const reference of fileReferences(data)) if (!(await client.query("SELECT 1 FROM files WHERE user_id=$1 AND key=$2",[userId,reference])).rowCount) throw new HttpError(409,"FILE_NOT_SYNCED");
+    const now=new Date().toISOString(),asset={...data,id:randomUUID(),createdAt:now,updatedAt:now},assets=[asset,...await readAssets(userId,client)];
+    await client.query("INSERT INTO documents(user_id,namespace,key,value) VALUES($1,'app_state',$2,$3) ON CONFLICT(user_id,namespace,key) DO UPDATE SET value=EXCLUDED.value,revision=documents.revision+1,deleted=false,updated_at=now()",[userId,assetKey,JSON.stringify(JSON.stringify({state:{assets},version:0}))]);
+    return asset;
+}
 storageRouter.get("/assets", async (_req, res) => res.json({ assets: await readAssets(res.locals.user.id) }));
 storageRouter.all(["/assets", "/assets/:id"], async (req, res, next) => {
     if (!["POST", "PATCH", "DELETE"].includes(req.method)) return next();
@@ -206,6 +215,7 @@ storageRouter.all(["/assets", "/assets/:id"], async (req, res, next) => {
     const userId = res.locals.user.id;
     let removed: string[] = [];
     const asset = await transaction(async (client) => {
+        if (req.method === "POST" && ["text","image"].includes(req.body?.kind)) return addTextOrImageAsset(userId,req.body,client);
         await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
         const assets = await readAssets(userId, client);
         const index = assets.findIndex((item) => item.id === req.params.id);

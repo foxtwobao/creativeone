@@ -71,13 +71,13 @@ promptsRouter.post("/prompt-sources/refresh", async (req, res) => {
     const results = await Promise.all(sources.map((source: PromptSource) => refresh(res.locals.user.id, source)));
     res.json({ results, total: results.reduce((n: number,r: any) => n+r.count,0), successCount: results.filter((r: any) => r.success).length, failureCount: results.filter((r: any) => !r.success).length });
 });
-promptsRouter.get("/prompts", async (req, res) => {
-    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20), keyword: z.string().default(""), category: z.string().default("all"), sourceId: z.string().optional(), tag: z.union([z.string(), z.array(z.string())]).optional() }).parse(req.query);
-    const state = await settings(res.locals.user.id);
+export async function searchPrompts(userId:string,value:unknown) {
+    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20), keyword: z.string().default(""), category: z.string().default("all"), sourceId: z.string().optional(), tag: z.union([z.string(), z.array(z.string())]).optional() }).parse(value);
+    const state = await settings(userId);
     const sources = state.sources.filter((source: PromptSource) => query.sourceId ? source.id === query.sourceId : source.enabled);
-    const { rows } = await db.query("SELECT * FROM prompt_caches WHERE user_id=$1", [res.locals.user.id]);
-    await Promise.all(sources.filter((source: PromptSource) => !rows.some((row) => row.source_id === source.id && row.source_url === source.url && row.last_success_at)).map((source: PromptSource) => refresh(res.locals.user.id, source)));
-    const caches = (await db.query("SELECT source_id,items FROM prompt_caches WHERE user_id=$1", [res.locals.user.id])).rows;
+    const { rows } = await db.query("SELECT * FROM prompt_caches WHERE user_id=$1", [userId]);
+    await Promise.all(sources.filter((source: PromptSource) => !rows.some((row) => row.source_id === source.id && row.source_url === source.url && row.last_success_at)).map((source: PromptSource) => refresh(userId, source)));
+    const caches = (await db.query("SELECT source_id,items FROM prompt_caches WHERE user_id=$1", [userId])).rows;
     const all = caches.filter((row) => sources.some((source: PromptSource) => source.id === row.source_id)).flatMap((row) => { const source = sources.find((item: PromptSource) => item.id === row.source_id)!; return row.items.map((item: any) => ({ ...item, category: source.name, githubUrl: source.homepage })); });
     const tags = Array.isArray(query.tag) ? query.tag : query.tag ? [query.tag] : [];
     const base = all.filter((item: any) => (query.category === "all" || item.category === query.category) && (!query.keyword || `${item.title} ${item.prompt} ${item.description} ${item.category} ${item.tags.join(" ")}`.toLowerCase().includes(query.keyword.toLowerCase())));
@@ -87,8 +87,9 @@ promptsRouter.get("/prompts", async (req, res) => {
         coverUrl: promptImageProxyUrl(item.coverUrl, imageProxy),
         referenceImageUrls: item.referenceImageUrls.map((url: string) => promptImageProxyUrl(url, imageProxy)),
     }));
-    res.json({ items: pageItems, total: items.length, tags: [...new Set(base.flatMap((item: any) => item.tags))], categories: sources.map((source: PromptSource) => source.name) });
-});
+    return { items: pageItems, total: items.length, tags: [...new Set(base.flatMap((item: any) => item.tags))], categories: sources.map((source: PromptSource) => source.name) };
+}
+promptsRouter.get("/prompts",async(req,res)=>res.json(await searchPrompts(res.locals.user.id,req.query)));
 export async function refreshDuePromptSources() {
     const users = (await db.query("SELECT DISTINCT user_id FROM prompt_caches WHERE last_success_at IS NOT NULL")).rows;
     for (const { user_id } of users) {

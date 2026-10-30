@@ -1,3 +1,5 @@
+import WorkbenchAgentNotice from "@/components/workbench-agent-notice";
+import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { fetchGenerationHistory, removeGenerationHistory } from "@/services/api/history";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import { cloudSession } from "@/services/api/cloud";
@@ -95,6 +97,7 @@ export default function VideoPage() {
     const [referenceAudios, setReferenceAudios] = useState<ReferenceAudio[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [running, setRunning] = useState(false);
+    const agentTaskIds=useServerAgentStore(state=>state.workbenchTasks?.video);
     const [uploadingMedia, setUploadingMedia] = useState(0);
     const [logPage, setLogPage] = useState(1);
     const [logsOpen, setLogsOpen] = useState(false);
@@ -222,6 +225,7 @@ export default function VideoPage() {
         }
     };
     const generate = async () => {
+        if(agentTaskIds?.length){message.info("助手已受理本次创作，请查看原任务或先新建创作。");return;}
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
         const snapshot = buildRequestSnapshot();
@@ -258,6 +262,9 @@ export default function VideoPage() {
         processedCommandRef.current = videoCommand.nonce;
         clearVideoCommand();
         if (typeof videoCommand.prompt === "string") setPrompt(videoCommand.prompt);
+        if (videoCommand.references) setReferences(videoCommand.references);
+        if (videoCommand.referenceVideos) setReferenceVideos(videoCommand.referenceVideos);
+        if (videoCommand.referenceAudios) setReferenceAudios(videoCommand.referenceAudios);
         if (videoCommand.run && running) {
             if (videoCommand.taskId) updateAgentTask(videoCommand.taskId, { status: "failed", error: t("videoWorkbench.busy") });
             return;
@@ -332,6 +339,7 @@ export default function VideoPage() {
     };
 
     const createSession = () => {
+        useServerAgentStore.setState(state=>({workbenchTasks:{...state.workbenchTasks,video:[]}}));
         setPrompt("");
         setReferences([]);
         setReferenceVideos([]);
@@ -439,6 +447,7 @@ export default function VideoPage() {
 
     return (
         <div className="studio-workbench">
+            <WorkbenchAgentNotice kind="video"/>
             <main className={`studio-stage ${results.length ? "has-results" : ""}`}>
                 <div className="studio-page-tools"><span>视频创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
                 <section className="studio-compose-area">
@@ -464,7 +473,7 @@ export default function VideoPage() {
                         <div className="studio-input-row">
                             <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" onClick={() => videoInputRef.current?.click()} disabled={videoSettings.profile.maxVideos === 0}>上传参考视频</Button><Button type="text" onClick={() => audioInputRef.current?.click()}>上传参考音频</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button>{videoSettings.wan ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><WanReferenceNotice showDetails={false} /></section> : videoSettings.h3 ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><H3ReferenceNotice compact referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : null}</div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
                             <Input.TextArea aria-label="视频创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述画面、动作与运镜，让故事动起来…" onChange={(event) => setPrompt(event.target.value)} />
-                            <button className="studio-send" aria-label="开始生成视频" disabled={!canGenerate || running} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
+                            <button className="studio-send" aria-label="开始生成视频" disabled={!canGenerate || running || Boolean(agentTaskIds?.length)} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
                         </div>
                         <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-2">
                             <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" className="max-w-[min(70vw,320px)]" onMissingConfig={() => openConfigDialog(false)} />

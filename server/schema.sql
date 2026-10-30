@@ -149,3 +149,72 @@ ALTER TABLE channels ADD COLUMN IF NOT EXISTS audio_types jsonb NOT NULL DEFAULT
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS title text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS submission_id uuid;
 CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_audio_submission ON generation_tasks(user_id,submission_id) WHERE capability='audio' AND submission_id IS NOT NULL;
+
+-- Agent execution has one authority: these checkpoints and transaction receipts.
+CREATE TABLE IF NOT EXISTS agent_threads (
+    id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id),
+    project_id uuid NOT NULL REFERENCES canvas_projects(id) ON DELETE CASCADE,
+    title text NOT NULL, active_run_id uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_threads_owner ON agent_threads(user_id,project_id,updated_at DESC);
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id uuid PRIMARY KEY, thread_id uuid NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id), submission_id uuid NOT NULL,
+    protocol_version integer NOT NULL, storage_version integer NOT NULL,
+    input jsonb NOT NULL, model_config jsonb NOT NULL, context jsonb NOT NULL,
+    skills jsonb NOT NULL DEFAULT '{}', status text NOT NULL CHECK(status IN ('queued','running','waiting_input','waiting_confirmation','waiting_tasks','completed','failed','cancelled','unknown')),
+    execution_token uuid, wait jsonb, wait_version integer NOT NULL DEFAULT 0,
+    revision bigint NOT NULL, generation_revision bigint NOT NULL, sources jsonb NOT NULL DEFAULT '{}',
+    decision_count integer NOT NULL DEFAULT 0, token_count bigint NOT NULL DEFAULT 0,
+    budget_start jsonb NOT NULL DEFAULT '{"decisions":0,"tokens":0}', excluded_tasks jsonb NOT NULL DEFAULT '[]', error text,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(thread_id,submission_id)
+);
+CREATE INDEX IF NOT EXISTS agent_runs_queue ON agent_runs(created_at) WHERE status IN ('queued','running','waiting_tasks');
+CREATE TABLE IF NOT EXISTS agent_steps (
+    run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE, step integer NOT NULL,
+    item_id uuid NOT NULL UNIQUE, status text NOT NULL CHECK(status IN ('requesting','decided','finished','unknown')),
+    request jsonb NOT NULL, decision jsonb, usage jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(run_id,step)
+);
+CREATE TABLE IF NOT EXISTS agent_items (
+    thread_id uuid NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+    turn_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE, item_id uuid PRIMARY KEY,
+    sequence bigint GENERATED ALWAYS AS IDENTITY,
+    role text NOT NULL, text text NOT NULL DEFAULT '', detail jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_items_history ON agent_items(thread_id,created_at,item_id);
+CREATE TABLE IF NOT EXISTS agent_tool_receipts (
+    run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE, call_id text NOT NULL,
+    name text NOT NULL, input jsonb NOT NULL, result jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(run_id,call_id)
+);
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS excluded_tasks jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE agent_items ADD COLUMN IF NOT EXISTS sequence bigint GENERATED ALWAYS AS IDENTITY;
+
+-- Derived model-input checkpoints; original conversation and steps remain untouched.
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS context_checkpoint jsonb NOT NULL DEFAULT '{"version":1,"offset":0,"summary":"","recovery":null}';
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS context_anchor integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS input_token_ratio double precision NOT NULL DEFAULT 1;
+ALTER TABLE agent_steps ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'decision' CHECK(kind IN ('decision','compaction'));
+
+-- Creative progress and personal rules are independent of immutable run/message snapshots.
+CREATE TABLE IF NOT EXISTS agent_creative_states (
+    thread_id uuid PRIMARY KEY REFERENCES agent_threads(id) ON DELETE CASCADE,
+    state jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS agent_skills (
+    id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id),
+    title text NOT NULL, description text NOT NULL DEFAULT '', content text NOT NULL,
+    files jsonb NOT NULL DEFAULT '{}', version integer NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_skills_owner ON agent_skills(user_id,updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_ui_actions (
+    id uuid PRIMARY KEY, run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id), client_id uuid NOT NULL, payload jsonb NOT NULL,
+    acknowledged boolean NOT NULL DEFAULT false, error text, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_ui_actions_pending ON agent_ui_actions(user_id,client_id,created_at) WHERE NOT acknowledged;

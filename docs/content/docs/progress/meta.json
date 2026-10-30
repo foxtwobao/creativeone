@@ -5,6 +5,7 @@
   "pages": [
     "[Changelog](/docs/progress/changelog)",
     "infinite-canvas-plan",
+    "server-agent-plan",
     "wan3-integration-plan",
     "audio-integration-plan",
     "local-agent-integration-plan",

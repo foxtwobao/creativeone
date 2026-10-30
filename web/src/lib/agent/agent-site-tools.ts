@@ -178,6 +178,10 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         configStore.updateConfig("size", input.size);
         applied.size = input.size;
     }
+    if (typeof input.background === "string" && input.background.trim()) {
+        configStore.updateConfig("background", input.background);
+        applied.background = input.background;
+    }
     if (input.count != null) {
         const count = String(Math.max(1, Math.min(15, Math.floor(Number(input.count)) || 1)));
         configStore.updateConfig("count", count);
@@ -186,7 +190,7 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;
     navigate("/image");
-    const taskId = useWorkbenchAgentStore.getState().dispatchImage({ prompt, run });
+    const taskId = useWorkbenchAgentStore.getState().dispatchImage({ prompt, run, references:input.references as any });
     return { ok: true, navigated: "/image", prompt, run, taskId, applied, note: siteText(run ? "imageGenerationStarted" : "imageConfigApplied") };
 }
 
@@ -266,7 +270,7 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;
     navigate("/video");
-    const taskId = useWorkbenchAgentStore.getState().dispatchVideo({ prompt, run });
+    const taskId = useWorkbenchAgentStore.getState().dispatchVideo({ prompt, run, references:input.references as any,referenceVideos:input.referenceVideos as any,referenceAudios:input.referenceAudios as any });
     return { ok: true, navigated: "/video", prompt, run, taskId, applied, note: siteText(run ? "videoGenerationStarted" : "videoConfigApplied") };
 }
 

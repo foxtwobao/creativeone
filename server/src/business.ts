@@ -59,7 +59,7 @@ function canvasProject(row: any) {
         generationRevision: Number(row.generation_revision),
     };
 }
-async function findCanvasProject(userId: string, id: string, client: Pick<typeof db, "query"> = db, lock = false) {
+export async function findCanvasProject(userId: string, id: string, client: Pick<typeof db, "query"> = db, lock = false) {
     const { rows } = await client.query(`SELECT * FROM canvas_projects WHERE user_id=$1 AND id=$2 AND deleted_at IS NULL${lock ? " FOR UPDATE" : ""}`, [userId, id]);
     if (!rows[0]) throw new HttpError(404, "PROJECT_NOT_FOUND");
     return { ...rows[0], ...canvasGraphView(rows[0].nodes, rows[0].connections) };
@@ -145,107 +145,108 @@ businessRouter.post("/projects", async (req, res) => {
     const row = await findCanvasProject(res.locals.user.id, id);
     res.status(201).json({ project: canvasProject(row) });
 });
-businessRouter.post("/projects/:id/commands", async (req, res) => {
-    const id = requireUuid(req.params.id), input = commandInput.parse(req.body), userId = res.locals.user.id;
-    const result = await transaction(async (client) => {
-        await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
-        const project = await findCanvasProject(userId, id, client, true);
-        const previous = await client.query("SELECT result,base_revision,base_generation_revision,command FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.operationId]);
-        if (previous.rows[0]) {
-            if (Number(previous.rows[0].base_revision) !== input.baseRevision || Number(previous.rows[0].base_generation_revision) !== input.baseGenerationRevision || !isDeepStrictEqual(previous.rows[0].command, input.command)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
-            const receipt = previous.rows[0].result;
-            if (Number(project.content_revision) - Number(project.generation_revision) !== receipt.contentRevision - receipt.generationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
-            return canvasProject(project);
-        }
-        // Only worker result updates may advance the version without conflicting with an edit.
-        if (input.baseRevision > Number(project.content_revision) || input.baseGenerationRevision > Number(project.generation_revision) || Number(project.content_revision) - Number(project.generation_revision) !== input.baseRevision - input.baseGenerationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
-        let command = input.command.type === "edit_project" ? input.command : undefined;
-        if (input.command.type === "restore_edit") {
-            const source = (await client.query("SELECT inverse,undone FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId])).rows[0];
-            const undo = input.command.direction === "undo";
-            if (!source?.inverse || Boolean(source.undone) === undo) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
-            const expected = source.inverse[undo ? "after" : "before"];
-            for (const edit of expected.graphEdits) {
-                if (edit.type === "put_node" || edit.type === "delete_node") {
-                    const node = project.nodes.find((node: CanvasNodeData) => node.id === (edit.type === "put_node" ? edit.node.id : edit.id));
-                    const comparable = edit.type === "put_node" && edit.node.metadata?.images && !edit.node.metadata.primaryImageId && node ? { ...node, metadata: { ...node.metadata, primaryImageId: undefined } } : node;
-                    if (!isDeepStrictEqual(canvasEditableNode(comparable), edit.type === "put_node" ? canvasEditableNode(edit.node) : null)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
-                } else {
-                    const edge = project.connections.find((edge: { id: string }) => edge.id === (edit.type === "put_connection" ? edit.connection.id : edit.id));
-                    if (edit.type === "put_connection" ? !edge || edge.fromNodeId !== edit.connection.fromNodeId || edge.toNodeId !== edit.connection.toNodeId : Boolean(edge)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
-                }
+export async function applyCanvasCommand(userId: string, id: string, value: unknown, client: Pick<typeof db, "query">) {
+    const input = commandInput.parse(value);
+    await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
+    const project = await findCanvasProject(userId, id, client, true);
+    const previous = await client.query("SELECT result,base_revision,base_generation_revision,command FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.operationId]);
+    if (previous.rows[0]) {
+        if (Number(previous.rows[0].base_revision) !== input.baseRevision || Number(previous.rows[0].base_generation_revision) !== input.baseGenerationRevision || !isDeepStrictEqual(previous.rows[0].command, input.command)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
+        const receipt = previous.rows[0].result;
+        if (Number(project.content_revision) - Number(project.generation_revision) !== receipt.contentRevision - receipt.generationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
+        return canvasProject(project);
+    }
+    // Only worker result updates may advance the version without conflicting with an edit.
+    if (input.baseRevision > Number(project.content_revision) || input.baseGenerationRevision > Number(project.generation_revision) || Number(project.content_revision) - Number(project.generation_revision) !== input.baseRevision - input.baseGenerationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
+    let command = input.command.type === "edit_project" ? input.command : undefined;
+    if (input.command.type === "restore_edit") {
+        const source = (await client.query("SELECT inverse,undone FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId])).rows[0];
+        const undo = input.command.direction === "undo";
+        if (!source?.inverse || Boolean(source.undone) === undo) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
+        const expected = source.inverse[undo ? "after" : "before"];
+        for (const edit of expected.graphEdits) {
+            if (edit.type === "put_node" || edit.type === "delete_node") {
+                const node = project.nodes.find((node: CanvasNodeData) => node.id === (edit.type === "put_node" ? edit.node.id : edit.id));
+                const comparable = edit.type === "put_node" && edit.node.metadata?.images && !edit.node.metadata.primaryImageId && node ? { ...node, metadata: { ...node.metadata, primaryImageId: undefined } } : node;
+                if (!isDeepStrictEqual(canvasEditableNode(comparable), edit.type === "put_node" ? canvasEditableNode(edit.node) : null)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
+            } else {
+                const edge = project.connections.find((edge: { id: string }) => edge.id === (edit.type === "put_connection" ? edit.connection.id : edit.id));
+                if (edit.type === "put_connection" ? !edge || edge.fromNodeId !== edit.connection.fromNodeId || edge.toNodeId !== edit.connection.toNodeId : Boolean(edge)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
             }
-            for (const [key, value] of Object.entries(expected.patch)) if (!isDeepStrictEqual(canvasProject(project)[key as keyof ReturnType<typeof canvasProject>], value)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
-            command = source.inverse[undo ? "before" : "after"];
-            await client.query("UPDATE canvas_project_commands SET undone=$3 WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId, undo]);
         }
-        const targets = command!.graphEdits.map((edit) => `${edit.type.endsWith("node") ? "node" : "connection"}:${edit.type === "put_node" ? edit.node.id : edit.type === "put_connection" ? edit.connection.id : edit.id}`);
-        if (input.command.type === "edit_project" && new Set(targets).size !== targets.length) throw new HttpError(400, "INVALID_CANVAS_GRAPH");
-        const patch: Record<string, unknown> = { ...command!.patch };
-        const nodes = new Map((project.nodes as Array<z.infer<typeof canvasNode>>).map((node) => [node.id, node]));
-        const connections = new Map((project.connections as Array<z.infer<typeof canvasConnection>>).map((connection) => [connection.id, connection]));
-        const deletedNodes = new Set<string>();
-        for (const edit of command!.graphEdits) {
-            if (edit.type === "put_node") {
-                let incoming = stripCanvasTaskIds(edit.node);
-                const old = nodes.get(edit.node.id) as CanvasNodeData | undefined;
-                if (edit.replaceResult) {
-                    if (!incoming.metadata?.storageKey || incoming.metadata.storageKey === old?.metadata?.storageKey) throw new HttpError(400, "INVALID_FILE_REFERENCE");
-                    incoming = { ...incoming, metadata: { ...incoming.metadata, generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined } };
-                }
-                const markers = [incoming.metadata, ...incoming.metadata?.images || [], ...incoming.metadata?.texts || []].filter((slot) => slot?.status === "loading" && slot.generationId).map((slot) => slot!.generationId);
-                const currentMarkers = new Set([old?.metadata?.generationId, ...old?.metadata?.images?.map((image) => image.generationId) || [], ...old?.metadata?.texts?.map((text) => text.generationId) || []]);
-                const newMarkers = markers.filter((marker) => !currentMarkers.has(marker));
-                if (input.command.type === "edit_project" && newMarkers.length && (await client.query("SELECT 1 FROM generation_tasks WHERE user_id=$1 AND canvas_project_id=$2 AND canvas_generation_id=ANY($3::text[])", [userId, id, newMarkers])).rowCount) throw new HttpError(409, "CANVAS_GENERATION_ALREADY_ACCEPTED");
-                nodes.set(edit.node.id, preserveCanvasGeneration(incoming, edit.replaceResult ? undefined : old)); deletedNodes.delete(edit.node.id);
+        for (const [key, value] of Object.entries(expected.patch)) if (!isDeepStrictEqual(canvasProject(project)[key as keyof ReturnType<typeof canvasProject>], value)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
+        command = source.inverse[undo ? "before" : "after"];
+        await client.query("UPDATE canvas_project_commands SET undone=$3 WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId, undo]);
+    }
+    const targets = command!.graphEdits.map((edit) => `${edit.type.endsWith("node") ? "node" : "connection"}:${edit.type === "put_node" ? edit.node.id : edit.type === "put_connection" ? edit.connection.id : edit.id}`);
+    if (input.command.type === "edit_project" && new Set(targets).size !== targets.length) throw new HttpError(400, "INVALID_CANVAS_GRAPH");
+    const patch: Record<string, unknown> = { ...command!.patch };
+    const nodes = new Map((project.nodes as Array<z.infer<typeof canvasNode>>).map((node) => [node.id, node]));
+    const connections = new Map((project.connections as Array<z.infer<typeof canvasConnection>>).map((connection) => [connection.id, connection]));
+    const deletedNodes = new Set<string>();
+    for (const edit of command!.graphEdits) {
+        if (edit.type === "put_node") {
+            let incoming = stripCanvasTaskIds(edit.node);
+            const old = nodes.get(edit.node.id) as CanvasNodeData | undefined;
+            if (edit.replaceResult) {
+                if (!incoming.metadata?.storageKey || incoming.metadata.storageKey === old?.metadata?.storageKey) throw new HttpError(400, "INVALID_FILE_REFERENCE");
+                incoming = { ...incoming, metadata: { ...incoming.metadata, generationId: undefined, generationTaskId: undefined, images: undefined, primaryImageId: undefined } };
             }
-            if (edit.type === "delete_node") { nodes.delete(edit.id); deletedNodes.add(edit.id); }
-            if (edit.type === "put_connection") connections.set(edit.connection.id, edit.connection);
-            if (edit.type === "delete_connection") connections.delete(edit.id);
+            const markers = [incoming.metadata, ...incoming.metadata?.images || [], ...incoming.metadata?.texts || []].filter((slot) => slot?.status === "loading" && slot.generationId).map((slot) => slot!.generationId);
+            const currentMarkers = new Set([old?.metadata?.generationId, ...old?.metadata?.images?.map((image) => image.generationId) || [], ...old?.metadata?.texts?.map((text) => text.generationId) || []]);
+            const newMarkers = markers.filter((marker) => !currentMarkers.has(marker));
+            if (input.command.type === "edit_project" && newMarkers.length && (await client.query("SELECT 1 FROM generation_tasks WHERE user_id=$1 AND canvas_project_id=$2 AND canvas_generation_id=ANY($3::text[])", [userId, id, newMarkers])).rowCount) throw new HttpError(409, "CANVAS_GENERATION_ALREADY_ACCEPTED");
+            nodes.set(edit.node.id, preserveCanvasGeneration(incoming, edit.replaceResult ? undefined : old)); deletedNodes.delete(edit.node.id);
         }
-        const nextNodes = [...nodes.values()];
-        if (command!.graphEdits.some((edit) => edit.type === "put_connection" && (deletedNodes.has(edit.connection.fromNodeId) || deletedNodes.has(edit.connection.toNodeId)))) throw new HttpError(400, "INVALID_CANVAS_GRAPH");
-        const nextConnections = [...connections.values()].filter((connection) => !deletedNodes.has(connection.fromNodeId) && !deletedNodes.has(connection.toNodeId));
-        const implicitDeletedEdges = project.connections.filter((edge: { id: string }) => !connections.has(edge.id) || !nextConnections.some((item) => item.id === edge.id)).filter((edge: { id: string }) => !command!.graphEdits.some((edit) => edit.type === "put_connection" ? edit.connection.id === edge.id : edit.type === "delete_connection" && edit.id === edge.id));
-        if (command!.graphEdits.some((edit) => edit.type === "put_node" || edit.type === "delete_node")) patch.nodes = nextNodes;
-        if (command!.graphEdits.length) patch.connections = nextConnections;
-        validateCanvasGraph(nextNodes, nextConnections);
-        await assertCanvasFiles(userId, { nodes: nextNodes, connections: nextConnections, chatSessions: patch.chatSessions ?? project.chat_sessions }, client);
-        const reversible = command!.graphEdits.length || Object.keys(patch).some((key) => ["title", "chatSessions", "activeChatId"].includes(key));
-        const inverse = input.command.type === "edit_project" && reversible ? {
-            before: { type: "edit_project", patch: Object.fromEntries(Object.keys(command!.patch).map((key) => [key, canvasProject(project)[key as keyof ReturnType<typeof canvasProject>]])), graphEdits: command!.graphEdits.map((edit) => {
-                if (edit.type === "put_node" || edit.type === "delete_node") { const node = project.nodes.find((node: CanvasNodeData) => node.id === (edit.type === "put_node" ? edit.node.id : edit.id)); return node ? { type: "put_node", node } : { type: "delete_node", id: edit.type === "put_node" ? edit.node.id : edit.id }; }
-                const connection = project.connections.find((edge: { id: string }) => edge.id === (edit.type === "put_connection" ? edit.connection.id : edit.id)); return connection ? { type: "put_connection", connection } : { type: "delete_connection", id: edit.type === "put_connection" ? edit.connection.id : edit.id };
-            }).concat(implicitDeletedEdges.map((connection: unknown) => ({ type: "put_connection", connection }))) },
-            after: command,
-        } : null;
-        const nextRevision = Number(project.content_revision) + (reversible ? 1 : 0);
-        const columns: Record<string, string> = { title: "title", nodes: "nodes", connections: "connections", chatSessions: "chat_sessions", activeChatId: "active_chat_id", backgroundMode: "background_mode", showImageInfo: "show_image_info", viewport: "viewport" };
-        const restoredEntities = input.command.type === "restore_edit" ? command!.graphEdits.flatMap((edit) => edit.type === "put_node" ? [edit.node] : []) : [];
-        const previousNodes = project.nodes.map((node: CanvasNodeData) => {
-            const restored = restoredEntities.find((item) => item.id === node.id);
-            return restored ? { ...node, metadata: { ...node.metadata, images: [...restored.metadata?.images || [], ...node.metadata?.images || []], texts: [...restored.metadata?.texts || [], ...node.metadata?.texts || []] } } : node;
-        });
-        const restoredEdges = input.command.type === "restore_edit" ? command!.graphEdits.flatMap((edit) => edit.type === "put_connection" ? [edit.connection] : []) : [];
-        const persisted = persistCanvasGraph(nextNodes as CanvasNodeData[], nextConnections, { nodes: [...restoredEntities as CanvasNodeData[], ...previousNodes], connections: [...project.connections, ...restoredEdges] });
-        if (patch.nodes) patch.nodes = persisted.nodes;
-        if (patch.connections) patch.connections = persisted.connections;
-        const values: unknown[] = [nextRevision, id, userId];
-        Object.entries(patch).forEach(([key, value]) => values.push(key === "activeChatId" || key === "title" || key === "backgroundMode" || key === "showImageInfo" ? value : JSON.stringify(value)));
-        const assignmentSql = Object.entries(patch).map(([key], index) => `${columns[key]}=$${index + 4}`);
-        await client.query(`UPDATE canvas_projects SET ${assignmentSql.join(",")}${assignmentSql.length ? "," : ""} content_revision=$1,updated_at=now() WHERE id=$2 AND user_id=$3`, values);
-        if (input.command.type === "restore_edit") {
-            const tasks = await client.query("UPDATE generation_tasks SET canvas_attached=false WHERE user_id=$1 AND canvas_project_id=$2 AND canvas_node_id=ANY($3::text[]) RETURNING id", [userId, id, persisted.nodes.map((node) => node.id)]);
-            for (const task of tasks.rows) await attachCanvasTask(task.id, client);
-        }
-        const updated = canvasProject(await findCanvasProject(userId, id, client));
-        const confirmedCommand = { ...command!, patch: Object.fromEntries(Object.keys(command!.patch).map((key) => [key, updated[key as keyof typeof updated]])), graphEdits: command!.graphEdits.map((edit) => edit.type === "put_node" ? { ...edit, node: updated.nodes.find((node: CanvasNodeData) => node.id === edit.node.id)! } : edit.type === "put_connection" ? { ...edit, connection: updated.connections.find((edge: { id: string }) => edge.id === edit.connection.id)! } : edit).concat(implicitDeletedEdges.map((edge: { id: string }) => ({ type: "delete_connection", id: edge.id }))) };
-        if (inverse) inverse.after = confirmedCommand;
-        if (input.command.type === "restore_edit") await client.query("UPDATE canvas_project_commands SET inverse=jsonb_set(inverse,$3::text[],$4::jsonb) WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId, [input.command.direction === "undo" ? "before" : "after"], JSON.stringify(confirmedCommand)]);
-        await client.query("INSERT INTO canvas_project_commands (project_id,operation_id,base_revision,base_generation_revision,command,result,inverse) VALUES ($1,$2,$3,$4,$5,$6,$7)", [id, input.operationId, input.baseRevision, input.baseGenerationRevision, JSON.stringify(input.command), JSON.stringify({ contentRevision: updated.contentRevision, generationRevision: updated.generationRevision }), JSON.stringify(inverse)]);
-        return updated;
+        if (edit.type === "delete_node") { nodes.delete(edit.id); deletedNodes.add(edit.id); }
+        if (edit.type === "put_connection") connections.set(edit.connection.id, edit.connection);
+        if (edit.type === "delete_connection") connections.delete(edit.id);
+    }
+    const nextNodes = [...nodes.values()];
+    if (command!.graphEdits.some((edit) => edit.type === "put_connection" && (deletedNodes.has(edit.connection.fromNodeId) || deletedNodes.has(edit.connection.toNodeId)))) throw new HttpError(400, "INVALID_CANVAS_GRAPH");
+    const nextConnections = [...connections.values()].filter((connection) => !deletedNodes.has(connection.fromNodeId) && !deletedNodes.has(connection.toNodeId));
+    const implicitDeletedEdges = project.connections.filter((edge: { id: string }) => !connections.has(edge.id) || !nextConnections.some((item) => item.id === edge.id)).filter((edge: { id: string }) => !command!.graphEdits.some((edit) => edit.type === "put_connection" ? edit.connection.id === edge.id : edit.type === "delete_connection" && edit.id === edge.id));
+    if (command!.graphEdits.some((edit) => edit.type === "put_node" || edit.type === "delete_node")) patch.nodes = nextNodes;
+    if (command!.graphEdits.length) patch.connections = nextConnections;
+    validateCanvasGraph(nextNodes, nextConnections);
+    await assertCanvasFiles(userId, { nodes: nextNodes, connections: nextConnections, chatSessions: patch.chatSessions ?? project.chat_sessions }, client);
+    const reversible = command!.graphEdits.length || Object.keys(patch).some((key) => ["title", "chatSessions", "activeChatId"].includes(key));
+    const inverse = input.command.type === "edit_project" && reversible ? {
+        before: { type: "edit_project", patch: Object.fromEntries(Object.keys(command!.patch).map((key) => [key, canvasProject(project)[key as keyof ReturnType<typeof canvasProject>]])), graphEdits: command!.graphEdits.map((edit) => {
+            if (edit.type === "put_node" || edit.type === "delete_node") { const node = project.nodes.find((node: CanvasNodeData) => node.id === (edit.type === "put_node" ? edit.node.id : edit.id)); return node ? { type: "put_node", node } : { type: "delete_node", id: edit.type === "put_node" ? edit.node.id : edit.id }; }
+            const connection = project.connections.find((edge: { id: string }) => edge.id === (edit.type === "put_connection" ? edit.connection.id : edit.id)); return connection ? { type: "put_connection", connection } : { type: "delete_connection", id: edit.type === "put_connection" ? edit.connection.id : edit.id };
+        }).concat(implicitDeletedEdges.map((connection: unknown) => ({ type: "put_connection", connection }))) },
+        after: command,
+    } : null;
+    const nextRevision = Number(project.content_revision) + (reversible ? 1 : 0);
+    const columns: Record<string, string> = { title: "title", nodes: "nodes", connections: "connections", chatSessions: "chat_sessions", activeChatId: "active_chat_id", backgroundMode: "background_mode", showImageInfo: "show_image_info", viewport: "viewport" };
+    const restoredEntities = input.command.type === "restore_edit" ? command!.graphEdits.flatMap((edit) => edit.type === "put_node" ? [edit.node] : []) : [];
+    const previousNodes = project.nodes.map((node: CanvasNodeData) => {
+        const restored = restoredEntities.find((item) => item.id === node.id);
+        return restored ? { ...node, metadata: { ...node.metadata, images: [...restored.metadata?.images || [], ...node.metadata?.images || []], texts: [...restored.metadata?.texts || [], ...node.metadata?.texts || []] } } : node;
     });
-    res.json({ project: result });
+    const restoredEdges = input.command.type === "restore_edit" ? command!.graphEdits.flatMap((edit) => edit.type === "put_connection" ? [edit.connection] : []) : [];
+    const persisted = persistCanvasGraph(nextNodes as CanvasNodeData[], nextConnections, { nodes: [...restoredEntities as CanvasNodeData[], ...previousNodes], connections: [...project.connections, ...restoredEdges] });
+    if (patch.nodes) patch.nodes = persisted.nodes;
+    if (patch.connections) patch.connections = persisted.connections;
+    const values: unknown[] = [nextRevision, id, userId];
+    Object.entries(patch).forEach(([key, value]) => values.push(key === "activeChatId" || key === "title" || key === "backgroundMode" || key === "showImageInfo" ? value : JSON.stringify(value)));
+    const assignmentSql = Object.entries(patch).map(([key], index) => `${columns[key]}=$${index + 4}`);
+    await client.query(`UPDATE canvas_projects SET ${assignmentSql.join(",")}${assignmentSql.length ? "," : ""} content_revision=$1,updated_at=now() WHERE id=$2 AND user_id=$3`, values);
+    if (input.command.type === "restore_edit") {
+        const tasks = await client.query("UPDATE generation_tasks SET canvas_attached=false WHERE user_id=$1 AND canvas_project_id=$2 AND canvas_node_id=ANY($3::text[]) RETURNING id", [userId, id, persisted.nodes.map((node) => node.id)]);
+        for (const task of tasks.rows) await attachCanvasTask(task.id, client);
+    }
+    const updated = canvasProject(await findCanvasProject(userId, id, client));
+    const confirmedCommand = { ...command!, patch: Object.fromEntries(Object.keys(command!.patch).map((key) => [key, updated[key as keyof typeof updated]])), graphEdits: command!.graphEdits.map((edit) => edit.type === "put_node" ? { ...edit, node: updated.nodes.find((node: CanvasNodeData) => node.id === edit.node.id)! } : edit.type === "put_connection" ? { ...edit, connection: updated.connections.find((edge: { id: string }) => edge.id === edit.connection.id)! } : edit).concat(implicitDeletedEdges.map((edge: { id: string }) => ({ type: "delete_connection", id: edge.id }))) };
+    if (inverse) inverse.after = confirmedCommand;
+    if (input.command.type === "restore_edit") await client.query("UPDATE canvas_project_commands SET inverse=jsonb_set(inverse,$3::text[],$4::jsonb) WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId, [input.command.direction === "undo" ? "before" : "after"], JSON.stringify(confirmedCommand)]);
+    await client.query("INSERT INTO canvas_project_commands (project_id,operation_id,base_revision,base_generation_revision,command,result,inverse) VALUES ($1,$2,$3,$4,$5,$6,$7)", [id, input.operationId, input.baseRevision, input.baseGenerationRevision, JSON.stringify(input.command), JSON.stringify({ contentRevision: updated.contentRevision, generationRevision: updated.generationRevision }), JSON.stringify(inverse)]);
+    return updated;
+}
+businessRouter.post("/projects/:id/commands", async (req, res) => {
+    const project = await transaction((client) => applyCanvasCommand(res.locals.user.id, requireUuid(req.params.id), req.body, client));
+    res.json({ project });
 });
 businessRouter.delete("/projects/:id", async (req, res) => {
     const id = requireUuid(req.params.id), userId = res.locals.user.id;

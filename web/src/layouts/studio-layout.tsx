@@ -8,17 +8,21 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import "./studio.css";
 import { features } from "@/constant/features";
 import { useOneNavigation } from "@/hooks/use-one-navigation";
+import { useServerAgentActions } from "@/hooks/use-server-agent-actions";
+import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 
 const links = [
     { to: "/studio", label: "图片创作", icon: PenLine },
-    { to: "/prompts", label: "灵感广场", icon: Sparkles },
     { to: "/canvas", label: "画布ONE", icon: Maximize2 },
     { to: "/video", label: "视频创作", icon: Video },
     { to: "/audio", label: "音频创作", icon: AudioLines },
     { to: "/assets", label: "我的作品", icon: Images },
+    { to: "/prompts", label: "灵感广场", icon: Sparkles },
 ].filter(({ to }) => (to !== "/canvas" || features.canvas) && (to !== "/video" || features.video));
 
 export default function StudioLayout({ children }: { children: ReactNode }) {
+    useServerAgentActions();
+    const agentProject=useServerAgentStore(state=>state.lastProjectId);
     const { homeLink, refresh } = useOneNavigation();
     const { pathname } = useLocation();
     const navigate = useNavigate();
@@ -46,6 +50,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
                     </header>
                     <nav className="studio-navigation" aria-label="主导航">
                         <a {...homeLink} className="studio-nav-item aria-disabled:opacity-40"><span>首页</span></a>
+                        {features.serverAgent&&agentProject?<button className="studio-nav-item" onClick={()=>{useServerAgentStore.setState({open:true});navigate(`/canvas/${agentProject}`);}}><Bot size={18}/><span>返回创作助手</span></button>:null}
                         {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
                         {features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
                     </nav>

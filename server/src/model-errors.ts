@@ -1,6 +1,29 @@
 import { HttpError } from "./http.js";
+import { agentImageInputNotice } from "../../shared/agent.js";
 
 const messages: Record<string, string> = {
+    AGENT_OPERATION_CONFLICT: "工具调用标识对应的参数已变化，已拒绝重复执行。",
+    AGENT_DISABLED: "画布助手尚未开放，需先确认运行边界并完成联调。",
+    AGENT_THREAD_NOT_FOUND: "会话不存在或不属于当前画布。", AGENT_RUN_NOT_FOUND: "运行不存在或无权访问。",
+    AGENT_THREAD_BUSY: "当前会话仍有活动运行，请继续、停止或新建会话。", AGENT_SUBMISSION_CONFLICT: "原提交内容已变化，请先确认原运行。",
+    AGENT_MODEL_UNAVAILABLE: "此模型尚未验证 Agent 原生工具调用，或已停用，请联系管理员。",
+    AGENT_IMAGE_UNSUPPORTED:agentImageInputNotice,
+    AGENT_MEDIA_UNVERIFIED: "此媒体模型尚未登记为已验证可用，请联系管理员后再提交生成。",
+    AGENT_WAIT_CHANGED: "等待事项已变化，请刷新会话后处理。", AGENT_CONFIRMATION_CHANGED: "节点、模型、参数或素材已变化，原确认失效，请拒绝旧范围并重新准备。",
+    AGENT_COMPACTION_FAILED: "历史压缩未得到可用摘要，原始历史与原上下文已保留；不会自动重试。",
+    AGENT_CONTEXT_CHECKPOINT_INVALID: "历史摘要检查点无效，已停止并保留原始记录，请联系管理员。",
+    AGENT_CONTEXT_LIMIT: "当前请求或保留的近期轮次仍超过可用上下文，请缩小任务或新建会话；原始历史已保留。", AGENT_BATCH_LIMIT: "本批操作超过已确认规模，请缩小范围。",
+    AGENT_STORAGE_VERSION: "会话存储版本不受支持，已拒绝覆盖原数据。", AGENT_UNKNOWN_NOT_RETRYABLE: "模型结果未知，不能自动重发，请先结束原运行。",
+    AGENT_MODEL_OUTPUT_LIMIT: "模型服务报告本次输出达到限制（包含思考），返回内容被截断，本次工具操作未执行。请按镜头分步准备后再发送；原运行不会自动重试。",
+    AGENT_SKILL_NOT_FOUND:"创作规则已删除或不可用，请重新选择。", AGENT_SKILL_CHANGED:"创作规则已被更新，请重新打开后保存。", AGENT_SKILL_FILE_NOT_FOUND:"当前已加载规则中没有这个附属文件。",
+    AGENT_CANVAS_NOT_READ:"请先读取当前节点再修改画布，原内容保留。", AGENT_CONNECTION_NOT_FOUND:"连线已变化或不存在，请重新读取画布。", AGENT_GROUP_INVALID:"请选择至少两个实际成员创建分组。",
+    AGENT_NODE_EXISTS: "已有同名同来源的助手节点，请先读取并修改原节点；未新建副本。",
+    AGENT_NODE_NOT_EDITABLE: "草稿入口只修改助手未提交节点；用户已有普通文本请读取后使用确认修改入口。已提交任务和已有作品保留。",
+    AGENT_ANSWERS_REQUIRED:"请填写本次全部补充问题后再提交。",
+    AGENT_INVALID_TOOL_ARGUMENTS: "模型工具参数不符合定义，本次决定未执行；之前完成的节点保留，可以修正参数后继续。",
+    AGENT_INVALID_MODEL_RESPONSE: "模型返回拒绝、截断或无效工具参数，未执行该决定。", AGENT_MODEL_REJECTED: "模型请求被拒绝，未切换协议或自动重试。",
+    AGENT_MODEL_UNKNOWN: "模型结果未知，可能已计费；已停止自动执行，请查看原运行。",
+
     REFERENCE_IMAGE_TOO_LARGE: "参考图超过本站单张大小限制，请压缩或更换图片。",
     seedance_real_person_asset_required: "参考图可能包含真人，需先完成真人认证。当前暂不支持认证素材，请更换参考图。",
     CANVAS_REFERENCE_NOT_READY: "连接的参考节点为空或仍在生成，请等待完成或断开该引用后再生成",
