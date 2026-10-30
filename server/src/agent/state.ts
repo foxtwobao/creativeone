@@ -77,7 +77,9 @@ export const getNode = (project:any,id:string) => {
 };
 export async function command(client:Client,run:Run,callId:string,graphEdits:unknown[],patch:Record<string,unknown>={}) {
     const project = await applyCanvasCommand(run.user_id,run.project_id,{ operationId:`agent:${run.id}:${callId}`,baseRevision:Number(run.revision),baseGenerationRevision:Number(run.generation_revision),command:{type:"edit_project",graphEdits,patch} },client);
-    await client.query("UPDATE agent_runs SET revision=$2,generation_revision=$3 WHERE id=$1",[run.id,project.contentRevision,project.generationRevision]);
-    run.revision=project.contentRevision; run.generation_revision=project.generationRevision;
+    const touched=new Set(graphEdits.flatMap((edit:any)=>edit.type==="put_node"?[edit.node.id]:edit.type==="delete_node"?[edit.id]:[]));
+    const sources=Object.fromEntries(Object.entries(run.sources).flatMap(([id,hash])=>{if(!touched.has(id))return [[id,hash]];const node=project.nodes.find((node:any)=>node.id===id||node.entityId===id);return node?[[id,sourceHash(node)]]:[];}));
+    await client.query("UPDATE agent_runs SET revision=$2,generation_revision=$3,sources=$4 WHERE id=$1",[run.id,project.contentRevision,project.generationRevision,JSON.stringify(sources)]);
+    run.revision=project.contentRevision;run.generation_revision=project.generationRevision;run.sources=sources;
     return project;
 }

@@ -6,7 +6,7 @@ import type { PoolClient } from "pg";
 
 const positive=z.number().int().positive();
 const settingsShape={enabled:z.boolean(),globalConcurrency:positive,accountConcurrency:positive,inputCharacters:positive,
-    decisionBudget:positive,contextTokens:positive,recentContextTokens:positive,summaryTokens:positive,outputTokens:positive.nullable(),
+    decisionBudget:positive,modelRetries:z.number().int().nonnegative().default(agentSettingsDefaults.modelRetries),contextTokens:positive,recentContextTokens:positive,summaryTokens:positive,outputTokens:positive.nullable(),
     nodeBatch:positive,mediaBatch:positive,requestTimeoutMs:positive,scanIntervalMs:positive,pollIntervalMs:positive};
 export const agentSettingsSchema=z.object(settingsShape).strict().superRefine((value,ctx)=>{
     if(value.accountConcurrency>value.globalConcurrency)ctx.addIssue({code:"custom",path:["accountConcurrency"],message:"单账号并发不能超过全局并发"});
@@ -32,7 +32,8 @@ export async function saveAgentSettings(value:unknown){
     });
 }
 export async function readAgentConfig(client:Client=db):Promise<AgentConfig>{
-    const [{revision,...settings},channels]=await Promise.all([readAgentSettings(client),client.query("SELECT capability,models,model_capabilities FROM channels WHERE enabled ORDER BY capability")]);
+    const {revision,...settings}=await readAgentSettings(client);
+    const channels=await client.query("SELECT capability,models,model_capabilities FROM channels WHERE enabled ORDER BY capability");
     const verifiedModels=channels.rows.filter(row=>row.capability==="text").flatMap(row=>row.models.filter((model:string)=>row.model_capabilities[model]?.agentEnabled===true).map((model:string)=>({model,protocol:"responses" as const,imageInput:row.model_capabilities[model].imageInput===true})));
     const verifiedMediaModels=channels.rows.filter(row=>row.capability!=="text").flatMap(row=>row.models.filter((model:string)=>row.model_capabilities[model]?.agentEnabled===true));
     return agentConfigSchema.parse({...settings,outputTokens:settings.outputTokens??undefined,verifiedModels,verifiedMediaModels});

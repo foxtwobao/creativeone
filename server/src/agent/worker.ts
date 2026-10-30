@@ -2,21 +2,19 @@ import pg from "pg";
 import { agentSettingsDefaults } from "../../../shared/agent-settings.js";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
-import { APICallError } from "ai";
 import { db, transaction } from "../db.js";
 import { env } from "../config.js";
-import { ensureKey, modelProvider } from "../tokenone.js";
+import { ensureKey } from "../tokenone.js";
 import { findCanvasProject } from "../business.js";
 import { modelErrorMessage } from "../model-errors.js";
 import { HttpError } from "../http.js";
 import { readModelPricing } from "../account-pricing.js";
 import { readAgentConfig,readAgentSettings, AGENT_STORAGE_VERSION } from "./config.js";
-import { agentEvents } from "./events.js";
-import { agentDecision, expandAgentImages } from "./model.js";
-import { applyCompaction, contextCheckpoint, modelContext, planCompaction, estimatedInputTokens, isContextRejection } from "./memory.js";
+import { requestAgentModel } from "./model-request.js";
+import { applyCompaction, contextCheckpoint, modelContext, planCompaction, estimatedInputTokens } from "./memory.js";
 import { coreRules, nodeRules } from "./skills.js";
 import { agentImageInputNotice } from "../../../shared/agent.js";
-import { assertSources, executeTool, associatedTasks, taskResults, ToolParameterError } from "./tools.js";
+import { assertSources, refreshSources, executeTool, associatedTasks, taskResults, ToolParameterError } from "./tools.js";
 import { listSkills } from "./skill-store.js";
 import { readCreativeState } from "./creative-state.js";
 import { authorizationPause, lockRun, setState, item, saveReceipt, finishStep, type Run, type Client } from "./state.js";
@@ -88,9 +86,11 @@ export async function executeAgentRun(id:string) {
                 if (step?.status === "decided") return {run,step};
                 const limits=run.model_config.limits;
                 if (run.decision_count-run.budget_start.decisions >= limits.decisionBudget) {
+                    await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[id]);
                     await setState(client,run,"waiting_input",{type:"budget",question:`本轮已达到 ${limits.decisionBudget} 次模型调用，已有成果已保存。继续可能产生额外推理费用。`});
                     return;
                 }
+                if(step?.status==="finished"&&step.request.retry?.pending)return {run,request:step.request};
                 const project=await findCanvasProject(run.user_id,run.project_id,client);
                 await assertSources(run,project);
                 const catalog=await listSkills(client,run.user_id),creativeState=await readCreativeState(client,run.thread_id);
@@ -147,6 +147,7 @@ export async function executeAgentRun(id:string) {
                         if (["AGENT_SOURCE_CHANGED","PROJECT_REVISION_CONFLICT","CANVAS_NODE_NOT_FOUND","AGENT_CONFIRMATION_CHANGED","AGENT_BATCH_LIMIT","AGENT_CONTEXT_LIMIT","AGENT_CANVAS_NOT_READ"].includes(code)) {
                             await transaction(async client => {
                                 run=await lockRun(client,id,initial.user_id,token);
+                                if(["AGENT_SOURCE_CHANGED","PROJECT_REVISION_CONFLICT","CANVAS_NODE_NOT_FOUND","AGENT_CONFIRMATION_CHANGED","AGENT_CANVAS_NOT_READ"].includes(code)&&await refreshSources(client,run,await findCanvasProject(run.user_id,run.project_id,client,true),code!=="AGENT_SOURCE_CHANGED")){await setState(client,run,"queued");return;}
                                 await setState(client,run,"waiting_input",{type:"conflict",question:"画布输入、确认范围或任务规模需要调整。已有结果已保存；使用当前画布继续时将放弃尚未执行的旧决定。",code});
                             },owner);
                             return;
@@ -170,83 +171,7 @@ export async function executeAgentRun(id:string) {
                 if (current.status !== "running") return;
                 continue;
             }
-            // Authorization is checked for every request, before recording dispatch intent.
-            if (run.model_config.provider !== modelProvider || !currentConfig.verifiedModels.some(entry => entry.model === run.model_config.model)) throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-            const channel=(await owner.query("SELECT id FROM channels WHERE id=$1 AND enabled AND capability='text' AND models ? $2",[run.model_config.channelId,run.model_config.model])).rows[0];
-            if (!channel) throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-            const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(run.model_config.limits.requestTimeoutMs)]);
-            const user=(await owner.query("SELECT * FROM users WHERE id=$1",[run.user_id])).rows[0];
-            const key=await ensureKey(user,id,{signal});
-            const messages=state.request!.kind === "compaction" ? state.request!.messages : await expandAgentImages(run.user_id,state.request!.messages,run.model_config.imageInput);
-            const dispatchConfig=await readAgentConfig(owner);
-            if(!dispatchConfig.enabled)return;
-            if(!dispatchConfig.verifiedModels.some(entry=>entry.model===run.model_config.model))throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-            const step=await transaction(async client => {
-                run=await lockRun(client,id,initial.user_id,token);
-                await assertSources(run,await findCanvasProject(run.user_id,run.project_id,client));
-                const step=run.decision_count+1,itemId=randomUUID();
-                await client.query("INSERT INTO agent_steps(run_id,step,item_id,status,request,kind) VALUES($1,$2,$3,'requesting',$4,$5)",[id,step,itemId,JSON.stringify(state.request),state.request!.kind]);
-                await client.query("UPDATE agent_runs SET decision_count=$2 WHERE id=$1",[id,step]);
-                if (state.request!.kind === "compaction") {
-                    await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','\"required\"') WHERE id=$1",[id]);
-                    await item(client,run,"system","正在压缩历史上下文，完整历史保留；摘要推理计入本轮预算。",{kind:"compaction"},itemId);
-                }
-                return {step,itemId};
-            },owner);
-            try {
-                const result=await agentDecision(run.model_config.model,key.key,state.request!.system,messages,run.model_config.limits,signal,state.request!.kind === "compaction" ? "summary" : "decision",state.request!.kind !== "decision" ? undefined : async text => {
-                    const detail={step:step.step,streaming:true};
-                    const updated=await owner.query("INSERT INTO agent_items(thread_id,turn_id,item_id,role,text,detail) SELECT thread_id,id,$2,'assistant',$3,$4 FROM agent_runs WHERE id=$1 AND execution_token=$5 AND status='running' ON CONFLICT(item_id) DO UPDATE SET text=EXCLUDED.text WHERE agent_items.thread_id=EXCLUDED.thread_id AND agent_items.turn_id=EXCLUDED.turn_id AND agent_items.detail->>'streaming'='true' RETURNING item_id",[id,step.itemId,text,JSON.stringify(detail),token]);
-                    if (updated.rowCount) {
-                        agentEvents.emit(run.thread_id,{threadId:run.thread_id,turnId:id,itemId:step.itemId,role:"assistant",text,detail});
-                        await owner.query("SELECT pg_notify('creativeone_agent_items',$1)",[JSON.stringify({threadId:run.thread_id,turnId:id,itemId:step.itemId})]);
-                    }
-                });
-                await transaction(async client => {
-                    run=await lockRun(client,id,initial.user_id,token);
-                    await client.query("UPDATE agent_steps SET status='decided',decision=$3,usage=$4 WHERE run_id=$1 AND step=$2",[id,step.step,JSON.stringify(result.decision),JSON.stringify(result.usage)]);
-                    await client.query("UPDATE agent_runs SET token_count=token_count+$2 WHERE id=$1",[id,result.usage.totalTokens || 0]);
-                    if (state.request!.kind === "decision") {
-                        const estimated=estimatedInputTokens(state.request!.system,state.request!.messages,1);
-                        if (estimated && result.usage.inputTokens) await client.query("UPDATE agent_runs SET input_token_ratio=GREATEST(input_token_ratio,$2) WHERE id=$1",[id,result.usage.inputTokens/estimated]);
-                        await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','null') WHERE id=$1",[id]);
-                        await item(client,run,"assistant",result.decision.text,{step:step.step,tools:result.decision.calls.map(call => ({name:call.toolName,callId:call.toolCallId})),usage:result.usage,argumentErrors:result.decision.argumentErrors},step.itemId);
-                        if (!result.decision.valid) {
-                            if (result.decision.errorCode === "AGENT_INVALID_TOOL_ARGUMENTS") await setState(client,run,"waiting_input",{type:"tool_arguments",question:"模型的工具参数不符合当前定义，本次决定均未执行；之前完成的节点保留。可以修正参数并继续，这会再次请求推理模型。",errors:result.decision.argumentErrors},result.decision.errorCode);
-                            else await setState(client,run,"failed",null,result.decision.errorCode);
-                        }
-                    }
-                },owner);
-                if (!result.decision.valid && state.request!.kind === "decision") return;
-            } catch (error) {
-                if (disconnected) return;
-                const recover=await transaction(async client => {
-                    run=await lockRun(client,id,initial.user_id,token);
-                    const known=APICallError.isInstance(error) && error.statusCode !== undefined;
-                    if (APICallError.isInstance(error)) await client.query("UPDATE agent_steps SET decision=$3 WHERE run_id=$1 AND step=$2",[id,step.step,JSON.stringify({invalid:true,status:error.statusCode,body:error.responseBody})]);
-                    if (known && state.request!.kind === "compaction") {
-                        await client.query("UPDATE agent_steps SET status='finished' WHERE run_id=$1 AND step=$2",[id,step.step]);
-                        await setState(client,run,"waiting_input",{type:"compaction_failed",question:"上游拒绝历史摘要请求，原历史与原上下文保留。可以明确重试压缩，或结束本轮并缩小输入；不会自动重复请求。"},"AGENT_COMPACTION_FAILED");
-                        return false;
-                    }
-                    if (isContextRejection(error)) {
-                        await client.query("UPDATE agent_steps SET status='finished' WHERE run_id=$1 AND step=$2",[id,step.step]);
-                        if (contextCheckpoint(run).recovery === "applied") {
-                            await setState(client,run,"waiting_input",{type:"context_limit",question:"历史压缩后，上游仍拒绝当前上下文。原历史保留，请缩小当前输入或新建会话；不会再次自动请求。"},"AGENT_CONTEXT_LIMIT");
-                            return false;
-                        }
-                        await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','\"required\"') WHERE id=$1",[id]);
-                        await item(client,run,"system","上游明确拒绝上下文过长，将压缩完整旧轮次后继续一次；原始历史保留。");
-                        return true;
-                    }
-                    await client.query("UPDATE agent_steps SET status='unknown' WHERE run_id=$1 AND step=$2",[id,step.step]);
-                    await setState(client,run,known ? "failed" : "unknown",known ? null : {type:"unknown_model",question:"模型响应未完整保存，可能已计费，不会自动重发。请结束此运行后再决定新尝试。"},known ? "AGENT_MODEL_REJECTED" : "AGENT_MODEL_UNKNOWN");
-                    await item(client,run,"system",known ? "模型请求被拒绝；未自动切换协议或重试。" : "模型结果未知；未自动重发。");
-                    return false;
-                },owner);
-                if (recover) continue;
-                return;
-            }
+            if(!await requestAgentModel(owner,run,state.request!,token,controller.signal))return;
         }
     } catch (error) {
         if (!disconnected) await transaction(async client => {
@@ -255,6 +180,7 @@ export async function executeAgentRun(id:string) {
             const run=await lockRun(client,id,row.user_id,token);
             const code=error instanceof HttpError ? error.code : "AGENT_EXECUTION_FAILED";
             if (["AGENT_OPERATION_CONFLICT","AGENT_CONTEXT_CHECKPOINT_INVALID"].includes(code)) {await setState(client,run,"failed",null,code);return;}
+            if(["AGENT_SOURCE_CHANGED","CANVAS_NODE_NOT_FOUND"].includes(code)&&await refreshSources(client,run,await findCanvasProject(run.user_id,run.project_id,client,true))){await setState(client,run,"queued");return;}
             await setState(client,run,"waiting_input",code === "AGENT_SOURCE_CHANGED" || code === "CANVAS_NODE_NOT_FOUND" ? {type:"conflict",question:"画布来源已变化，已有成果保留。请使用当前画布重新决策。",code} : authorizationPause(code));
         },owner).catch(() => undefined);
     } finally {

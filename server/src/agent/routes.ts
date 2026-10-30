@@ -13,7 +13,7 @@ import { coreRules } from "./skills.js";
 import { storedFileInfo } from "../storage.js";
 import { subscribeAgentThread } from "./events.js";
 import { workbenchManifest } from "./site-tools.js";
-import { publicNode, mediaManifest, taskResults, toolArgumentErrors } from "./tools.js";
+import { publicNode, mediaManifest, taskResults, toolArgumentErrors, refreshSources } from "./tools.js";
 import { authorizationPause, item, getNode, lockRun, publicRun, readThread, setState, saveReceipt, sourceHash, finishStep, type Client, type Run } from "./state.js";
 import { cancelActiveRun, resolveTaskWait } from "./worker.js";
 import { listSkills, readSkill, loadSkill, saveSkill, deleteSkill } from "./skill-store.js";
@@ -117,13 +117,7 @@ export async function inputRun(userId:string,id:string,value:unknown) {
         else if (input.action === "continue_budget" && type === "budget") await client.query("UPDATE agent_runs SET budget_start=$2 WHERE id=$1",[id,JSON.stringify({decisions:run.decision_count,tokens:Number(run.token_count)})]);
         else if (input.action === "refresh" && type === "conflict") {
             const project=await findCanvasProject(userId,run.project_id,client,true);
-            const step=(await client.query("SELECT * FROM agent_steps WHERE run_id=$1 AND status='decided' ORDER BY step DESC LIMIT 1",[id])).rows[0];
-            if (step) {
-                for (const call of step.decision.calls) if (!(await client.query("SELECT 1 FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[id,call.toolCallId])).rowCount) await saveReceipt(client,run,call,{error:"AGENT_SOURCE_CHANGED",message:"用户要求用当前画布重新决策，未执行旧决定。"});
-                await finishStep(client,run,step);
-            }
-            const nodes=Object.keys(run.sources).flatMap(id => {try {return [getNode(project,id)];} catch {return [];}});
-            await client.query("UPDATE agent_runs SET sources=$2,revision=$3,generation_revision=$4,context_anchor=jsonb_array_length(context),context=context || $5::jsonb WHERE id=$1",[id,JSON.stringify(Object.fromEntries(nodes.map(node => [node.id,sourceHash(node)]))),project.content_revision,project.generation_revision,JSON.stringify([{role:"user",content:`用户目标：${run.input.goal}\n请根据当前画布重新判断；缺失来源不再存在。${input.text || ""}\n${JSON.stringify(nodes.map(node => publicNode(node,true)))}`}])]);
+            await refreshSources(client,run,project,true,input.text || "");
         } else if (input.action === "retry_compaction" && ["compaction_failed","context_limit"].includes(type)) {
             await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','\"required\"') WHERE id=$1",[id]);
         } else if (input.action === "retry_authorization" && type === "authorization") {

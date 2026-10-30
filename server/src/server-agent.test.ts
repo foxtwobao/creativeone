@@ -59,7 +59,7 @@ before(async () => {
     }
     await db.query("INSERT INTO channels(id,name,capability,models,audio_types) VALUES($1,'audio','audio',$2,$3)",[randomUUID(),JSON.stringify(["audio-model","lyria-model","suno-model"]),JSON.stringify({"audio-model":"gemini-tts","lyria-model":"lyria","suno-model":"suno"})]);
     await db.query("UPDATE channels SET model_capabilities=(SELECT jsonb_object_agg(model,jsonb_build_object('agentEnabled',model<>'unverified-text','imageInput',model='vision-writer-model')) FROM jsonb_array_elements_text(models) model)");
-    await saveAgentSettings({...agentSettingsDefaults,enabled:true,revision:0});agentConfig=await readAgentConfig();
+    await saveAgentSettings({...agentSettingsDefaults,modelRetries:0,enabled:true,revision:0});agentConfig=await readAgentConfig();
 });
 after(async () => {fixture.restore();await db.end();await rm(testMedia,{recursive:true,force:true});});
 test("SDK parses native tools, forwards tool results and usage without executing effects",async () => {
@@ -103,8 +103,8 @@ test("unknown dispatch is never resent, including abandoned requesting checkpoin
 test("domain writes and tool receipts roll back together",async () => {
     const ctx=await setup();await assert.rejects(() => transaction(async client => {const run=await lockRun(client,ctx.id,ctx.user),call={toolCallId:randomUUID(),toolName:"create_text_nodes",input:{nodes:[{title:"回滚",text:"不应保存",sourceNodeIds:[]}]}};const result=await executeTool(client,run,call);await saveReceipt(client,run,call,result);throw new Error("crash");}));assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
 });
-test("edited sources pause; explicit refresh uses current saved content",async () => {
-    const ctx=await setup(),current=await findCanvasProject(ctx.user,ctx.project);await transaction(client => applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(current.content_revision),baseGenerationRevision:0,command:{type:"edit_project",graphEdits:[{type:"put_node",node:{...current.nodes[0],metadata:{content:"用户最新正文"}}}]}},client));await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.wait.type,"conflict");await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"refresh"});responses.push(modelText("按照当前正文处理"));await executeAgentRun(ctx.id);assert.ok(JSON.stringify(fixture.requests.at(-1)).includes("用户最新正文"));assert.equal((await record(ctx.id)).status,"completed");
+test("existing paused source conflicts still accept explicit refresh with current saved content",async () => {
+    const ctx=await setup(),current=await findCanvasProject(ctx.user,ctx.project);await transaction(client => applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(current.content_revision),baseGenerationRevision:0,command:{type:"edit_project",graphEdits:[{type:"put_node",node:{...current.nodes[0],metadata:{content:"用户最新正文"}}}]}},client));await db.query("UPDATE agent_runs SET status='waiting_input',wait=$2,wait_version=wait_version+1 WHERE id=$1",[ctx.id,JSON.stringify({type:"conflict"})]);const run=await record(ctx.id);await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"refresh"});responses.push(modelText("按照当前正文处理"));await executeAgentRun(ctx.id);assert.ok(JSON.stringify(fixture.requests.at(-1)).includes("用户最新正文"));assert.equal((await record(ctx.id)).status,"completed");
 });
 test("media confirmation accepts one existing task, then backend scan resumes without a page",async () => {
     const ctx=await setup(),target=await prepare(ctx);responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.status,"waiting_confirmation");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
@@ -138,7 +138,7 @@ test("partial media success continues with selected results; stopped parents nev
 test("deleted media targets and changes after approval cannot accept a task",async () => {
     for (const remove of [false,true]) {
         const ctx=await setup(),target=await prepare(ctx);responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);const run=await record(ctx.id);await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});const project=await findCanvasProject(ctx.user,ctx.project),node=project.nodes.find((node:any) => node.entityId === target.id);
-        await transaction(client => applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[remove ? {type:"delete_node",id:node.id} : {type:"put_node",node:{...node,metadata:{...node.metadata,prompt:"确认后被改写"}}}]}},client));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).wait.type,"conflict");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
+        await transaction(client => applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[remove ? {type:"delete_node",id:node.id} : {type:"put_node",node:{...node,metadata:{...node.metadata,prompt:"确认后被改写"}}}]}},client));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"queued");assert.equal((await record(ctx.id)).wait,null);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
     }
 });
 test("global and per-account slots bound execution while other accepted runs remain queued",async () => {
@@ -797,7 +797,7 @@ test("admin settings require admin rights, validate complete boundaries and reje
         assert.equal((await api.call(randomUUID(),"GET","/admin/agent")).status,403);
         assert.equal((await api.call(randomUUID(),"PUT","/admin/agent",original)).status,403);
         assert.deepEqual((await api.call(admin,"GET","/admin/agent")).body.settings,original);
-        for(const patch of [{globalConcurrency:0},{accountConcurrency:original.globalConcurrency+1},{decisionBudget:1.5},{contextTokens:original.recentContextTokens+original.summaryTokens},{outputTokens:0},{extra:1}])assert.equal((await api.call(admin,"PUT","/admin/agent",{...original,...patch})).status,400);
+        for(const patch of [{modelRetries:-1},{modelRetries:1.5},{globalConcurrency:0},{accountConcurrency:original.globalConcurrency+1},{decisionBudget:1.5},{contextTokens:original.recentContextTokens+original.summaryTokens},{outputTokens:0},{extra:1}])assert.equal((await api.call(admin,"PUT","/admin/agent",{...original,...patch})).status,400);
         assert.deepEqual(await readAgentSettings(),original);
         const writes=await Promise.all([api.call(admin,"PUT","/admin/agent",{...original,decisionBudget:12}),api.call(admin,"PUT","/admin/agent",{...original,decisionBudget:18})]);
         assert.deepEqual(writes.map(result=>result.status).sort(),[200,409]);
@@ -879,4 +879,142 @@ test("database dispatch capacity accounts for workers held by other connections 
         const before=fixture.requests.length;await executeAgentRun(next.id);assert.equal((await record(next.id)).status,"queued");assert.equal(fixture.requests.length,before);
         await owner.query("SELECT pg_advisory_unlock_all()");responses.push(modelText("旧连接已释放"));await executeAgentRun(next.id);assert.equal((await record(next.id)).status,"completed");
     }finally{await owner.end();await cancelRun(occupied.user,occupied.id);await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+});
+
+async function retrySetup(modelRetries=5,patch:Record<string,number>={}){
+    const original=await readAgentSettings();await saveAgentSettings({...original,modelRetries,...patch});
+    try{return await setup();}finally{await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
+}
+const transient=(status=503)=>({httpStatus:status,headers:{"retry-after":"0"}});
+async function pendingRetry(id:string){
+    for(let i=0;i<200;i++){const step=(await db.query("SELECT * FROM agent_steps WHERE run_id=$1 AND request#>>'{retry,pending}'='true' ORDER BY step DESC LIMIT 1",[id])).rows[0];if(step)return step;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error("Retry checkpoint not saved");
+}
+test("text retry policy handles transient failures and Retry-After without retrying permanent errors",async()=>{
+    const {APICallError}=await import("ai"),{retryableAgentError,agentRetryDelay}=await import("./agent/model-request.js");
+    const error=(statusCode:number|undefined,headers?:Record<string,string>)=>new APICallError({message:"fixture",url:"https://tokenone.test/v1/responses",requestBodyValues:{},statusCode,responseHeaders:headers,isRetryable:true});
+    for(const status of [408,409,429,500,502,503,504,undefined])assert.equal(retryableAgentError(error(status)),true);
+    for(const status of [400,401,403,404,422])assert.equal(retryableAgentError(error(status)),false);
+    assert.equal(retryableAgentError(new Error("AGENT_STREAM_INCOMPLETE")),true);assert.equal(retryableAgentError(new Error("database unavailable")),false);
+    assert.equal(agentRetryDelay(error(429,{"retry-after":"3"}),2000),3000);assert.equal(agentRetryDelay(error(503,{"retry-after-ms":"750"}),2000),750);assert.equal(agentRetryDelay(error(503,{"retry-after":"invalid"}),4000),4000);
+    const dated=agentRetryDelay(error(503,{"retry-after":new Date(Date.now()+5000).toUTCString()}),2000);assert.ok(dated>3000&&dated<=5000);
+});
+test("text inference shares a configurable five-retry budget and counts all six requests durably",async()=>{
+    const ctx=await retrySetup(),before=fixture.requests.length,keys=fixture.ensureRequests.length;
+    assert.equal((await record(ctx.id)).model_config.limits.modelRetries,5);assert.equal((await readAgentSettings()).modelRetries,0);
+    responses.push(transient(429),transient(500),transient(502),transient(503),transient(504),modelText("自动恢复完成"));await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,6);assert.equal(fixture.requests.length,before+6);assert.equal(fixture.ensureRequests.length,keys+6);assert.equal(Number(run.token_count),25);
+    const steps=(await db.query("SELECT step,status,request,decision FROM agent_steps WHERE run_id=$1 ORDER BY step",[ctx.id])).rows;assert.deepEqual(steps.map(step=>step.request.retry.attempt),[1,2,3,4,5,6]);assert.ok(steps.every(step=>step.status==="finished"));assert.equal(new Set(steps.map(step=>step.request.retry.deadline)).size,1);
+    assert.equal((await db.query("SELECT count(*) FROM agent_items WHERE turn_id=$1 AND detail->>'kind'='model_retry'",[ctx.id])).rows[0].count,"5");
+});
+test("retry exhaustion stops known failures and never restarts the accepted run automatically",async()=>{
+    const ctx=await retrySetup(),before=fixture.requests.length;responses.push(...Array.from({length:6},()=>transient()));await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);assert.equal(run.status,"failed");assert.equal(run.error,"AGENT_MODEL_RETRIES_EXHAUSTED");assert.equal(run.decision_count,6);await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+6);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
+});
+test("permanent responses and incomplete or invalid model decisions never consume automatic retries",async()=>{
+    for(const value of [{httpStatus:400},{httpStatus:401},{httpStatus:403},{httpStatus:404},{...modelText(""),output:[{id:"refusal",type:"message",role:"assistant",status:"completed",content:[{type:"refusal",refusal:"refused"}]}]},async()=>new Response("data: {}\n\n",{headers:{"Content-Type":"text/event-stream"}}),{...modelText("截断"),status:"incomplete",incomplete_details:{reason:"max_output_tokens"}},modelTool("create_text_nodes",{nodes:[{title:"无正文"}]})]){
+        const ctx=await retrySetup(),before=fixture.requests.length;responses.push(value);await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+1);assert.equal((await record(ctx.id)).decision_count,1);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);await cancelRun(ctx.user,ctx.id);
+    }
+});
+test("an interrupted stream discards complete-looking tools and retries without creating duplicate nodes",async()=>{
+    const ctx=await retrySetup(),call=modelTool("create_text_nodes",{nodes:[{title:"只创建一次",text:"真实正文",sourceNodeIds:[ctx.source]}]}),before=fixture.requests.length;
+    const text=await modelStream({...call,output:[...modelText("准备保存").output,...call.output]}).text(),truncated=text.slice(0,text.lastIndexOf("data: "));
+    responses.push(async()=>new Response(truncated,{headers:{"Content-Type":"text/event-stream"}}),call,modelText("已完成"));await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,3);assert.equal(fixture.requests.length,before+3);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.filter((node:any)=>node.title==="只创建一次").length,1);assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"1");
+    assert.equal((await db.query("SELECT count(*) FROM agent_items WHERE turn_id=$1 AND detail->>'incomplete'='true'",[ctx.id])).rows[0].count,"1");
+});
+test("automatic retries stop at the existing model-call pause boundary before another authorization or request",async()=>{
+    const ctx=await retrySetup(),before=fixture.requests.length,keys=fixture.ensureRequests.length;await db.query("UPDATE agent_runs SET decision_count=23 WHERE id=$1",[ctx.id]);responses.push(transient());await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.type,"budget");assert.equal(run.decision_count,24);assert.equal(fixture.requests.length,before+1);assert.equal(fixture.ensureRequests.length,keys+1);
+    await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"continue_budget"});responses.push(modelText("明确继续后完成"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal((await record(ctx.id)).decision_count,25);
+});
+test("cancelling retry backoff stops pending requests and the original total deadline includes Retry-After",{timeout:10000},async()=>{
+    const ctx=await retrySetup(),before=fixture.requests.length;responses.push({httpStatus:503});const work=executeAgentRun(ctx.id);const pending=await pendingRetry(ctx.id);assert.equal(pending.request.retry.attempt,1);assert.ok(pending.request.retry.retryAt>Date.now());await cancelRun(ctx.user,ctx.id);await work;assert.equal((await record(ctx.id)).status,"cancelled");assert.equal(fixture.requests.length,before+1);
+    const timeout=await retrySetup(5,{requestTimeoutMs:200});responses.push({httpStatus:429,headers:{"retry-after":"999999999"}});await executeAgentRun(timeout.id);assert.equal((await record(timeout.id)).decision_count,1);assert.equal((await record(timeout.id)).error,"AGENT_MODEL_RETRY_TIMEOUT");assert.equal((await record(timeout.id)).status,"failed");
+});
+test("summary transport retries count as calls and leave compaction history intact",async()=>{
+    const ctx=await retrySetup(),history=await longHistory(ctx),before=fixture.requests.length;responses.push(transient(),modelText("旧轮次摘要"),modelText("继续完成"));await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,3);assert.equal(fixture.requests.length,before+3);assert.deepEqual(run.context.slice(0,history.length),history);
+    assert.deepEqual((await db.query("SELECT kind FROM agent_steps WHERE run_id=$1 ORDER BY step",[ctx.id])).rows.map(row=>row.kind),["compaction","compaction","decision"]);
+});
+test("persisted retry backoff resumes across processes with its remaining attempt budget",{timeout:15000},async()=>{
+    const ctx=await retrySetup(1),child=spawn(process.execPath,["--import","tsx","src/fixtures/agent-worker-child.ts",ctx.id],{env:{...process.env,TEST_AGENT_RESPONSES:JSON.stringify([{httpStatus:503,headers:{"retry-after":"60"}}])},stdio:["ignore","pipe","pipe"]});
+    let exited=false;const exit=new Promise<void>(resolve=>child.on("exit",()=>{exited=true;resolve();}));
+    try{const pending=await pendingRetry(ctx.id);child.kill("SIGKILL");await exit;await db.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,retryAt}','0') WHERE run_id=$1 AND step=$2",[ctx.id,pending.step]);assert.match(await resumeChild(ctx.id,[transient()]),/"requests":1/);assert.equal((await record(ctx.id)).decision_count,2);assert.equal((await record(ctx.id)).error,"AGENT_MODEL_RETRIES_EXHAUSTED");}finally{if(!exited){child.kill("SIGKILL");await exit;}}
+});
+test("legacy zero-retry snapshots and crashed requesting checkpoints never gain new automatic requests",async()=>{
+    const old=await setup();await db.query("UPDATE agent_runs SET model_config=model_config #- '{limits,modelRetries}' WHERE id=$1",[old.id]);responses.push(transient());const before=fixture.requests.length;await executeAgentRun(old.id);assert.equal((await record(old.id)).status,"failed");assert.equal(fixture.requests.length,before+1);
+    const crashed=await retrySetup();await db.query("INSERT INTO agent_steps(run_id,step,item_id,status,request) VALUES($1,1,$2,'requesting','{}')",[crashed.id,randomUUID()]);await db.query("UPDATE agent_runs SET status='running',decision_count=1 WHERE id=$1",[crashed.id]);assert.match(await resumeChild(crashed.id,[]),/"requests":0/);assert.equal((await record(crashed.id)).status,"unknown");
+});
+test("network connection failures recover within the same text inference retry budget",async()=>{
+    const ctx=await retrySetup(1),before=fixture.requests.length;responses.push(new TypeError("connection reset"),modelText("连接已恢复"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal((await record(ctx.id)).decision_count,2);assert.equal(fixture.requests.length,before+2);
+});
+test("HTTP and interrupted streams share one retry allowance and uncertain exhaustion stays unknown",async()=>{
+    const ctx=await retrySetup(1),before=fixture.requests.length;responses.push(transient(429),async()=>{const text=await modelStream(modelText("未完成")).text();return new Response(text.slice(0,text.indexOf("\n\n")+2),{headers:{"Content-Type":"text/event-stream"}});});await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.status,"unknown");assert.equal(run.error,"AGENT_MODEL_RETRIES_EXHAUSTED",JSON.stringify((await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 ORDER BY step",[ctx.id])).rows));assert.equal(run.decision_count,2);assert.equal(fixture.requests.length,before+2);await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+2);
+});
+test("persisted retry deadlines expire without sending another request and preserve uncertainty",async()=>{
+    for(const known of [true,false]){
+        const ctx=await retrySetup(1),before=fixture.requests.length,request={kind:"decision",system:"fixture",messages:[{role:"user",content:"test"}],retry:{attempt:1,deadline:Date.now()+250,retryAt:Date.now()+60000,pending:true,known}};
+        await db.query("INSERT INTO agent_steps(run_id,step,item_id,status,request) VALUES($1,1,$2,'finished',$3)",[ctx.id,randomUUID(),JSON.stringify(request)]);await db.query("UPDATE agent_runs SET decision_count=1 WHERE id=$1",[ctx.id]);await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.status,known?"failed":"unknown");assert.equal(run.error,"AGENT_MODEL_RETRY_TIMEOUT");assert.equal(run.decision_count,1);assert.equal(fixture.requests.length,before);
+    }
+});
+test("authorization is rechecked during retry recovery and cannot be bypassed by the saved request",async()=>{
+    const ctx=await retrySetup(1),before=fixture.requests.length;responses.push({httpStatus:503});const work=executeAgentRun(ctx.id);
+    try{await pendingRetry(ctx.id);fixture.setDenied(true);await work;const run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.code,"APP_USER_AUTHORIZATION_REQUIRED");assert.equal(fixture.requests.length,before+1);fixture.setDenied(false);await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"retry_authorization"});responses.push(modelText("重新授权后完成"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal(fixture.requests.length,before+2);}finally{fixture.setDenied(false);await work;}
+});
+
+test("read media outputs remain usable after the Agent confirms its own generation",async()=>{
+    for(const spec of [
+        {kind:"image",model:"image-model",parameters:{size:"1024x1024"}},
+        {kind:"video",model:"video-model",parameters:{videoSize:"16:9",vquality:"720",seconds:"6",videoMode:"frames"}},
+        {kind:"audio",model:"audio-model",parameters:{audioInput:{mode:"single",text:"你好",voice:"Kore",speakers:[{name:"角色一",voice:"Puck"},{name:"角色二",voice:"Kore"}]}}},
+    ]){
+        const ctx=await setup();
+        try{
+            const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{title:"已读取的输出",...spec,prompt:"你好",sourceNodeIds:[ctx.source],referenceNodeIds:[]}]});
+            await recordedTool(ctx,"read_nodes",{nodeIds:prepared.nodes.map((node:any)=>node.id)});const target=prepared.nodes.find((node:any)=>node.type===spec.kind);
+            responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);const wait=await record(ctx.id);assert.equal(wait.status,"waiting_confirmation");
+            await confirmRun(ctx.user,ctx.id,{waitVersion:wait.wait_version,approve:true});responses.push(modelText("继续后台等待"));await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.status,"waiting_tasks");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");
+        }finally{responses.length=0;await cancelRun(ctx.user,ctx.id);}
+    }
+});
+test("a changed source queues a fresh decision without asking the user to click refresh",async()=>{
+    const ctx=await setup(),project=await findCanvasProject(ctx.user,ctx.project),before=fixture.requests.length;
+    await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{...project.nodes[0],metadata:{content:"更新后的正文"}}}]}},client));
+    await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"queued");assert.equal(fixture.requests.length,before);responses.push(modelText("按更新后的正文完成"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.ok(JSON.stringify(fixture.requests.at(-1)).includes("更新后的正文"));
+});
+async function changeSource(ctx:Awaited<ReturnType<typeof setup>>,content="用户更新的正文"){
+    const p=await findCanvasProject(ctx.user,ctx.project),node=p.nodes.find((node:any)=>node.id===ctx.source||node.entityId===ctx.source);
+    return transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(p.content_revision),baseGenerationRevision:Number(p.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{...node,metadata:{...node.metadata,content}}}]}},client));
+}
+test("source changes during model output discard stale tools and automatically plan from current data",async()=>{
+    const ctx=await setup();responses.push(async()=>{await changeSource(ctx);return Response.json(modelTool("create_text_nodes",{nodes:[{title:"旧决定不应执行",text:"旧正文",sourceNodeIds:[ctx.source]}]}));});await executeAgentRun(ctx.id);
+    let run=await record(ctx.id);assert.equal(run.status,"queued");assert.equal(run.wait,null);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);assert.equal((await db.query("SELECT result->>'error' AS error FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].error,"AGENT_SOURCE_CHANGED");
+    responses.push(modelTool("create_text_nodes",{nodes:[{title:"最新结果",text:"用户更新的正文对应结果",sourceNodeIds:[ctx.source]}]}),modelText("按当前画布完成"));await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,3);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,2);assert.ok(project.nodes.every((node:any)=>node.title!=="旧决定不应执行"));assert.ok(JSON.stringify(fixture.requests.at(-2)).includes("用户更新的正文"));
+});
+test("automatic refresh preserves already committed tools and skips only unfinished decisions",async()=>{
+    const ctx=await setup(),first=modelTool("create_text_nodes",{nodes:[{title:"已有成果",text:"已保存正文",sourceNodeIds:[ctx.source]}]}),second=modelTool("create_text_nodes",{nodes:[{title:"过期结果",text:"不要保存",sourceNodeIds:[ctx.source]}]});responses.push({...first,output:[...first.output,...second.output]});
+    const planned=await agentDecision("agent-model","test","rules",[{role:"user",content:"保存两项正文"}],{},new AbortController().signal);await db.query("INSERT INTO agent_steps(run_id,step,item_id,status,request,decision,kind) VALUES($1,1,$2,'decided','{}',$3,'decision')",[ctx.id,randomUUID(),JSON.stringify(planned.decision)]);await db.query("UPDATE agent_runs SET decision_count=1 WHERE id=$1",[ctx.id]);
+    await transaction(async client=>{const run=await lockRun(client,ctx.id,ctx.user),call=planned.decision.calls[0],result=await executeTool(client,run,call);await saveReceipt(client,run,call,result);});await changeSource(ctx);await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"queued");
+    responses.push(modelText("保留已有成果并反馈更新"));await executeAgentRun(ctx.id);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal((await record(ctx.id)).status,"completed");assert.equal(project.nodes.filter((node:any)=>node.title==="已有成果").length,1);assert.equal(project.nodes.some((node:any)=>node.title==="过期结果"),false);const receipts=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;assert.equal(receipts.length,2);assert.ok(receipts[0].result.nodes?.length);assert.equal(receipts[1].result.error,"AGENT_SOURCE_CHANGED");
+});
+test("changed sources revoke an approved media grant and require a new confirmation",async()=>{
+    const ctx=await setup(),target=await prepare(ctx);responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);let run=await record(ctx.id);await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});await changeSource(ctx);await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"queued");assert.equal(run.wait,null);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+    responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"waiting_confirmation");assert.notEqual(run.wait.approved,true);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
+});
+test("unrelated canvas edits automatically replan without overwriting the user's node",async()=>{
+    const ctx=await setup(),project=await findCanvasProject(ctx.user,ctx.project),other=randomUUID();await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{id:other,type:"text",title:"用户的新节点",position:{x:400,y:0},width:200,height:200,metadata:{content:"用户内容保留"}}}] }},client));
+    const call=()=>modelTool("create_text_nodes",{nodes:[{title:"助手结果",text:"用户要求保存的结果",sourceNodeIds:[ctx.source]}]});responses.push(call());await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"queued");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);responses.push(call(),modelText("完成"));await executeAgentRun(ctx.id);const saved=await findCanvasProject(ctx.user,ctx.project);assert.equal((await record(ctx.id)).status,"completed");assert.equal(saved.nodes.length,3);assert.equal(saved.nodes.find((node:any)=>node.id===other).metadata.content,"用户内容保留");assert.equal(saved.nodes.filter((node:any)=>node.title==="助手结果").length,1);
+});
+test("deleted tracked sources are reported in automatic planning instead of restoring deleted nodes",async()=>{
+    const ctx=await setup(),p=await findCanvasProject(ctx.user,ctx.project);await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(p.content_revision),baseGenerationRevision:Number(p.generation_revision),command:{type:"edit_project",graphEdits:[{type:"delete_node",id:ctx.source}] }},client));await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.status,"queued");assert.deepEqual(run.sources,{});assert.ok(JSON.stringify(run.context).includes("removedNodeIds"));responses.push(modelTool("request_user_input",{question:"原剧本已删除，请补充新的剧本来源。"}));await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.type,"question");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,0);await cancelRun(ctx.user,ctx.id);
+});
+test("source refresh after the last allowed request cannot bypass the model-call budget",async()=>{
+    const ctx=await setup(),before=fixture.requests.length;await db.query("UPDATE agent_runs SET decision_count=23 WHERE id=$1",[ctx.id]);responses.push(async()=>{await changeSource(ctx);return Response.json(modelTool("create_text_nodes",{nodes:[{title:"过期结果",text:"旧内容",sourceNodeIds:[ctx.source]}]}));});await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"queued");await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.wait.type,"budget");assert.equal(run.decision_count,24);assert.equal(fixture.requests.length,before+1);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);await cancelRun(ctx.user,ctx.id);
+});
+test("common Agent canvas commands update the fingerprints of their own tracked writes",async()=>{
+    const ctx=await setup(),{command,sourceHash}=await import("./agent/state.js"),{assertSources}=await import("./agent/tools.js");
+    await transaction(async client=>{const run=await lockRun(client,ctx.id,ctx.user),project=await findCanvasProject(ctx.user,ctx.project,client);await command(client,run,randomUUID(),[{type:"put_node",node:{...project.nodes[0],title:"已确认的新标题"}}]);const current=await findCanvasProject(ctx.user,ctx.project,client);assert.equal(run.sources[current.nodes[0].id],sourceHash(current.nodes[0]));await assertSources(run,current);});await cancelRun(ctx.user,ctx.id);
+});
+test("automatic source planning never reuses an approval to overwrite edited user text",async()=>{
+    const ctx=await setup();responses.push(modelTool("update_text_node",{nodeId:ctx.source,content:"提议的修改正文"}));await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.wait.type,"canvas_edit");await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});await changeSource(ctx,"用户自行修改的新正文");await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"queued");assert.equal(run.wait,null);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes[0].metadata.content,"用户自行修改的新正文");
+    responses.push(modelTool("update_text_node",{nodeId:ctx.source,content:"基于新正文重新提议的修改"}));await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"waiting_confirmation");assert.equal(run.wait.manifest.nodes[0].beforeContent,"用户自行修改的新正文");assert.notEqual(run.wait.approved,true);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes[0].metadata.content,"用户自行修改的新正文");await cancelRun(ctx.user,ctx.id);
 });

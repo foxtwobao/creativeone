@@ -32,7 +32,7 @@ export function mockAgentModel(responses:any[]) {
                 return requests.at(-1).stream && response instanceof Response && response.ok && response.headers.get("Content-Type")?.includes("application/json") ? modelStream(await response.json()) : response;
             }
             if (next instanceof Error) throw next;
-            if (next?.httpStatus) return Response.json(next.body || {error:{message:"rejected"}},{status:next.httpStatus});
+            if (next?.httpStatus) return Response.json(next.body || {error:{message:"rejected"}},{status:next.httpStatus,headers:next.headers});
             if (!next) throw new Error("No fixture response remaining");
             return requests.at(-1).stream ? modelStream(next) : Response.json(next);
         }

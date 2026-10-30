@@ -2,6 +2,8 @@ import { HttpError } from "./http.js";
 import { agentImageInputNotice } from "../../shared/agent.js";
 
 const messages: Record<string, string> = {
+    AGENT_MODEL_RETRIES_EXHAUSTED:"文本推理自动重试次数已用完，已停止；已有成果保留，请查看失败记录。",
+    AGENT_MODEL_RETRY_TIMEOUT:"文本推理及重试已达到本次等待期限，已停止自动执行；已有记录保留。",
     AGENT_OPERATION_CONFLICT: "工具调用标识对应的参数已变化，已拒绝重复执行。",
     AGENT_DISABLED: "创作助手已关闭，请联系管理员在后台启用。",
     AGENT_CONFIG_CHANGED:"配置已被其他管理员更新，请重新加载后再保存。",
@@ -23,7 +25,7 @@ const messages: Record<string, string> = {
     AGENT_NODE_NOT_EDITABLE: "草稿入口只修改助手未提交节点；用户已有普通文本请读取后使用确认修改入口。已提交任务和已有作品保留。",
     AGENT_ANSWERS_REQUIRED:"请填写本次全部补充问题后再提交。",
     AGENT_INVALID_TOOL_ARGUMENTS: "模型工具参数不符合定义，本次决定未执行；之前完成的节点保留，可以修正参数后继续。",
-    AGENT_INVALID_MODEL_RESPONSE: "模型返回拒绝、截断或无效工具参数，未执行该决定。", AGENT_MODEL_REJECTED: "模型请求被拒绝，未切换协议或自动重试。",
+    AGENT_INVALID_MODEL_RESPONSE: "模型返回拒绝、截断或无效工具参数，未执行该决定。", AGENT_MODEL_REJECTED: "模型请求被拒绝或无法继续，已停止；请检查错误原因与模型配置。",
     AGENT_MODEL_UNKNOWN: "模型结果未知，可能已计费；已停止自动执行，请查看原运行。",
 
     REFERENCE_IMAGE_TOO_LARGE: "参考图超过本站单张大小限制，请压缩或更换图片。",
