@@ -25,7 +25,9 @@ import { digest, sourceHash, setState, getNode, command, type Client, type Run }
 import type { Channel } from "../tokenone.js";
 
 const ids = z.array(z.string().min(1)).min(1);
+const reasoningEffort=z.enum(["auto","low","medium","high","xhigh"]);
 const mediaParams = z.object({
+    reasoningEffort:reasoningEffort.optional(),
     size:z.string().describe("仅图片尺寸或画幅；视频请用 videoSize").optional(),quality:z.string().optional(),background:z.string().optional(),
     videoSize:z.string().describe("视频画幅，例如 16:9；不是 ratio 或 size").optional(),
     seconds:z.string().describe("视频时长，使用整数字符串；仅模型支持时可使用 -1 自动时长").optional(),
@@ -59,6 +61,7 @@ export const toolSchemas = {
     get_model_capabilities:z.object({}).strict(),
     create_text_nodes:z.object({ nodes:z.array(z.object({ nodeId,newCopy,title:z.string(), text:z.string().min(1).optional(), shots:z.array(z.object({ number:z.number().int().positive(), seconds:z.number().positive(), scene:z.string().min(1), camera:z.string(), sound:z.string(), materials:z.string() }).strict()).min(1).optional(), sourceNodeIds:z.array(z.string()) }).strict().refine(node => Boolean(node.text) !== Boolean(node.shots))).min(1) }).strict(),
     prepare_media_nodes:z.object({ nodes:z.array(preparedMediaNode).min(1) }).strict(),
+    prepare_text_generation:z.object({nodes:z.array(z.object({...mediaNodeFields,parameters:mediaParams.pick({reasoningEffort:true})}).strict()).min(1)}).strict(),
     connect_nodes:z.object({ connections:z.array(z.object({ fromNodeId:z.string(), toNodeId:z.string() }).strict()).min(1) }).strict(),
     submit_generation:z.object({ nodeIds:ids }).strict(),
     read_task_results:z.object({ taskIds:ids }).strict(),
@@ -68,11 +71,12 @@ export const toolSchemas = {
 const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
+    prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
     create_attachment_nodes:"按本次附件编号（从 1 开始）把上传图片、视频、音频或文本保存为真实画布节点；相同文件或正文复用，不发起媒体生成。",
     create_asset_nodes:"将账号素材库中的指定真实素材放到当前画布，先 assets_list 查询 ID；已有相同文件或正文复用，不调用模型生成。",
     canvas_export_snapshot:"读取当前画布的结构化布局快照，含节点位置、尺寸和连线；不是截图或已生成图片。",
     ...canvasToolDescriptions,set_agent_state:"保存创作阶段、已确认方案和真实节点引用；该备忘不代表生成授权或完成。",read_agent_state:"读取本会话已保存的创作阶段与备忘，不推断任务状态。",read_skill_file:"读取已加载 Skill 快照中的相对文本附属文件；不能读取服务器文件系统或执行内容。",
-    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；newCopy 只用于用户明确要额外副本。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用；newCopy 仅用于用户明确要额外版本。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成具体媒体节点，服务端展示参数并等待用户确认，不能自行授权。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
+    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；newCopy 只用于用户明确要额外副本。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用；newCopy 仅用于用户明确要额外版本。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
 };
 export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:string;input:unknown}>) {
     return calls.flatMap(call => {
@@ -99,6 +103,10 @@ async function modelChannel(client:Client,kind:string,model:string):Promise<Chan
     if (!channel || kind === "image" && !channel.image_types?.[model] || kind === "audio" && !channel.audio_types?.[model]) throw new HttpError(400,"MODEL_NOT_ALLOWED");
     return channel;
 }
+const textGenerationModel=(run:Run,model:string)=>{
+    const saved=run.model_config.limits.verifiedModels.find((entry:{model:string;imageInput:boolean})=>entry.model===model),current=agentConfig?.verifiedModels.find(entry=>entry.model===model);
+    return saved&&current ? {imageInput:saved.imageInput&&current.imageInput} : undefined;
+};
 async function referenceFiles(client:Client,userId:string,nodes:any[]) {
     const refs = { images:[] as string[],videos:[] as string[],audios:[] as string[] };
     for (const node of nodes) {
@@ -117,15 +125,29 @@ export async function mediaManifest(client:Client,run:Run,nodeIds:string[]) {
     const nodes = [];
     for (const id of nodeIds) {
         const node=getNode(project,id);
-        if (!["image","video","audio"].includes(node.type) || !node.metadata?.prompt?.trim()) throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
+        if (!["text","image","video","audio"].includes(node.type) || !node.metadata?.prompt?.trim()) throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
         const [channelId,...parts]=(node.metadata.model || "").split("::"),model=parts.join("::");
         const channel=await modelChannel(client,node.type,model);
         if (channel.id !== channelId) throw new HttpError(409,"CANVAS_GENERATION_CHANGED");
         const upstream = project.connections.filter((edge:any) => edge.toNodeId === node.id).map((edge:any) => getNode(project,edge.fromNodeId));
+        let taskId:string|undefined;
+        if(node.type === "text"){
+            const modelConfig=textGenerationModel(run,model);
+            if(!modelConfig)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
+            if(node.metadata.generationMode!=="text" || node.metadata.texts?.length || !node.metadata.generationTaskId && (node.metadata.content || node.metadata.generationId))throw new ToolParameterError("已有正文或生成结果不能覆盖；请按用户明确的新版本要求准备独立文本输出。","AGENT_NODE_NOT_EDITABLE");
+            for(const url of node.metadata.references || [])if(!modelConfig.imageInput || !(await storedFileInfo(run.user_id,url,client)).mimeType.startsWith("image/"))throw new ToolParameterError("目标文本模型未启用图片理解，或引用不是图片；本次未提交生成。");
+            if(node.metadata.generationTaskId){
+                const previous=(await client.query("SELECT id,request FROM generation_tasks WHERE id=$1 AND user_id=$2 AND canvas_project_id=$3 AND canvas_node_id=$4 AND canvas_output_id IS NULL AND capability='text' AND channel_id=$5 AND model=$6",[node.metadata.generationTaskId,run.user_id,run.project_id,node.entityId || node.id,channel.id,model])).rows[0];
+                const {user_prompt,canvas_source,canvas_submission,...body}=previous?.request || {};
+                if(!previous || !isDeepStrictEqual(body,canvasRequestBody(model,"text",undefined as any,node.metadata,{images:node.metadata.references || [],videos:[],audios:[]})))throw new ToolParameterError("文本任务已提交，不能修改请求后覆盖；需要新版本时请准备新输出。","AGENT_NODE_NOT_EDITABLE");
+                taskId=previous.id;
+            }
+            upstream.push(...project.connections.filter((edge:any)=>upstream.some((source:any)=>source.id===edge.toNodeId)).map((edge:any)=>getNode(project,edge.fromNodeId)));
+        }
         // Include all actual graph inputs and account file metadata in the grant fingerprint.
         const files=[];
         for (const reference of node.metadata.references || []) files.push(await storedFileInfo(run.user_id,reference,client));
-        nodes.push({ id:node.entityId || node.id,title:node.title,kind:node.type,prompt:node.metadata.prompt,parameters:publicParameters(node),references:node.metadata.references || [],sources:upstream.map((source:any) => publicNode(source)),fingerprint:digest({node,upstream,files,connections:project.connections.filter((edge:any) => edge.toNodeId === node.id)}) });
+        nodes.push({ id:node.entityId || node.id,title:node.title,kind:node.type,prompt:node.metadata.prompt,parameters:publicParameters(node),references:node.metadata.references || [],...(taskId?{taskId}:{}),sources:upstream.map((source:any) => publicNode(source)),fingerprint:digest({node,upstream,files,connections:project.connections.filter((edge:any) => edge.toNodeId === node.id)}) });
     }
     return { nodes,hash:digest(nodes) };
 }
@@ -202,15 +224,16 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
         const channels=(await client.query("SELECT * FROM channels WHERE enabled")).rows;
         return { models:channels.flatMap(channel => channel.models.map((model:string) => {
             let capabilities:unknown,parameters:unknown;
+            if (channel.capability === "text") {const target=textGenerationModel(run,model);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
             if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=imageModelProfile(model,channel.image_types[model]);capabilities=profile;}
             if (channel.capability === "video") { const {family,...profile}=videoModelProfile(model,channel.video_types[model] || "seedance"); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,seconds:{...profile.duration,integer:true,valueType:"string"},videoMode:["frames","reference"]}; }
             if (channel.capability === "audio" && channel.audio_types[model]) capabilities={modes:channel.audio_types[model] === "gemini-tts" ? ["single","duo"] : ["song","instrumental"],voices:channel.audio_types[model] === "gemini-tts" ? audioVoices : []};
             return {model,capability:channel.capability,description:channel.model_descriptions[model] || "",capabilities,parameters};
         })),pricing:external.pricing || {note:"公开价格暂不可用，实际金额以账单为准"} };
     }
-    if (name === "create_text_nodes" || name === "prepare_media_nodes") {
-        if (input.nodes.length * (name === "prepare_media_nodes" ? 2 : 1) > limits.nodeBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
-        const owned=new Set((await client.query("SELECT DISTINCT node->>'id' AS id FROM agent_tool_receipts a JOIN agent_runs r ON r.id=a.run_id JOIN agent_threads t ON t.id=r.thread_id CROSS JOIN LATERAL jsonb_array_elements(a.result->'nodes') node WHERE t.project_id=$1 AND r.user_id=$2 AND a.name=ANY($3::text[]) AND node->>'id'=ANY($4::text[])",[run.project_id,run.user_id,["create_text_nodes","prepare_media_nodes","create_primary_script_node"],project.nodes.map((node:any) => node.entityId || node.id)])).rows.map(row => row.id));
+    if (name === "create_text_nodes" || name === "prepare_media_nodes" || name === "prepare_text_generation") {
+        if (input.nodes.length * (name === "create_text_nodes" ? 1 : 2) > limits.nodeBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
+        const owned=new Set((await client.query("SELECT DISTINCT node->>'id' AS id FROM agent_tool_receipts a JOIN agent_runs r ON r.id=a.run_id JOIN agent_threads t ON t.id=r.thread_id CROSS JOIN LATERAL jsonb_array_elements(a.result->'nodes') node WHERE t.project_id=$1 AND r.user_id=$2 AND a.name=ANY($3::text[]) AND node->>'id'=ANY($4::text[])",[run.project_id,run.user_id,["create_text_nodes","prepare_media_nodes","prepare_text_generation","create_primary_script_node"],project.nodes.map((node:any) => node.entityId || node.id)])).rows.map(row => row.id));
         const results:any[]=[],edits:any[]=[],updated:any[]=[],reused:any[]=[],created:any[]=[];
         const incoming=(node:any) => project.connections.filter((edge:any) => edge.toNodeId === node.id);
         const sameSources=(node:any,sources:any[]) => isDeepStrictEqual(incoming(node).map((edge:any) => edge.fromNodeId).sort(),[...new Set(sources.map(source => source.id))].sort());
@@ -239,7 +262,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             }
         };
         const x=Math.max(0,...project.nodes.map((node:any) => node.position.x+node.width))+80;
-        for (const [index,spec] of input.nodes.entries()) {
+        for (const [index,spec] of (name === "prepare_text_generation" ? input.nodes.map((node:any)=>({...node,kind:"text"})) : input.nodes).entries()) {
             if (spec.nodeId && spec.newCopy) throw new ToolParameterError("nodeId 原位修改与 newCopy 新副本不能同时使用。","AGENT_NODE_NOT_EDITABLE");
             const sources=spec.sourceNodeIds.map((id:string) => getNode(project,id));
             const text=spec.text || spec.shots?.map((shot:any) => `镜头 ${shot.number} · ${shot.seconds} 秒\n画面：${shot.scene}\n镜头：${shot.camera}\n声音：${shot.sound}\n素材：${shot.materials}`).join("\n\n");
@@ -256,9 +279,14 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             const channel=await modelChannel(client,spec.kind,spec.model);
             const referenceNodes=spec.referenceNodeIds.map((id:string) => getNode(project,id));
             const refs=await referenceFiles(client,run.user_id,referenceNodes);
+            if(spec.kind === "text"){
+                const target=textGenerationModel(run,spec.model);
+                if(!target)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
+                if(refs.videos.length || refs.audios.length || refs.images.length && !target.imageInput)throw new ToolParameterError("独立文本任务只接收图片参考，且目标文本模型须启用图片理解；本次未创建节点。");
+            }
             if (spec.kind === "audio" && referenceNodes.length) throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
             const metadata={...spec.parameters,prompt:spec.prompt,composerContent:spec.prompt,generationMode:spec.kind,model:`${channel.id}::${spec.model}`,references:[...refs.images,...refs.videos,...refs.audios],status:"idle"};
-            const family=spec.kind === "image" ? channel.image_types![spec.model] : spec.kind === "video" ? channel.video_types?.[spec.model] || "seedance" : channel.audio_types![spec.model];
+            const family=spec.kind === "text" ? undefined : spec.kind === "image" ? channel.image_types![spec.model] : spec.kind === "video" ? channel.video_types?.[spec.model] || "seedance" : channel.audio_types![spec.model];
             let request:ReturnType<typeof canvasRequestBody>;
             try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
             const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,family as any,request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,family as any,request) : undefined;
@@ -278,7 +306,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             if (existing) await editable(existing);
             const merge=(node:any) => ({...Object.fromEntries(Object.entries(node?.metadata || {}).filter(([key]) => !Object.hasOwn(mediaParams.shape,key))),...metadata});
             const config=existing ? {...existing[0],title:spec.title,metadata:merge(existing[0])} : {...base,type:"config",metadata};
-            const dimensions=spec.kind === "audio" || existing?.[1].metadata?.freeResize ? undefined : parsePixelSize(spec.parameters.size || "") || parseAspectRatio(spec.kind === "image" ? spec.parameters.size || "1:1" : spec.parameters.videoSize || "16:9");
+            const dimensions=["text","audio"].includes(spec.kind) || existing?.[1].metadata?.freeResize ? undefined : parsePixelSize(spec.parameters.size || "") || parseAspectRatio(spec.kind === "image" ? spec.parameters.size || "1:1" : spec.parameters.videoSize || "16:9");
             const ratio=dimensions ? dimensions.width/dimensions.height : 1;
             const node={...(existing?.[1] || base),id:existing?.[1].id || randomUUID(),type:spec.kind,title:spec.title,...(!existing ? {position:{x:x+440,y:index*340}} : {}),...(dimensions ? {width:360*Math.min(ratio,1),height:360/Math.max(ratio,1)} : {}),metadata:{...merge(existing?.[1]),content:""}};
             write([config,node],inputs,config);
@@ -304,26 +332,30 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
     }
     if (name === "submit_generation") {
         const manifest=await mediaManifest(client,run,input.nodeIds);
-        if (manifest.nodes.some(node => !run.model_config.limits.verifiedMediaModels.includes(node.parameters.model) || !agentConfig?.verifiedMediaModels.includes(node.parameters.model || ""))) throw new HttpError(400,"AGENT_MEDIA_UNVERIFIED");
-        if (run.wait?.type !== "media" || run.wait.callId !== call.toolCallId || !run.wait.approved) {
+        if (manifest.nodes.some(node => node.kind!=="text" && (!run.model_config.limits.verifiedMediaModels.includes(node.parameters.model) || !agentConfig?.verifiedMediaModels.includes(node.parameters.model || "")))) throw new HttpError(400,"AGENT_MEDIA_UNVERIFIED");
+        const reusedTaskIds=manifest.nodes.flatMap(node=>node.taskId?[node.taskId]:[]),reuseOnly=reusedTaskIds.length===manifest.nodes.length;
+        if (!reuseOnly && (run.wait?.type !== "media" || run.wait.callId !== call.toolCallId || !run.wait.approved)) {
             await setState(client,run,"waiting_confirmation",{type:"media",callId:call.toolCallId,manifest,pricing:external.pricing || null});
             return undefined;
         }
-        if (run.wait.manifest.hash !== manifest.hash) throw new HttpError(409,"AGENT_CONFIRMATION_CHANGED");
-        if (!external.groupId) throw new HttpError(403,"APP_USER_AUTHORIZATION_REQUIRED");
+        if (!reuseOnly && run.wait.manifest.hash !== manifest.hash) throw new HttpError(409,"AGENT_CONFIRMATION_CHANGED");
         const taskIds=[];
-        for (const id of input.nodeIds) {
+        for (const [index,id] of input.nodeIds.entries()) {
+            const previous=manifest.nodes[index].taskId;
+            if(previous){taskIds.push(previous);continue;}
+            if (!external.groupId) throw new HttpError(403,"APP_USER_AUTHORIZATION_REQUIRED");
             const current=await findCanvasProject(run.user_id,run.project_id,client,true),node=getNode(current,id);
             const model=node.metadata.model.split("::").slice(1).join("::"),channel=await modelChannel(client,node.type,model);
             const generationId=randomUUID();
             await command(client,run,`${call.toolCallId}:${node.id}`,[{type:"put_node",node:{...node,metadata:{...node.metadata,generationId,generationTaskId:undefined,status:"loading"}}}]);
             const family=node.type === "image" ? channel.image_types![model] : channel.video_types?.[model] || "seedance";
-            const path=node.type === "audio" ? "chat/completions" : node.type === "video" ? videoTaskPath(family as any) : node.metadata.references?.length && family !== "banana" ? "images/edits" : "images/generations";
+            const path=node.type === "text" ? "responses" : node.type === "audio" ? "chat/completions" : node.type === "video" ? videoTaskPath(family as any) : node.metadata.references?.length && family !== "banana" ? "images/edits" : "images/generations";
             const task=await acceptCanvasGeneration(run.user_id,channel,path,{model},{projectId:run.project_id,nodeId:node.id,generationId},external.groupId,{},client);
+            if (node.type === "text") {const sources={...run.sources};delete sources[node.id];await client.query("UPDATE agent_runs SET sources=$2 WHERE id=$1",[run.id,JSON.stringify(sources)]);run.sources=sources;}
             taskIds.push(task.id);
         }
         await client.query("UPDATE agent_runs SET wait=NULL WHERE id=$1",[run.id]); run.wait=null;
-        return {taskIds};
+        return {taskIds,...(reusedTaskIds.length?{reusedTaskIds}:{})};
     }
     if (name === "read_task_results") return {tasks:await taskResults(client,run.user_id,input.taskIds)};
     if (name === "wait_for_tasks") {

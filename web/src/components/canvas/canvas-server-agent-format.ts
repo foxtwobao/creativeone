@@ -4,7 +4,7 @@ import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 export const agentToolErrorMessage=(result:any)=>result.error==="AGENT_IMAGE_UNSUPPORTED"?"该次读取时，推理模型未启用图片理解，未提供画面内容。":result.message||"此步未完成，请检查当前输入。";
 
 export const nodeLabels:Record<string,string>={group:"分组",config:"配置",video:"视频",image:"图片",audio:"音频",text:"文本"};
-export const actions:Record<string,string>={read_connections:"读取连线关系",rename_nodes:"修改标题",delete_nodes:"删除节点",delete_connections:"移除连线",create_group:"创建分组",ungroup_nodes:"取消分组",arrange_nodes:"整理布局",set_agent_state:"保存创作进度",read_agent_state:"读取创作进度",read_skill_file:"读取规则附属文件",load_skill:"加载创作规则",read_canvas:"读取画布",find_nodes:"查找节点",read_nodes:"读取节点",get_model_capabilities:"读取模型能力",create_text_nodes:"保存文本节点",prepare_media_nodes:"准备媒体节点",connect_nodes:"建立连线",submit_generation:"提交媒体任务",read_task_results:"读取任务结果",wait_for_tasks:"等待媒体任务",request_user_input:"等待用户补充"};
+export const actions:Record<string,string>={read_connections:"读取连线关系",rename_nodes:"修改标题",delete_nodes:"删除节点",delete_connections:"移除连线",create_group:"创建分组",ungroup_nodes:"取消分组",arrange_nodes:"整理布局",set_agent_state:"保存创作进度",read_agent_state:"读取创作进度",read_skill_file:"读取规则附属文件",load_skill:"加载创作规则",read_canvas:"读取画布",find_nodes:"查找节点",read_nodes:"读取节点",get_model_capabilities:"读取模型能力",create_text_nodes:"保存文本节点",prepare_media_nodes:"准备媒体节点",prepare_text_generation:"准备文本生成",connect_nodes:"建立连线",submit_generation:"提交生成任务",read_task_results:"读取任务结果",wait_for_tasks:"等待生成任务",request_user_input:"等待用户补充"};
 Object.assign(actions,{get_browser_actions:"读取浏览器回执",canvas_export_snapshot:"读取布局快照",create_asset_nodes:"添加素材节点",create_primary_script_node:"保存主剧本",create_attachment_nodes:"添加附件节点",update_text_node:"修改已有正文",move_nodes:"移动节点",resize_node:"调整节点尺寸",select_nodes:"选择节点",set_viewport:"调整画布视口",site_navigate:"打开页面",canvas_list_projects:"查找画布",read_project:"读取画布",prompts_search:"搜索提示词",assets_list:"查找素材",assets_add:"保存素材",workbench_image_get_config:"读取图片工作台",workbench_video_get_config:"读取视频工作台",workbench_image_generate:"图片工作台创作",workbench_video_generate:"视频工作台创作"});
 export type AgentEntry=AgentThread["items"][number];
 type TimelineEntry={type:"message";item:AgentEntry}|{type:"tools";items:AgentEntry[]};
@@ -24,7 +24,7 @@ export function agentTimeline(items:AgentEntry[]) {
     return timeline;
 }
 export function toolAction(item:AgentEntry) {
-    if(item.text==="submit_generation")return item.detail?.result?.declined?"已拒绝本批生成":item.detail?.result?.taskIds?.length?"已受理媒体任务":"请求生成确认";
+    if(item.text==="submit_generation")return item.detail?.result?.declined?"已拒绝本批生成":item.detail?.result?.taskIds?.length?(item.detail.result.reusedTaskIds?.length===item.detail.result.taskIds.length?"复用已有生成任务":"已受理生成任务"):"请求生成确认";
     return actions[item.text]||"工具操作";
 }
 export function canvasReferences(items:AgentEntry[],nodes:CanvasNodeData[],connections:CanvasConnection[]) {

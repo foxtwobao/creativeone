@@ -82,7 +82,7 @@ export async function confirmRun(userId:string,id:string,value:unknown) {
             await saveReceipt(client,run,call,{declined:true});
             await setState(client,run,"queued");
         }
-        await item(client,run,"user",run.wait.type === "canvas_edit" ? input.approve ? "确认本批画布修改" : "拒绝本批画布修改" : input.approve ? "确认本批媒体生成" : "拒绝本批媒体生成",{waitVersion:input.waitVersion,manifest:run.wait.manifest,approved:input.approve});
+        await item(client,run,"user",run.wait.type === "canvas_edit" ? input.approve ? "确认本批画布修改" : "拒绝本批画布修改" : `${input.approve?"确认":"拒绝"}本批${run.wait.manifest.nodes?.some((node:any)=>node.kind==="text")?"":"媒体"}生成`,{waitVersion:input.waitVersion,manifest:run.wait.manifest,approved:input.approve});
     });
 }
 export async function inputRun(userId:string,id:string,value:unknown) {
@@ -139,7 +139,7 @@ export async function inputRun(userId:string,id:string,value:unknown) {
             // Only query/re-save original results. Never create a new upstream generation.
             await client.query("UPDATE generation_tasks SET status='pending',error=NULL,canvas_attached=false WHERE user_id=$1 AND id=ANY($2::uuid[]) AND status='unknown' AND (upstream_id IS NOT NULL OR upstream_result IS NOT NULL AND (capability<>'audio' OR error='AUDIO_SAVE_INCOMPLETE'))",[userId,run.wait.taskIds]);
             await setState(client,run,"waiting_tasks",{...run.wait,type:"tasks"});
-            await item(client,run,"user","查询或恢复原媒体任务，不重新生成。");
+            await item(client,run,"user","查询或恢复原生成任务，不重新生成。");
             return;
         } else throw new HttpError(409,"AGENT_WAIT_CHANGED");
         await item(client,run,"user",input.text || (input.action === "reply" && input.answers ? run.wait.questions.map((question:any)=>`${question.question}：${input.answers![question.id]}`).join("\n") : "") || ({continue_budget:"继续下一段推理预算",refresh:"使用当前画布重新决策",retry_authorization:authorizationPause(run.wait?.code).recovery === "service" ? "重新检查模型服务" : "重新检查授权",retry_compaction:"明确重试历史压缩",correct_tool_arguments:"修正工具参数并继续原运行"} as Record<string,string>)[input.action] || "已补充信息",{action:input.action,waitVersion:input.waitVersion,answers:input.answers});
@@ -151,7 +151,7 @@ export async function cancelRun(userId:string,id:string) {
         const run=await lockRun(client,id,userId);
         if (!["completed","failed","cancelled"].includes(run.status)) {
             await setState(client,run,"cancelled");
-            await item(client,run,"system","已停止助手后续步骤。已受理媒体任务继续保留，不代表已取消或退款。");
+            await item(client,run,"system","已停止助手后续步骤。已受理生成任务继续保留，不代表已取消或退款。");
         }
     });
     cancelActiveRun(id);

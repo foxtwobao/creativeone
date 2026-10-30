@@ -26,7 +26,7 @@ export async function settleTaskWait(client:Client,run:Run) {
     const tasks=await taskResults(client,run.user_id,run.wait.taskIds);
     if (tasks.some(task => !["succeeded","pending","running"].includes(task.status))) {
         await setState(client,run,"waiting_input",{...run.wait,type:"task_failure",tasks});
-        await item(client,run,"system","部分媒体任务失败或结果未知；已保留作品，不会自动补生成。",{tasks});
+        await item(client,run,"system","部分生成任务失败或结果未知；已保留成果，不会自动补生成。",{tasks});
         return;
     }
     if (tasks.some(task => task.status !== "succeeded")) return;

@@ -11,11 +11,11 @@ const database=process.env.TEST_DATABASE_URL;
 const testMedia=await mkdtemp(join(tmpdir(),"creativeone-agent-media-"));
 process.env.MEDIA_DIR=testMedia;
 if (!database || !new URL(database).pathname.endsWith("_test")) throw new Error("Provide an isolated *_test database");
-Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:"http://localhost:3001",APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:"",IDONE_ISSUER:"https://idone.test",IDONE_DISCOVERY_URL:"",IDONE_ALLOW_HTTP:"false",ONE_NAVIGATION_CONFIG:"",IDONE_CLIENT_ID:"test",IDONE_CLIENT_SECRET:"test",ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:"https://enhancer.test",ENHANCER_APP_CREDENTIAL:"test",TOKENONE_BASE_URL:"https://tokenone.test",SERVER_AGENT_CONFIG:JSON.stringify({verifiedModels:[{model:"agent-model",protocol:"responses",imageInput:false}],verifiedMediaModels:["image-model","video-model","audio-model","lyria-model","suno-model","wan3.0-video-prime"]})});
+Object.assign(process.env,{DATABASE_URL:database,APP_ORIGIN:"http://localhost:3001",APP_ORIGINS:'["http://localhost:3001"]',APP_DOMAIN_SUFFIXES:"",IDONE_ISSUER:"https://idone.test",IDONE_DISCOVERY_URL:"",IDONE_ALLOW_HTTP:"false",ONE_NAVIGATION_CONFIG:"",IDONE_CLIENT_ID:"test",IDONE_CLIENT_SECRET:"test",ADMIN_SUBJECTS:randomUUID(),ENHANCER_BASE_URL:"https://enhancer.test",ENHANCER_APP_CREDENTIAL:"test",TOKENONE_BASE_URL:"https://tokenone.test",SERVER_AGENT_CONFIG:JSON.stringify({verifiedModels:[{model:"agent-model",protocol:"responses",imageInput:false},{model:"writer-model",protocol:"responses",imageInput:false},{model:"vision-writer-model",protocol:"responses",imageInput:true}],verifiedMediaModels:["image-model","video-model","audio-model","lyria-model","suno-model","wan3.0-video-prime"]})});
 const {db,initializeDatabase,transaction}=await import("./db.js");
 const {applyCanvasCommand,findCanvasProject}=await import("./business.js");
 const {acceptRun,inputRun,confirmRun,cancelRun}=await import("./agent/routes.js");
-const {executeAgentRun,scanAgentRuns}=await import("./agent/worker.js");
+const {executeAgentRun,scanAgentRuns,settleTaskWait}=await import("./agent/worker.js");
 const {lockRun,readThread,saveReceipt}=await import("./agent/state.js");
 const {executeTool,toolArgumentErrors}=await import("./agent/tools.js");
 const {agentDecision}=await import("./agent/model.js");
@@ -52,7 +52,7 @@ async function prepare(ctx:Awaited<ReturnType<typeof setup>>,prompt="小猫回�
 before(async () => {
     await initializeDatabase();
     for (const [kind,model] of [["text","agent-model"],["image","image-model"],["video","video-model"]]) {
-        const id=randomUUID();await db.query("INSERT INTO channels(id,name,capability,models,image_types,video_types) VALUES($1,$2,$2,$3,$4,$5)",[id,kind,JSON.stringify(kind === "video" ? [model,"wan3.0-video-prime"] : [model]),JSON.stringify(kind === "image" ? {[model]:"openai"} : {}),JSON.stringify(kind === "video" ? {[model]:"seedance","wan3.0-video-prime":"wan"} : {})]);
+        const id=randomUUID();await db.query("INSERT INTO channels(id,name,capability,models,image_types,video_types) VALUES($1,$2,$2,$3,$4,$5)",[id,kind,JSON.stringify(kind === "video" ? [model,"wan3.0-video-prime"] : kind === "text" ? [model,"writer-model","vision-writer-model","unverified-text"] : [model]),JSON.stringify(kind === "image" ? {[model]:"openai"} : {}),JSON.stringify(kind === "video" ? {[model]:"seedance","wan3.0-video-prime":"wan"} : {})]);
         if (kind === "image") imageChannel=id;
     }
     await db.query("INSERT INTO channels(id,name,capability,models,audio_types) VALUES($1,'audio','audio',$2,$3)",[randomUUID(),JSON.stringify(["audio-model","lyria-model","suno-model"]),JSON.stringify({"audio-model":"gemini-tts","lyria-model":"lyria","suno-model":"suno"})]);
@@ -83,7 +83,7 @@ test("concurrent acceptance is atomic, deduplicated and isolated by owner",async
 });
 test("question resumes in a new process; committed tool receipts never recreate deleted nodes",async () => {
     const ctx=await setup();responses.push(modelTool("load_skill",{name:"script"}),modelTool("read_nodes",{nodeIds:[ctx.source]}),modelTool("request_user_input",{question:"目标时长？"}));
-    await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.skills.script.version,1);
+    await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.skills.script.version,2);
     await assert.rejects(() => inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version+1,action:"reply",text:"6 秒"}),{code:"AGENT_WAIT_CHANGED"});await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"reply",text:"6 秒"});
     const call=modelTool("create_text_nodes",{nodes:[{title:"镜头一",shots:[{number:1,seconds:6,scene:"小猫回家",camera:"推镜",sound:"脚步",materials:"场景图"}],sourceNodeIds:[ctx.source]}]});
     assert.match(await resumeChild(ctx.id,[call,modelText("已创建镜头")]),/"requests":2/);run=await record(ctx.id);assert.equal(run.status,"completed");
@@ -707,4 +707,81 @@ test("old run rules receive explicit live image-input capability and successful 
     const before=fixture.requests.length;responses.push(modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:true}),modelText("节点正文已读取；当前推理模型没有启用图片理解，需要你补充画面说明。"));await executeAgentRun(ctx.id);
     assert.ok(JSON.stringify(fixture.requests[before]).includes("本次推理模型能力"));assert.ok(JSON.stringify(fixture.requests[before]).includes("不要尝试或重复调用 includeImages=true"));
     const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='read_nodes'",[ctx.id])).rows[0].result;assert.equal(receipt.error,undefined);assert.equal(receipt.vision.supported,false);assert.equal(receipt.nodes[0].content,"小猫回家");assert.ok(receipt.notice.includes("未启用图片理解"));assert.ok(JSON.stringify(fixture.requests[before+1]).includes("不能判断画面内容"));const run=await record(ctx.id);assert.equal(run.model_config.imageInput,false);assert.equal(run.model_config.coreRules,oldRules);assert.equal(run.status,"completed");
+});
+
+const textJob=(ctx:Awaited<ReturnType<typeof setup>>,parameters:Record<string,string>={})=>({title:"独立分镜稿",model:"writer-model",prompt:"根据剧本「小猫回家」写三条分镜，保留原意。",sourceNodeIds:[ctx.source],referenceNodeIds:[] as string[],parameters});
+async function acceptTextJob(ctx:Awaited<ReturnType<typeof setup>>) {
+    const prepared=await recordedTool(ctx,"prepare_text_generation",{nodes:[textJob(ctx)]}),target=prepared.nodes.find((node:any)=>node.type==="text");
+    responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});
+    responses.push(modelText("独立文本任务已受理，等待结果。"));await executeAgentRun(ctx.id);
+    return {prepared,target,task:(await db.query("SELECT * FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0]};
+}
+test("independent text tools use native schemas and expose target capabilities separately from Agent inference",async()=>{
+    const ctx=await setup(),spec=textJob(ctx,{reasoningEffort:"low"});responses.push(modelTool("prepare_text_generation",{nodes:[spec]}));
+    const result=await agentDecision("agent-model","test","rules",[{role:"user",content:"让另一个文本模型生成分镜"}],{},new AbortController().signal);assert.equal(result.decision.valid,true);assert.equal(result.decision.calls[0].toolName,"prepare_text_generation");
+    assert.equal(toolArgumentErrors([{toolCallId:"bad",toolName:"prepare_text_generation",input:{nodes:[{...spec,parameters:{size:"1:1"}}]}}]).length,1);
+    const capabilities=await recordedTool(ctx,"get_model_capabilities",{});assert.deepEqual(capabilities.models.find((model:any)=>model.model==="writer-model").capabilities,{generation:true,imageInput:false});assert.deepEqual(capabilities.models.find((model:any)=>model.model==="vision-writer-model").capabilities,{generation:true,imageInput:true});assert.equal(capabilities.models.find((model:any)=>model.model==="unverified-text").capabilities.generation,false);assert.equal((await record(ctx.id)).model_config.imageInput,false);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);await cancelRun(ctx.user,ctx.id);
+});
+test("text task preparation reuses canonical requests across runs and updates only unreadied Agent pairs",async()=>{
+    const ctx=await setup(),spec=textJob(ctx),first=await recordedTool(ctx,"prepare_text_generation",{nodes:[spec,{...spec,parameters:{reasoningEffort:"auto"}}]});assert.equal(first.nodes.length,2);assert.equal(first.createdNodeIds.length,2);assert.equal(first.nodes.find((node:any)=>node.type==="text").content,"");
+    const next=await anotherRun(ctx),reused=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,title:"同一任务另一个标题",parameters:{reasoningEffort:"auto"}}]});assert.deepEqual(reused.createdNodeIds,[]);assert.equal(reused.reusedNodeIds.length,2);
+    await recordedTool(next,"read_nodes",{nodeIds:first.nodes.map((node:any)=>node.id)});
+    const changed=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,nodeId:first.nodes.find((node:any)=>node.type==="text").id,prompt:"根据「小猫回家」写六条分镜。",parameters:{reasoningEffort:"high"}}]});assert.equal(changed.updatedNodeIds.length,2);assert.deepEqual(changed.createdNodeIds,[]);assert.ok(changed.nodes.every((node:any)=>node.parameters.reasoningEffort==="high"));
+    await assert.rejects(()=>recordedTool(next,"prepare_text_generation",{nodes:[spec]}),{code:"AGENT_NODE_EXISTS"});
+    const copy=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,newCopy:true}]});assert.equal(copy.createdNodeIds.length,2);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,5);assert.equal(project.nodes.find((node:any)=>node.id===ctx.source).metadata.content,"小猫回家");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
+});
+test("text generation requires confirmation, uses an independent durable task, and resumes from saved results after restart",async()=>{
+    const ctx=await setup(),spec=textJob(ctx,{reasoningEffort:"low"}),{executeMediaTask}=await import("./generation-executor.js");
+    responses.push(modelTool("prepare_text_generation",{nodes:[spec]}),async()=>{const project=await findCanvasProject(ctx.user,ctx.project);return Response.json(modelTool("read_nodes",{nodeIds:project.nodes.filter((node:any)=>node.metadata?.generationMode==="text").map((node:any)=>node.entityId)}));},async()=>{const project=await findCanvasProject(ctx.user,ctx.project),target=project.nodes.find((node:any)=>node.type==="text"&&node.metadata.generationMode==="text");return Response.json(modelTool("submit_generation",{nodeIds:[target.entityId]}));});await executeAgentRun(ctx.id);
+    let run=await record(ctx.id);assert.equal(run.status,"waiting_confirmation");assert.equal(run.wait.manifest.nodes[0].kind,"text");assert.equal(run.wait.manifest.nodes[0].parameters.model,"writer-model");assert.equal(run.wait.manifest.nodes[0].parameters.reasoningEffort,"low");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+    await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});responses.push(async()=>{const task=(await db.query("SELECT id FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0];return Response.json(modelTool("wait_for_tasks",{taskIds:[task.id]}));});await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"waiting_tasks");
+    const task=(await db.query("SELECT * FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0];assert.equal(task.capability,"text");assert.equal(task.path,"responses");assert.equal(task.model,"writer-model");assert.equal(task.request.input[0].content[0].text,spec.prompt);assert.deepEqual(task.request.reasoning,{effort:"low"});assert.equal(task.request.tools,undefined);
+    responses.push(modelText("镜头一：小猫走近家门。\n镜头二：小猫推门。\n镜头三：小猫回到家。"));await executeMediaTask(task.id);const count=fixture.requests.length;await executeMediaTask(task.id);assert.equal(fixture.requests.length,count);assert.equal(fixture.requests.at(-1).model,"writer-model");assert.equal(fixture.requests.at(-1).stream,false);
+    const project=await findCanvasProject(ctx.user,ctx.project),output=project.nodes.find((node:any)=>node.entityId===task.canvas_node_id);assert.equal(output.metadata.status,"success");assert.match(output.metadata.content,/镜头一/);assert.equal(project.nodes.find((node:any)=>node.id===ctx.source).metadata.content,"小猫回家");
+    await transaction(async client=>settleTaskWait(client,await lockRun(client,ctx.id,ctx.user)));assert.match(await resumeChild(ctx.id,[modelTool("read_task_results",{taskIds:[task.id]}),modelText("独立文本任务已完成，分镜已回填。")]),/"requests":2/);assert.equal((await record(ctx.id)).status,"completed");const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='read_task_results'",[ctx.id])).rows[0].result;assert.match(receipt.tasks[0].result.text,/镜头三/);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");assert.equal(JSON.stringify(await readThread(ctx.user,ctx.thread)).includes("sk-test-only"),false);
+});
+test("text confirmation rejection, changed input and cross-account confirmation never dispatch a text task",async()=>{
+    for(const action of ["reject","parameters","source"]){
+        const ctx=await setup(),prepared=await recordedTool(ctx,"prepare_text_generation",{nodes:[textJob(ctx)]}),target=prepared.nodes.find((node:any)=>node.type==="text");responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);const run=await record(ctx.id),other=await setup();await assert.rejects(()=>confirmRun(other.user,ctx.id,{waitVersion:run.wait_version,approve:true}),{code:"AGENT_RUN_NOT_FOUND"});await cancelRun(other.user,other.id);
+        if(action==="reject")await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:false});
+        else{const project=await findCanvasProject(ctx.user,ctx.project),node=project.nodes.find((node:any)=>action==="source"?node.id===ctx.source:node.entityId===target.id);await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{...node,metadata:{...node.metadata,...action==="source"?{content:"修改后的原剧本"}:{reasoningEffort:"high"}}}}]}},client));await assert.rejects(()=>confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true}),{code:action==="source"?"AGENT_SOURCE_CHANGED":"AGENT_CONFIRMATION_CHANGED"});}
+        assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
+    }
+});
+test("text task references use the target model capability and enforce account and live model configuration",async()=>{
+    const seeded=await setup(),{saveFile}=await import("./storage.js"),png=await (await import("sharp")).default({create:{width:2,height:1,channels:3,background:"white"}}).png().toBuffer(),key=`image:${randomUUID()}`,url=await saveFile(seeded.user,"image_files",key,png,"image/png"),imageId=randomUUID(),project=await findCanvasProject(seeded.user,seeded.project);
+    await transaction(client=>applyCanvasCommand(seeded.user,seeded.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{id:imageId,type:"image",title:"图像输入",position:{x:400,y:0},width:200,height:100,metadata:{content:url,storageKey:key,mimeType:"image/png",status:"success"}}}]}},client));
+    const ctx=await anotherRun(seeded);await cancelRun(seeded.user,seeded.id);
+    const spec={...textJob(ctx),referenceNodeIds:[imageId]};await assert.rejects(()=>recordedTool(ctx,"prepare_text_generation",{nodes:[spec]}),{code:"MODEL_CAPABILITY_INVALID"});await assert.rejects(()=>recordedTool(ctx,"prepare_text_generation",{nodes:[{...textJob(ctx),model:"unverified-text"}]}),{code:"AGENT_MODEL_UNAVAILABLE"});
+    const prepared=await recordedTool(ctx,"prepare_text_generation",{nodes:[{...spec,model:"vision-writer-model"}]}),target=prepared.nodes.find((node:any)=>node.type==="text");assert.equal((await record(ctx.id)).model_config.imageInput,false);assert.deepEqual(target.parameters,{model:"vision-writer-model"});
+    const other=await setup();await assert.rejects(()=>recordedTool(other,"prepare_text_generation",{nodes:[{...textJob(other),model:"vision-writer-model",referenceNodeIds:[imageId]}]}),{code:"CANVAS_NODE_NOT_FOUND"});
+    const config=agentConfig!.verifiedModels.find(model=>model.model==="vision-writer-model")!;config.imageInput=false;
+    try{await assert.rejects(()=>recordedTool(ctx,"submit_generation",{nodeIds:[target.id]}),{code:"MODEL_CAPABILITY_INVALID"});}finally{config.imageInput=true;}
+    assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+    responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(ctx.id);const waiting=await record(ctx.id);await confirmRun(ctx.user,ctx.id,{waitVersion:waiting.wait_version,approve:true});responses.push(modelText("图像理解任务已受理"));await executeAgentRun(ctx.id);
+    const task=(await db.query("SELECT id FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0],{executeMediaTask}=await import("./generation-executor.js");responses.push(modelText("图像中的场景描述"));await executeMediaTask(task.id);assert.equal(fixture.requests.at(-1).model,"vision-writer-model");assert.ok(fixture.requests.at(-1).input[0].content.some((part:any)=>part.type==="input_image"&&part.image_url.startsWith("data:image/png;base64,")));await cancelRun(ctx.user,ctx.id);await cancelRun(other.user,other.id);
+});
+test("repeated text submissions reuse pending and finished tasks across runs without overwriting source or result",async()=>{
+    const ctx=await setup(),{prepared,target,task}=await acceptTextJob(ctx),next=await anotherRun(ctx);
+    for(const status of ["pending","succeeded","unknown"]){
+        await db.query("UPDATE generation_tasks SET status=$2,result=$3 WHERE id=$1",[task.id,status,status==="succeeded"?JSON.stringify({text:"已有独立正文"}):null]);
+        const reused=await recordedTool(next,"prepare_text_generation",{nodes:[textJob(ctx,{reasoningEffort:"auto"})]});assert.equal(reused.reusedNodeIds.length,2);const node=(await findCanvasProject(ctx.user,ctx.project)).nodes.find((node:any)=>node.entityId===target.id),result=await recordedTool(next,"submit_generation",{nodeIds:[node.id]});assert.deepEqual(result.taskIds,[task.id]);assert.deepEqual(result.reusedTaskIds,[task.id]);
+    }
+    await recordedTool(next,"read_nodes",{nodeIds:prepared.nodes.map((node:any)=>node.id)});await assert.rejects(()=>recordedTool(next,"prepare_text_generation",{nodes:[{...textJob(ctx),nodeId:target.id,prompt:"覆盖已提交正文"}]}),{code:"AGENT_NODE_NOT_EDITABLE"});
+    await assert.rejects(()=>recordedTool(next,"submit_generation",{nodeIds:[ctx.source]}),{code:"MODEL_CAPABILITY_INVALID"});assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.find((node:any)=>node.id===ctx.source).metadata.content,"小猫回家");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
+});
+test("independent text failure and transport uncertainty retain the original task and never retry automatically",async()=>{
+    const {executeMediaTask}=await import("./generation-executor.js");
+    for(const result of [{...modelText("部分输出"),status:"incomplete"},new TypeError("connection lost")]){
+        const ctx=await setup(),{task}=await acceptTextJob(ctx),before=fixture.requests.length;responses.push(result);await executeMediaTask(task.id);await executeMediaTask(task.id);assert.equal(fixture.requests.length,before+1);
+        const saved=(await db.query("SELECT status FROM generation_tasks WHERE id=$1",[task.id])).rows[0];assert.equal(saved.status,result instanceof Error?"unknown":"failed");await transaction(async client=>settleTaskWait(client,await lockRun(client,ctx.id,ctx.user)));assert.equal((await record(ctx.id)).wait.type,"task_failure");
+        const next=await anotherRun(ctx),reused=await recordedTool(next,"submit_generation",{nodeIds:[task.canvas_node_id]});assert.deepEqual(reused.taskIds,[task.id]);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
+    }
+});
+test("mixed generation batches confirm new text and media while reusing the original text task",async()=>{
+    const ctx=await setup(),first=await acceptTextJob(ctx),next=await anotherRun(ctx),prepared=await recordedTool(next,"prepare_text_generation",{nodes:[{...textJob(next),title:"独立续写",prompt:"根据「小猫回家」续写一个结尾。"}]}),text=prepared.nodes.find((node:any)=>node.type==="text"),image=await prepare(next);
+    responses.push(modelTool("submit_generation",{nodeIds:[first.target.id,text.id,image.id]}));await executeAgentRun(next.id);const run=await record(next.id);assert.equal(run.status,"waiting_confirmation");assert.equal(run.wait.manifest.nodes[0].taskId,first.task.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"1");
+    await confirmRun(next.user,next.id,{waitVersion:run.wait_version,approve:true});responses.push(modelText("新文本与图片已受理，原文本任务复用。"));await executeAgentRun(next.id);
+    const tasks=(await db.query("SELECT id,capability FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows;assert.equal(tasks.length,3);assert.equal(tasks.filter(task=>task.capability==="text").length,2);const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='submit_generation'",[next.id])).rows[0].result;assert.deepEqual(receipt.reusedTaskIds,[first.task.id]);assert.equal(receipt.taskIds.length,3);await executeAgentRun(next.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"3");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
 });
