@@ -65,9 +65,7 @@ globalThis.fetch = async (input, init) => {
         return new Response(jpegBytes, { headers: { "Content-Type": "image/jpeg" } });
     }
     if (url === "https://tokenone.test/video-result.mp4") {
-        videoDownloads++;
-        assert.equal(new Headers(init?.headers).get("Authorization"), null);
-        return new Response(videoBytes, { status: videoDownloadFails ? 503 : 200, headers: { "Content-Type": "video/mp4" } });
+        assert.fail("Video results must be downloaded through the authenticated public task endpoint");
     }
     if (url.startsWith("https://tokenone.test")) {
         forwardedKeys.push(new Headers(init?.headers).get("Authorization") || "");
@@ -75,6 +73,7 @@ globalThis.fetch = async (input, init) => {
         if (modelFailure) return Response.json({ code: modelFailure.code, message: "private upstream details" }, { status: modelFailure.status });
         if (/\/v1\/videos\/[^/]+\/content$/.test(url)) {
             videoDownloads++;
+            assert.equal(init?.method, "GET");
             assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer sk-${alice}-8`);
             assert.equal(init?.redirect, "error");
             if (videoContentHandler) return videoContentHandler();
@@ -380,8 +379,42 @@ test("WAN and Seedance task IDs remain isolated by protocol and user, with local
     await processVideoTask(seedance.headers.get("X-Generation-Task-Id")!);
     const ark = await (await call(`/ai/${videoChannel}/v1/contents/generations/tasks/task-shared`)).json() as any;
     assert.match(ark.content.video_url, /^\/api\/files\/media_files\//);
+    assert.equal(forwardedRequests.at(-1)?.url, "https://tokenone.test/v1/videos/task-shared/content");
+    assert.equal(ark.file.bytes, videoBytes.byteLength);
+    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks/task-shared`, bob)).status, 404);
+    assert.equal((await realFetch(`${base}${ark.content.video_url}`, { headers: headers(bob) })).status, 404);
     const { tasks } = await (await call("/tasks")).json() as any;
     assert.ok(tasks.some((task: any) => task.path === "videos" && task.upstream_id === "task-shared" && task.status === "succeeded"));
+});
+
+test("Seedance uses the stored public ID even with provider URLs, signed CDN URLs or no URL", async () => {
+    const previousBase = env.TOKENONE_BASE_URL;
+    try {
+        env.TOKENONE_BASE_URL = "https://tokenone.test/v1/";
+        for (const [index, url] of ["https://provider.test/v1/videos/private-task/content", "https://signed-cdn.test/video.mp4?signature=private", undefined].entries()) {
+            const publicId = `task-seedance-public-${index}`;
+            videoCreateResponse = { id: publicId, status: "queued" };
+            const created = await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", { model: "seedance-test", content: [{ type: "text", text: "猫" }] });
+            assert.equal(created.status, 200);
+            const id = created.headers.get("X-Generation-Task-Id")!;
+            assert.notEqual(id, publicId);
+            videoQueryResponse = { id: "private-query-task", status: "succeeded", ...(url ? { content: { video_url: url } } : {}) };
+            const before = forwardedRequests.length;
+            await processVideoTask(id);
+            assert.deepEqual(forwardedRequests.slice(before).map((request) => request.url), [
+                `https://tokenone.test/doubao/api/v3/contents/generations/tasks/${publicId}`,
+                `https://tokenone.test/v1/videos/${publicId}/content`,
+            ]);
+            assert.equal(ensures.at(-1).identity.subject, alice);
+            const saved = (await db.query("SELECT status,upstream_id,result FROM generation_tasks WHERE id=$1", [id])).rows[0];
+            assert.equal(saved.status, "succeeded");
+            assert.equal(saved.upstream_id, publicId);
+            assert.equal(saved.result.id, publicId);
+            assert.match(saved.result.content.video_url, /^\/api\/files\/media_files\//);
+            assert.deepEqual(new Uint8Array(await (await realFetch(`${base}${saved.result.content.video_url}`, { headers: headers(alice) })).arrayBuffer()), videoBytes);
+            assert.ok(!JSON.stringify(saved.result).includes(`sk-${alice}-8`) && !JSON.stringify(saved.result).includes("private"));
+        }
+    } finally { env.TOKENONE_BASE_URL = previousBase; }
 });
 
 test("instant completion and temporary query/download failures retain the same WAN task without resubmission", async () => {
@@ -549,30 +582,50 @@ test("WAN nested references are owner scoped, signed only upstream and restored 
     } finally { env.APP_ORIGIN = previousOrigin; }
 });
 
-test("WAN content errors pause saving and resume the same task without another generation", async () => {
-    for (const [index, content] of [
+test("WAN and Seedance content errors pause saving and resume the same task without another generation", async () => {
+    for (const wan of [true, false]) for (const [index, content] of [
         () => Response.json({ error: "not media" }),
         () => new Response(null, { status: 302, headers: { Location: "https://foreign.test/file" } }),
         () => new Response(new Uint8Array(), { headers: { "Content-Type": "video/mp4" } }),
+        () => Response.json({ error: { message: `invalid token Bearer sk-${alice}-8` } }, { status: 401 }),
+        () => Response.json({ error: { message: "task not found" } }, { status: 404 }),
+        () => new Response("unavailable", { status: 503 }),
     ].entries()) {
-        videoCreateResponse = { id: `task-content-error-${index}`, status: "queued" };
-        videoQueryResponse = { status: "completed", metadata: { url: "https://foreign.test/do-not-fetch" } };
-        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "wan3.0-video", prompt: "猫", duration: 2, resolution: "480P", ratio: "adaptive" });
+        const endpoint = wan ? "videos" : "contents/generations/tasks";
+        const createUrl = wan ? "https://tokenone.test/v1/videos" : "https://tokenone.test/doubao/api/v3/contents/generations/tasks";
+        videoCreateResponse = { id: `task-content-error-${wan}-${index}`, status: "queued" };
+        videoQueryResponse = { status: wan ? "completed" : "succeeded", metadata: { url: "https://foreign.test/do-not-fetch" }, content: { video_url: "https://tokenone.test/video-result.mp4" } };
+        const created = await call(`/ai/${videoChannel}/v1/${endpoint}`, alice, "POST", wan
+            ? { model: "wan3.0-video", prompt: "猫", duration: 2, resolution: "480P", ratio: "adaptive" }
+            : { model: "seedance-test", content: [{ type: "text", text: "猫" }] });
+        assert.equal(created.status, 200);
         const id = created.headers.get("X-Generation-Task-Id")!;
-        const path = `/ai/${videoChannel}/v1/videos/${videoCreateResponse.id}`;
-        const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
+        const path = `/ai/${videoChannel}/v1/${endpoint}/${videoCreateResponse.id}`;
+        const posts = forwardedRequests.filter((request) => request.url === createUrl).length;
         const files = Number((await db.query("SELECT count(*) FROM files")).rows[0].count);
+        const warn = console.warn, warnings: string[] = [];
         try {
+            console.warn = (...args) => { warnings.push(args.join(" ")); };
             videoContentHandler = content;
             await processVideoTask(id);
-            assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "unknown");
+            const paused = (await db.query("SELECT status,upstream_id,upstream_error FROM generation_tasks WHERE id=$1", [id])).rows[0];
+            assert.equal(paused.status, "unknown");
+            assert.equal(paused.upstream_id, videoCreateResponse.id);
+            assert.ok(!JSON.stringify([paused, warnings]).includes(`sk-${alice}-8`));
+            const response = await (await call(path)).text();
+            assert.equal(JSON.parse(response).status, "paused");
+            assert.ok(!response.includes(`sk-${alice}-8`));
             assert.equal(Number((await db.query("SELECT count(*) FROM files")).rows[0].count), files);
+            const before = forwardedRequests.length;
+            assert.equal((await call(`${path}/resume`, bob, "POST", {})).status, 404);
+            assert.equal((await call(`/ai/${videoChannel}/v1/${endpoint}/task-missing/resume`, alice, "POST", {})).status, 404);
+            assert.equal(forwardedRequests.length, before);
             videoContentHandler = undefined;
             assert.equal((await call(`${path}/resume`, alice, "POST", {})).status, 200);
             await processVideoTask(id);
             assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [id])).rows[0].status, "succeeded");
-            assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
-        } finally { videoContentHandler = undefined; }
+            assert.equal(forwardedRequests.filter((request) => request.url === createUrl).length, posts);
+        } finally { videoContentHandler = undefined; console.warn = warn; }
     }
 });
 
