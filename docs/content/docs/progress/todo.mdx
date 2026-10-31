@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+- Seedance 下载真实联调：CreativeOne 网关鉴权下载已转入[待测清单](/docs/progress/pending-test)。目标 TokenONE 须先更新并启用 Doubao 1.4.1，再更新 CreativeOne，验收 RollDek 与官方 Doubao 的公共任务下载入口、任务归属和下载失败恢复；只恢复已有任务，不以重新生成验证下载。本项目不修改或部署 TokenONE。
+
 ONE 对接以最新指南为主要依据：通用流程遵循 HomeONE `docs/one-auth/appone.md`，模型价格遵循 Reseller `docs/APP_PRICING_API.md` 与 `docs/CREATIVEONE_PRICING_HANDOFF.md`。对照指南检查实现、配置和本仓库说明，差异列为适配事项；现有代码只用于判断完成情况，不据此反推指南过时。示例按指南要求替换为实际交付值；指南之间存在实质冲突时先确认适用规则。
 
 - MiniMax H3 真实联调与金额预估：应用的全部素材模式已接入，见待测清单。需在目标 TokenONE 实例核实知梦 1.2.0、模型启用及价格，并在 CreativeOne 后台将 `MiniMax-H3` 配置为「MiniMax H3」调用类型；核对实际路由、公网素材可达性、生成效果和真实账单。新版 Reseller 价格合同已支持独立用量项，CreativeOne 展示适配见待测清单；尚无实际 H3 报价及请求参数到计费用量的权威换算规则，条件文本不可作为计费表达式执行，待对应项目提供实际规则或权威报价接口后接入金额预估。当前显示附加图片数量、15 秒预留及最终账单提示，不硬编码供应商报价。
