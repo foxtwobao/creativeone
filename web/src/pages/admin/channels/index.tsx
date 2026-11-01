@@ -4,11 +4,11 @@ import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import type { ModelCapabilities } from "../../../../../shared/agent-settings";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { imageModelTypes, imageModelTypeLabels, type ImageModelType } from "../../../../../shared/image-models";
-import { videoModelTypes, videoModelTypeLabels, type VideoModelType } from "../../../../../shared/video-models";
+import { videoCallTypes, videoCallTypeLabels, videoParameterPresets, type VideoCallType } from "../../../../../shared/video-models";
 
 import { audioModelTypes, audioModelTypeLabels, type AudioModelType } from "../../../../../shared/audio";
 
-type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoModelType>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; model_capabilities:Record<string,ModelCapabilities>;default_model: string; enabled: boolean };
+type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoCallType>; video_presets: Record<string, string>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; model_capabilities:Record<string,ModelCapabilities>;default_model: string; enabled: boolean };
 type Group = { id: string; name: string; status: string; is_default: boolean };
 const capabilities = [{ value: "image", label: "图片生成 / 编辑" }, { value: "text", label: "聊天 / 文本生成" }, { value: "video", label: "视频生成" }, { value: "audio", label: "音频生成" }];
 
@@ -25,6 +25,7 @@ export default function ChannelsPage() {
     const [loading, setLoading] = useState(true);
     const [form] = Form.useForm();
     const selectedModels: string[] = Form.useWatch("models", form) || [];
+    const videoTypes: Record<string, VideoCallType> = Form.useWatch("video_types", form) || {};
     const modelCapabilities: Record<string, ModelCapabilities> | undefined = Form.useWatch("model_capabilities", form);
     const agentEnabledCount = selectedModels.filter((model) => modelCapabilities?.[model]?.agentEnabled).length;
     const load = async () => {
@@ -50,7 +51,7 @@ export default function ChannelsPage() {
     const edit = (channel: Channel) => {
         setEditing(channel.capability);
         form.resetFields();
-        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, audio_types: channel.audio_types, video_types: Object.fromEntries(channel.models.map((model) => [model, channel.video_types?.[model] || "seedance"])), model_descriptions: channel.model_descriptions, model_capabilities:channel.model_capabilities,default_model: channel.default_model, enabled: channel.enabled });
+        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, audio_types: channel.audio_types, video_types: channel.video_types, video_presets: channel.video_presets, model_descriptions: channel.model_descriptions, model_capabilities:channel.model_capabilities,default_model: channel.default_model, enabled: channel.enabled });
         if (!modelsLoading) void loadModels();
     };
     const save = async () => {
@@ -61,15 +62,16 @@ export default function ChannelsPage() {
             const models = [...new Set<string>(values.models.map((model: string) => model.trim()).filter(Boolean))];
             const image_types = editing === "image" ? Object.fromEntries(models.map((model) => [model, values.image_types[model]])) : {};
             const video_types = editing === "video" ? Object.fromEntries(models.map((model) => [model, values.video_types[model]])) : {};
+            const video_presets = editing === "video" ? Object.fromEntries(models.map(model => [model, values.video_presets[model]])) : {};
             const audio_types = editing === "audio" ? Object.fromEntries(models.map((model) => [model, values.audio_types[model]])) : {};
             const model_capabilities=Object.fromEntries(models.map(model=>[model,{agentEnabled:Boolean(values.model_capabilities?.[model]?.agentEnabled),imageInput:editing==="text"&&Boolean(values.model_capabilities?.[model]?.imageInput)}]));
             const model_descriptions = Object.fromEntries(models.filter((model) => values.model_descriptions?.[model]?.trim()).map((model) => [model, values.model_descriptions[model].trim()]));
-            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, video_types, audio_types, model_descriptions,model_capabilities }) });
+            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, video_types, video_presets, audio_types, model_descriptions,model_capabilities }) });
             setEditing(null); await load(); void useServerAgentStore.getState().loadConfig().catch(()=>message.warning("配置已保存，请刷新页面更新助手入口。"));message.success("配置已保存，重新加载页面后生效");
         } catch (error) { message.error(error instanceof Error ? error.message : "保存失败"); }
         finally { setSaving(false); }
     };
-    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, video_types: {}, audio_types: {}, model_descriptions: {}, model_capabilities:{},default_model: "", enabled: false });
+    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, video_types: {}, video_presets: {}, audio_types: {}, model_descriptions: {}, model_capabilities:{},default_model: "", enabled: false });
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-5">
         <h1 className="text-xl font-semibold">功能模型配置</h1>
         <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Reseller 管理的应用默认分组。</p>
@@ -77,7 +79,7 @@ export default function ChannelsPage() {
         {error ? <Alert type="error" title={error} action={<Button onClick={() => void load()}>重试</Button>} /> : null}
         <Table<Channel> rowKey="capability" dataSource={rows} loading={loading} pagination={false} scroll={{ x: true }} columns={[
             { title: "功能", dataIndex: "capability", render: (value) => capabilities.find((item) => item.value === value)?.label },
-            { title: "模型", dataIndex: "models", render: (models: string[], channel) => models.length ? <div className="space-y-1">{models.map((model) => <div key={model} className="flex flex-wrap items-center gap-2"><span>{model}</span>{channel.capability === "image" ? <Tag>{imageModelTypeLabels[channel.image_types[model]] || "未配置类型"}</Tag> : channel.capability === "video" ? <Tag>{videoModelTypeLabels[channel.video_types?.[model] || "seedance"]}</Tag> : channel.capability === "audio" ? <Tag>{audioModelTypeLabels[channel.audio_types?.[model]] || "未配置类型"}</Tag> : null}</div>)}</div> : "尚未配置" },
+            { title: "模型", dataIndex: "models", render: (models: string[], channel) => models.length ? <div className="space-y-1">{models.map((model) => <div key={model} className="flex flex-wrap items-center gap-2"><span>{model}</span>{channel.capability === "image" ? <Tag>{imageModelTypeLabels[channel.image_types[model]] || "未配置类型"}</Tag> : channel.capability === "video" ? <><Tag>{videoCallTypeLabels[channel.video_types?.[model]] || "未配置类型"}</Tag><Tag>{videoParameterPresets[channel.video_presets?.[model]]?.label || "未配置参数预设"}</Tag></> : channel.capability === "audio" ? <Tag>{audioModelTypeLabels[channel.audio_types?.[model]] || "未配置类型"}</Tag> : null}</div>)}</div> : "尚未配置" },
             { title: "默认模型", dataIndex: "default_model", render: (value) => value || "—" },
             { title: "状态", render: (_, channel) => <Tag>{channel.enabled ? "启用" : "停用"}</Tag> },
             { title: "操作", render: (_, channel) => <Button type="link" disabled={Boolean(error)} onClick={() => edit(channel)}>编辑</Button> },
@@ -104,7 +106,10 @@ export default function ChannelsPage() {
                     {selectedModels.map((model) => <div key={model}>
                         <p className="mb-2 break-all text-sm font-medium">{model}</p>
                         {editing === "image" || editing === "video" || editing === "audio" ? <Form.Item name={[editing === "image" ? "image_types" : editing === "audio" ? "audio_types" : "video_types", model]} label="调用类型" rules={[{ required: true, message: "请选择调用类型" }]}>
-                        <Select aria-label={`${model} 的调用类型`} options={editing === "image" ? imageModelTypes.map((value) => ({ value, label: imageModelTypeLabels[value] })) : editing === "audio" ? audioModelTypes.map((value) => ({ value, label: audioModelTypeLabels[value] })) : videoModelTypes.map((value) => ({ value, label: videoModelTypeLabels[value] }))} />
+                        <Select aria-label={`${model} 的调用类型`} options={editing === "image" ? imageModelTypes.map((value) => ({ value, label: imageModelTypeLabels[value] })) : editing === "audio" ? audioModelTypes.map((value) => ({ value, label: audioModelTypeLabels[value] })) : videoCallTypes.map((value) => ({ value, label: videoCallTypeLabels[value] }))} />
+                        </Form.Item> : null}
+                        {editing === "video" ? <Form.Item name={["video_presets", model]} label="参数预设" rules={[{ required: true, message: "请选择参数预设" }, { validator: (_, value) => !value || videoParameterPresets[value]?.callType === videoTypes[model] ? Promise.resolve() : Promise.reject(new Error("参数预设与调用类型不匹配，请重新选择")) }]} extra="控制允许的参数值、默认值和界面规则；不会替换模型 ID。">
+                            <Select aria-label={`${model} 的参数预设`} showSearch optionFilterProp="label" options={Object.entries(videoParameterPresets).filter(([, preset]) => preset.callType === videoTypes[model]).map(([value, preset]) => ({ value, label: preset.label }))} />
                         </Form.Item> : null}
                         <Form.Item name={["model_capabilities",model,"agentEnabled"]} label="允许创作助手调用" valuePropName="checked" extra={editing==="text"?"仅在已验证支持 Responses 原生工具调用后开启，同时用于独立文本任务。":"仅在已验收该模型生成链路后开启；每批仍须用户确认。"}><Switch aria-label={`${model} 允许创作助手调用`}/></Form.Item>
                         {editing==="text"?<Form.Item name={["model_capabilities",model,"imageInput"]} label="支持图片理解" valuePropName="checked" extra="仅在已验证图片输入后开启，与图片生成模型无关。"><Switch aria-label={`${model} 支持图片理解`}/></Form.Item>:null}

@@ -51,6 +51,11 @@ export async function signWanMedia(userId: string, media: { type: string; url: s
     }
 }
 
+export async function signVideoMedia(userId: string, input: { metadata?: { input?: { media?: { type: string; url: string }[] } } }) {
+    await signWanMedia(userId, input.metadata?.input?.media || []);
+
+}
+
 export const publicMediaRouter = Router();
 publicMediaRouter.get("/public/media/:diskId", async (req, res) => {
     const diskId = z.uuid().parse(req.params.diskId);

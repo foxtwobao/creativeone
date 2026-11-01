@@ -1,4 +1,4 @@
-import { defaultConfig, resolveModelForCapability, videoModelSelectionPatch, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, resolveModelForCapability, modelVideoTypeOf, modelVideoProfileOf, videoModelSelectionPatch, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
 import { ensureImagePreview, resolveImageUrl } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -102,20 +102,23 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
+    const model = mode === "audio" ? node?.metadata?.model || config.audioModel : resolveModelForCapability(config, node?.metadata?.model, mode);
+    const veo = mode === "video" && modelVideoTypeOf(config, model) === "veo" ? modelVideoProfileOf(config, model) : null;
     return {
         ...config,
-        model: mode === "audio" ? node?.metadata?.model || config.audioModel : resolveModelForCapability(config, node?.metadata?.model, mode),
+        model,
         audioInput: node?.metadata?.audioInput || defaultAudioInput(modelAudioTypeOf(config, node?.metadata?.model || config.audioModel)),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: mode === "image" ? node?.metadata?.size || config.size || defaultConfig.size : config.size,
-        videoSize: node?.metadata?.videoSize || config.videoSize || defaultConfig.videoSize,
+        videoSize: node?.metadata?.videoSize || (veo ? "16:9" : config.videoSize || defaultConfig.videoSize),
         background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
+        videoSeconds: node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds,
+        vquality: node?.metadata?.vquality || (veo ? veo.resolutions[0] : config.vquality || defaultConfig.vquality),
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+        videoFastMode: node?.metadata?.fastMode ?? config.videoFastMode ?? "",
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
-        videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,
+        videoMode: node?.metadata?.videoMode || (veo ? veo.modes[0] : config.videoMode || defaultConfig.videoMode),
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,

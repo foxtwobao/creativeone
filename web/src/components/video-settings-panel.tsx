@@ -1,3 +1,4 @@
+import { SeedanceReferenceNotice } from "@/components/seedance-reference-notice";
 import { type ReactNode } from "react";
 import { Slider, Switch } from "antd";
 import { useTranslation } from "react-i18next";
@@ -5,9 +6,10 @@ import { useTranslation } from "react-i18next";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { WanReferenceNotice } from "@/components/wan-reference-notice";
 import { H3ReferenceNotice } from "@/components/h3-reference-notice";
+import { VeoReferenceNotice } from "@/components/veo-reference-notice";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { type AiConfig } from "@/stores/use-config-store";
-import { videoModeOptions, videoSettingsForModel } from "@/lib/video-settings";
+import { videoSettingsForModel } from "@/lib/video-settings";
 
 export { videoResolutionOptions, videoSizeOptions, videoSecondsRange } from "@/lib/video-settings";
 export { videoResolutionLabel, videoSizeLabel, videoSecondsLabel, videoModeLabel, normalizeVideoModeValue, normalizeVideoSizeValue, normalizeVideoResolutionValue } from "@/lib/video-settings";
@@ -16,7 +18,7 @@ type VideoSettingsPanelProps = {
     config: AiConfig;
     referenceImageCount?: number;
     referenceMedia?: Parameters<typeof videoSettingsForModel>[3];
-    onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
+    onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoFastMode" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -25,7 +27,7 @@ type VideoSettingsPanelProps = {
 export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceMedia, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
     const model = config.model || config.videoModel;
-    const { wan, h3, ratios, resolution, ratio: selectedRatio, seconds, mode: videoMode, forcedReference, generateAudio, watermark, audioOptions, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = videoSettingsForModel(config, model, referenceImageCount, referenceMedia);
+    const { profile, wan, h3, veo, modes, durationConfigurable, ratios, resolution, ratio: selectedRatio, seconds, mode: videoMode, forcedReference, generateAudio, watermark, audioOptions, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = videoSettingsForModel(config, model, referenceImageCount, referenceMedia);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -34,6 +36,8 @@ export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceM
                 {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
                 {wan ? <WanReferenceNotice /> : null}
                 {h3 ? <H3ReferenceNotice onConfigChange={onConfigChange} referenceImageCount={videoMode === "reference" ? referenceImageCount : 0} /> : null}
+                {profile.family === "seedance_public" ? <SeedanceReferenceNotice profile={profile} /> : null}
+                {veo ? <VeoReferenceNotice profile={profile} /> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {resolutions.map((item) => (
@@ -60,25 +64,28 @@ export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceM
                         ))}
                     </div>
                 </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
+                {durationConfigurable ? <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
                     <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
                         <Slider className="min-w-0 flex-1" min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} step={1} value={automaticDuration ? secondsRange.min : Number(seconds)} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
                         <SecondsInput min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} value={automaticDuration ? secondsRange.min : Number(seconds)} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
                         <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
                     </div>
-                </SettingGroup>
-                {autoSeconds ? <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>自动时长</span><Switch aria-label="自动时长" checked={seconds === "-1"} onChange={(checked) => onConfigChange("videoSeconds", checked ? "-1" : "6")} /></div> : null}
+                </SettingGroup> : null}
+                {autoSeconds ? <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>自动时长</span><Switch aria-label="自动时长" checked={seconds === "-1"} onChange={(checked) => onConfigChange("videoSeconds", checked ? "-1" : profile.defaults.seconds)} /></div> : null}
                 {framesAdaptive ? <p className="text-xs" style={{ color: theme.node.muted }}>首尾帧生成沿用首帧比例，请选择自动宽高比。</p> : null}
-                <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
+                {profile.maxImages !== 0 ? <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-2.5">
-                        {videoModeOptions.map((item) => (
+                        {modes.map((item) => (
                             <OptionPill key={item.value} selected={videoMode === item.value} disabled={forcedReference && item.value === "frames"} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
                     </div>
-                </SettingGroup>
-                {forcedReference ? <p className="text-xs" style={{ color: theme.node.muted }}>超过两张图片，已使用参考图模式。</p> : null}
+                </SettingGroup> : null}
+                {forcedReference && referenceImageCount > 2 ? <p className="text-xs" style={{ color: theme.node.muted }}>超过两张图片，已使用参考图模式。</p> : null}
+                {profile.fastModeOptions ? <SettingGroup title="处理模式（影响计费）" color={theme.node.muted}>
+                    <div className="flex gap-2">{[["", "默认"], ["false", "标准"], ["true", "优先"]].map(([value, label]) => <OptionPill key={value} selected={(config.videoFastMode || "") === value} theme={theme} onClick={() => onConfigChange("videoFastMode", value)}>{label}</OptionPill>)}</div>
+                </SettingGroup> : null}
                 {audioOptions ? <>
                     <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /></div>
                     <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{ color: theme.node.muted }}>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /></div>

@@ -17,7 +17,7 @@ export function generationPrompt(request?: Record<string, any> | null): string {
 }
 
 export function generationRequestSettings(capability: string, request: Record<string, any>) {
-    const ratio = request.aspect_ratio || request.ratio || "auto";
+    const ratio = request.ratio || "auto";
     // Single-image Grok edits omit ratio; this preset retains resolution while the editor locks ratio to the reference.
     const imageRatio = request.aspect_ratio || (request.image ? "1:1" : "auto");
     return {
@@ -27,9 +27,10 @@ export function generationRequestSettings(capability: string, request: Record<st
         background: request.background || "",
         count: String(request.n || 1),
         vquality: request.resolution?.replace(/p$/i, "").toLowerCase() || "",
-        videoSeconds: String(request.seconds || request.duration || ""),
-        videoGenerateAudio: String(request.generate_audio ?? true),
-        videoWatermark: String(request.watermark ?? false),
-        videoMode: request.generation_mode === "references" || [...(request.content || []), ...(request.metadata?.input?.media || [])].some((part: any) => ["reference_image", "reference_video", "reference_audio"].includes(part.role || part.type)) ? "reference" : "frames",
+        videoSeconds: String(request.duration ?? ""),
+        videoGenerateAudio: String(request.metadata?.parameters?.audio ?? request.generate_audio ?? true),
+        videoWatermark: String(request.metadata?.parameters?.watermark ?? request.watermark ?? false),
+        videoFastMode: request.metadata?.parameters?.fast_mode === undefined ? "" : String(request.metadata.parameters.fast_mode),
+        videoMode: [...(request.content || []), ...(request.metadata?.input?.media || [])].some((part: any) => ["reference_image", "reference_video", "reference_audio"].includes(part.role || part.type)) ? "reference" : "frames",
     };
 }

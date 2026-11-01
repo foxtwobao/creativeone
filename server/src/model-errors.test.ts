@@ -134,3 +134,12 @@ test("failed tasks expose stored reasons even without an error code, active task
     assert.match(taskErrorMessage({ status: "failed", upstream_error: { code: "seedance_real_person_asset_required", message: "private" } })!, /真人认证/);
     assert.match(modelErrorMessage("TOKENONE_HTTP_500", { message: "" })!, /暂时无法完成/);
 });
+
+
+test("task failures display actual errors without inventing a cause or remedy", () => {
+    const reason = "content[1].image_url: cannot download media URL";
+    assert.equal(taskErrorMessage({ status: "failed", upstream_error: { message: reason } }), `上游服务返回：${reason}`);
+    assert.equal(taskErrorMessage({ status: "failed", error: reason }), reason);
+    assert.equal(taskErrorMessage({ status: "failed", upstream_error: upstreamErrorDetails({ status: "failed" }) }), "模型服务未返回失败原因。");
+    assert.equal(taskErrorMessage({ status: "failed", error: "unknown provider error api_key=private-key https://private.invalid/media" }), "unknown provider error api_key=[已隐藏] [链接已隐藏]");
+});

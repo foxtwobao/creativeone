@@ -1,20 +1,19 @@
 const labels: Record<string, string> = {
     size: "尺寸", aspect_ratio: "宽高比", ratio: "宽高比", resolution: "分辨率", quality: "质量", n: "生成数量",
-    seconds: "时长", duration: "时长", generate_audio: "生成音频", watermark: "水印", background: "背景", generation_mode: "生成模式",
+    audio: "生成音频", fast_mode: "优先模式", seconds: "时长", duration: "时长", generate_audio: "生成音频", watermark: "水印", background: "背景",
     response_format: "返回格式", output_format: "图片格式", output_compression: "压缩率", seed: "随机种子", omni_reference_task_type: "视频任务类型",
 };
 const values: Record<string, Record<string, string>> = {
     quality: { max: "极致", xhigh: "超高", auto: "自动", high: "高", medium: "中", low: "低" },
     omni_reference_task_type: { auto: "自动", reference: "参考生成", edit: "编辑", extend: "延长" },
-    generation_mode: { frames: "文生视频 / 首尾帧", references: "多素材参考" },
     background: { auto: "自动", transparent: "透明", opaque: "不透明" },
     size: { auto: "自动" }, aspect_ratio: { adaptive: "自适应" }, ratio: { adaptive: "自适应" },
 };
-const excluded = new Set(["model", "prompt", "user_prompt", "input", "content", "messages", "images", "image", "image_urls", "image_references", "reference_images", "reference_videos", "reference_audios"]);
+const excluded = new Set(["model", "prompt", "user_prompt", "input", "content", "messages", "images", "image", "image_urls", "image_references", "reference_videos", "reference_audios"]);
 export const taskParameterKeys = Object.keys(labels);
 
 export function taskSettings(request: Record<string, any>) {
-    const items = Object.entries(request).filter(([key, value]) => !excluded.has(key) && value !== null && value !== "" && ["string", "number", "boolean"].includes(typeof value)).map(([key, value]) => ({
+    const items = Object.entries({ ...request, ...request.metadata?.parameters }).filter(([key, value]) => !excluded.has(key) && value !== null && value !== "" && ["string", "number", "boolean"].includes(typeof value)).map(([key, value]) => ({
         key, label: key === "output_format" && request.audio_input ? "交付方式" : labels[key] || key,
         children: key === "duration" && Number(value) === -1 ? "自动" : typeof value === "boolean" ? value ? "开启" : "关闭" : `${values[key]?.[String(value)] || value}${["seconds", "duration"].includes(key) ? " 秒" : key === "n" ? " 张" : ""}`,
     }));

@@ -11,12 +11,12 @@ import { imageRequestCapabilityError, videoRequestCapabilityError } from "../mod
 import { canvasRequestBody } from "../../../shared/canvas-request.js";
 import { videoTaskPath } from "../../../shared/video-tasks.js";
 import { imageModelProfile } from "../../../shared/image-models.js";
-import { videoModelProfile } from "../../../shared/video-models.js";
+import { channelVideoConfig, channelVideoProfile } from "../../../shared/video-models.js";
 import { searchPrompts } from "../prompts.js";
 import { digest, getNode, setState, type Client, type Run } from "./state.js";
 
 const keyword=z.object({keyword:z.string().optional()}).strict();
-const generation=z.object({model:z.string().min(1),prompt:z.string().min(1),count:z.number().int().positive().default(1),run:z.boolean().default(true),references:z.array(z.string()).default([]),parameters:z.object({size:z.string().optional(),quality:z.string().optional(),background:z.string().optional(),videoSize:z.string().optional(),vquality:z.string().optional(),seconds:z.string().regex(/^(?:-1|[1-9]\d*)$/).optional(),videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional()}).strict().default({})}).strict();
+const generation=z.object({model:z.string().min(1),prompt:z.string().min(1),count:z.number().int().positive().default(1),run:z.boolean().default(true),references:z.array(z.string()).default([]),parameters:z.object({size:z.string().optional(),quality:z.string().optional(),background:z.string().optional(),videoSize:z.string().optional(),vquality:z.string().optional(),seconds:z.string().regex(/^(?:-1|[1-9]\d*)$/).optional(),videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional(),fastMode:z.enum(["true","false"]).optional()}).strict().default({})}).strict();
 export const siteToolSchemas={
     site_navigate:z.object({path:z.string().min(1)}).strict(),
     canvas_list_projects:keyword,
@@ -43,18 +43,20 @@ export async function workbenchManifest(client:Client,run:Run,name:string,input:
     if (input.count>run.model_config.limits.mediaBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
     const channel=(await client.query("SELECT * FROM channels WHERE enabled AND capability=$1 AND models ? $2 ORDER BY id",[kind,input.model])).rows[0];
     if(!channel)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
-    const family=kind === "image" ? channel.image_types[input.model] : channel.video_types[input.model] || "seedance";
+    const family=kind === "image" ? channel.image_types[input.model] : channelVideoProfile(channel, input.model).family;
     if(!family)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
-    if(kind === "video" && !videoModelProfile(input.model,family).audioOptions && (input.parameters.generateAudio!==undefined || input.parameters.watermark!==undefined))throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
+    if(kind === "video" && !channelVideoProfile(channel, input.model).audioOptions && (input.parameters.generateAudio!==undefined || input.parameters.watermark!==undefined))throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
+    if(kind === "video" && !channelVideoProfile(channel, input.model).durationConfigurable && input.parameters.seconds!==undefined)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
     const references={images:[] as string[],videos:[] as string[],audios:[] as string[]};
     for(const url of input.references){const file=await storedFileInfo(run.user_id,url,client);const target=file.mimeType.startsWith("image/")?references.images:file.mimeType.startsWith("video/")?references.videos:file.mimeType.startsWith("audio/")?references.audios:null;if(!target)throw new HttpError(400,"INVALID_FILE_REFERENCE");target.push(file.url);}
     if(kind === "image" && (references.videos.length || references.audios.length))throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
-    const request=canvasRequestBody(input.model,kind,family,{...input.parameters,prompt:input.prompt},references);
-    const error=kind === "image" ? imageRequestCapabilityError(input.model,family,request) : videoRequestCapabilityError(input.model,family,request);
+    if(kind === "video" && family !== "h3" && input.parameters.fastMode!==undefined)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
+    const request=canvasRequestBody(input.model,kind,family,{...input.parameters,prompt:input.prompt},references,"","",kind === "video" ? channelVideoConfig(channel,input.model) : undefined);
+    const error=kind === "image" ? imageRequestCapabilityError(input.model,family,request) : videoRequestCapabilityError(input.model,channelVideoConfig(channel,input.model),request);
     if(error)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
     await assertReferenceImages(run.user_id,request,client);
-    if(kind === "video")await assertVideoDurations(run.user_id,input.model,family,references,client);
-    const path=kind === "video" ? videoTaskPath(family) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
+    if(kind === "video")await assertVideoDurations(run.user_id,input.model,channelVideoConfig(channel,input.model),references,client);
+    const path=kind === "video" ? videoTaskPath(channelVideoConfig(channel,input.model).callType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
     const data={kind,channelId:channel.id,model:input.model,path,request,count:input.count,prompt:input.prompt,references:input.references,parameters:input.parameters};
     return {...data,hash:digest(data)};
 }
@@ -87,8 +89,8 @@ export async function executeSiteTool(client:Client,run:Run,call:any,external:{g
     if(name.endsWith("_get_config")){
         const kind=name === "workbench_image_get_config" ? "image" : "video",channels=(await client.query("SELECT * FROM channels WHERE enabled AND capability=$1",[kind])).rows;
         const saved=await readAccountData(run.user_id,"infinite-canvas:ai_config_store",{config:{}} as any,"preferences");
-        const parameters=Object.fromEntries(["model","quality","size","count","videoModel","videoSize","videoQuality","videoSeconds","videoGenerateAudio","videoWatermark"].filter(key=>key in saved.config).map(key=>[key,saved.config[key]]));
-        return {parameters,models:channels.flatMap(channel=>channel.models.map((model:string)=>{const {family,...capabilities}=kind === "image" ? imageModelProfile(model,channel.image_types[model]) : videoModelProfile(model,channel.video_types[model] || "seedance");return {model,capabilities};}))};
+        const parameters=Object.fromEntries(["model","quality","size","count","videoModel","videoSize","videoQuality","videoSeconds","videoGenerateAudio","videoWatermark","videoFastMode"].filter(key=>key in saved.config).map(key=>[key,saved.config[key]]));
+        return {parameters,models:channels.flatMap(channel=>channel.models.map((model:string)=>{const {family,...capabilities}=kind === "image" ? imageModelProfile(model,channel.image_types[model]) : channelVideoProfile(channel, model);return {model,capabilities};}))};
     }
     const manifest=await workbenchManifest(client,run,name,input),ui={type:"workbench",submitted:false,kind:manifest.kind,model:input.model,prompt:input.prompt,parameters:input.parameters,count:input.count,references:input.references};
     if(!input.run)return queueUiAction(client,run,ui);

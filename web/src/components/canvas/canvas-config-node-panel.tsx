@@ -1,9 +1,12 @@
+import { SeedanceReferenceNotice } from "@/components/seedance-reference-notice";
 import type { CSSProperties } from "react";
 import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
 import { Button, Segmented } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { AudioPriceHint } from "@/components/audio-price-hint";
+import { VeoReferenceNotice } from "@/components/veo-reference-notice";
+import { videoSettingsForModel } from "@/lib/video-settings";
 import { canvasAudioModelPatch } from "@/lib/audio-generation";
 import { modelAudioTypeOf, resolveModelForCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
@@ -40,6 +43,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, node.metadata?.composerContent || node.metadata?.prompt || "") : undefined;
     const referenceImageCount = referenceContext?.imageCount || 0;
     const config = buildGenerationConfig(globalConfig, node, mode);
+    const videoSettings = mode === "video" ? videoSettingsForModel(config, config.model, referenceImageCount, { videos: referenceContext?.referenceVideos, audios: referenceContext?.referenceAudios }) : undefined;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
@@ -122,6 +126,8 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             </div>
 
             {mode === "audio" ? <div className="mb-2"><AudioPriceHint model={config.model} type={modelAudioTypeOf(config, config.model)} /></div> : null}
+            {videoSettings?.profile.family === "seedance_public" ? <SeedanceReferenceNotice profile={videoSettings.profile} /> : null}
+            {videoSettings?.veo ? <div className="mb-2"><VeoReferenceNotice profile={videoSettings.profile} />{videoSettings.error ? <p role="alert" className="mt-1 text-xs">{videoSettings.error}</p> : null}</div> : null}
             <Button
                 type="primary"
                 className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
@@ -161,6 +167,7 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
 function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoSeconds") return { seconds: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoFastMode") return { fastMode: value };
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoMode") return { videoMode: value };
     return { [key]: value };

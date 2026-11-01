@@ -203,26 +203,25 @@ function getVideoConfig() {
             model,
             modelName: modelOptionName(model),
             size: settings.ratio,
-            seconds: settings.seconds,
+            seconds: settings.durationConfigurable ? settings.seconds : undefined,
             resolution: settings.resolution,
+            fastMode: settings.h3 ? settings.fastMode : undefined,
             generateAudio: settings.audioOptions ? settings.generateAudio : undefined,
             watermark: settings.audioOptions ? settings.watermark : undefined,
             mode: settings.mode,
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         sizeOptions: videoSizeOptions.filter((item) => settings.ratios.some((ratio) => ratio.value === item.value)),
-        secondsRange: settings.secondsRange,
+        secondsRange: settings.durationConfigurable ? settings.secondsRange : undefined,
+        durationConfigurable: settings.durationConfigurable,
         automaticSeconds: settings.autoSeconds,
         maxReferenceImages: settings.profile.maxImages,
         maxReferenceVideos: settings.profile.maxVideos,
         maxReferenceAudios: settings.profile.maxAudios,
         resolutionOptions: settings.resolutions,
         referenceVideo: settings.profile.maxVideos !== 0,
-        fixedResolution: false,
-        modeOptions: [
-            { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
-            { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
-        ],
+        fixedResolution: settings.veo,
+        modeOptions: settings.modes,
     };
 }
 
@@ -231,11 +230,13 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const model = typeof input.model === "string" && input.model.trim() ? normalizeModelOptionValue(input.model, configStore.config.channels) : configStore.config.videoModel;
     if (!model || !selectableModelsByCapability(configStore.config, "video").includes(model)) throw new Error("请选择已配置的视频模型");
     const settings = videoSettingsForModel(configStore.config, model);
-    if (settings.wan || settings.h3) {
+    if (settings.wan || settings.h3 || settings.veo) {
         if (typeof input.resolution === "string" && !settings.resolutions.some((item) => item.value === parseVideoResolution(input.resolution))) throw new Error("请选择当前模型支持的分辨率");
         if (typeof input.size === "string" && !settings.ratios.some((item) => item.value === inferVideoRatio(input.size))) throw new Error("当前模型不支持所选宽高比，请重新选择");
         if (input.generateAudio != null || input.watermark != null) throw new Error("当前模型不提供生成音频或水印开关");
     }
+    if (!settings.durationConfigurable && input.seconds != null) throw new Error("当前视频模型的时长由模型决定，请省略时长参数");
+    if (input.fastMode != null && !settings.h3) throw new Error("当前参数预设不提供标准／优先模式");
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
@@ -258,6 +259,10 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     if (typeof input.generateAudio === "boolean") {
         configStore.updateConfig("videoGenerateAudio", String(input.generateAudio));
         applied.generateAudio = input.generateAudio;
+    }
+    if (typeof input.fastMode === "boolean") {
+        configStore.updateConfig("videoFastMode", String(input.fastMode));
+        applied.fastMode = input.fastMode;
     }
     if (typeof input.watermark === "boolean") {
         configStore.updateConfig("videoWatermark", String(input.watermark));

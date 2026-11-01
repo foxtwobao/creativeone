@@ -1,3 +1,4 @@
+import { veoModels } from "../../../../shared/video-models";
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
 import axios from "axios";
 import { initializeCloud } from "./cloud";
@@ -34,12 +35,13 @@ beforeAll(async () => {
     config = { ...defaultConfig, model: "video::wan3.0-video", size: "4:3", videoSize: "auto", channels: [{
         id: "video", name: "Video", baseUrl: "https://creative.test/api/ai/video/v1", apiKey: "csrf", apiFormat: "openai",
         models: [
-            { name: "wan3.0-video", capability: "video", videoType: "wan" },
-            { name: "wan3.0-image-1080p", capability: "video", videoType: "wan" },
-            { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance" },
-            { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance" },
-            { name: "seedance", capability: "video", videoType: "seedance" },
-            { name: "MiniMax-H3", capability: "video", videoType: "h3" },
+            { name: "wan3.0-video", capability: "video", videoType: "tokenone", videoPreset: "wan3.0-video" },
+            { name: "wan3.0-image-1080p", capability: "video", videoType: "tokenone", videoPreset: "missing-preset" },
+            { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128" },
+            { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-5-260628" },
+            { name: "seedance", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128" },
+            { name: "MiniMax-H3", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3" },
+            ...veoModels.map((name) => ({ name, capability: "video" as const, videoType: "tokenone" as const, videoPreset: name })),
         ],
     }] };
     api = await import("./video");
@@ -55,7 +57,7 @@ afterAll(() => {
 });
 
 test("WAN submits owned file references without downloading or signing media in the browser", async () => {
-    const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, data: { task_id: "wan-task" } } }); mocks.push(post);
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, data: { id: "wan-task" } } }); mocks.push(post);
     const task = await api.createVideoGenerationTask({ ...config, videoMode: "reference" }, "镜头向前", [{ id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:one" }], {
         videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }],
         audios: [{ id: "a", name: "audio", type: "audio/mp3", url: "", storageKey: "file:audio" }],
@@ -73,13 +75,42 @@ test("WAN submits owned file references without downloading or signing media in 
     expect(settings.videoSettingsForModel({ ...config, vquality: "1080" }, config.model)).toMatchObject({ ratio: "auto", resolution: "1080", resolutions: [{value: "480", label: "480p"}, {value: "720", label: "720p"}, {value: "1080", label: "1080p"}] });
 });
 
-test("WAN rejects old model IDs before creating or signing", async () => {
+test("unconfigured video presets are rejected before creating or signing", async () => {
     const post = spyOn(axios, "post"); mocks.push(post);
     const imageConfig = { ...config, model: "video::wan3.0-image-1080p" };
-    await expect(api.createVideoGenerationTask(imageConfig, "prompt")).rejects.toThrow("公共模型");
-    await expect(api.createVideoGenerationTask(imageConfig, "prompt", [], { videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }] })).rejects.toThrow("公共模型");
+    await expect(api.createVideoGenerationTask(imageConfig, "prompt")).rejects.toThrow("参数预设");
+    await expect(api.createVideoGenerationTask(imageConfig, "prompt", [], { videos: [{ id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" }] })).rejects.toThrow("参数预设");
     expect(post).not.toHaveBeenCalled();
     expect(signed).toHaveLength(0);
+});
+
+test("Veo / Omni submits strict JSON and explicit image modes through the public video task endpoint", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "veo-task", status: "queued" } }); mocks.push(post);
+    for (const [model, resolution, videoMode, count, generation_mode] of [
+        ["veo-3.1-lite", "720", "frames", 0, "text", "720x1280"],
+        ["veo-3.1", "720", "frames", 1, "first_frame", "720x1280"],
+        ["veo-3.1-1080p", "1080", "frames", 2, "first_last", "1080x1920"],
+        ["veo-3.1-fast", "720", "reference", 3, "reference", "720x1280"],
+        ["veo-3.1-fast-1080p", "1080", "frames", 0, "text", "1080x1920"],
+        ["omni-flash-video", "720", "reference", 1, "reference", "720x1280"],
+    ] as const) {
+        const references = Array.from({ length: count }, (_, i) => ({ id: String(i), name: "图", type: "image/png", dataUrl: "", storageKey: `image:${i}` }));
+        const selected = { ...config, model: `video::${model}`, videoSize: "9:16", videoSeconds: "15", vquality: resolution, videoMode };
+        expect(await api.createVideoGenerationTask(selected, "短片", references)).toEqual({ id: "veo-task", path: "videos", model: selected.model });
+        expect(post.mock.calls.at(-1)![0]).toEndWith("/v1/videos");
+        expect(post.mock.calls.at(-1)![1]).toEqual({ model, prompt: "短片", resolution: `${resolution}P`, ratio: "9:16", ...(count ? { metadata: { input: { media: references.map((_, i) => ({ type: generation_mode === "reference" ? "reference_image" : i === 0 ? "first_frame" : "last_frame", url: `/api/files/image_files/image%3A${i}` })) } } } : {}) });
+    }
+    expect(signed).toHaveLength(0);
+});
+
+test("Veo / Omni rejects unsupported media and invalid reference counts before uploading or creating", async () => {
+    const post = spyOn(axios, "post"); mocks.push(post);
+    const selected = { ...config, model: "video::veo-3.1-fast", videoSize: "16:9", videoMode: "reference" };
+    const image = { id: "i", name: "图", type: "image/png", dataUrl: "", storageKey: "image:owned" };
+    await expect(api.createVideoGenerationTask(selected, "短片", [image])).rejects.toThrow("恰好 3 张");
+    await expect(api.createVideoGenerationTask(selected, "短片", [], { videos: [{ id: "v", name: "视频", type: "video/mp4", url: "" }] })).rejects.toThrow("不支持参考视频");
+    await expect(api.createVideoGenerationTask(selected, "短片", [], { audios: [{ id: "a", name: "音频", type: "audio/mp3", url: "" }] })).rejects.toThrow("0 个参考音频");
+    expect(post).not.toHaveBeenCalled();
 });
 
 test("Seedance retains its endpoint, numeric duration, ratio and audio switches", async () => {
@@ -229,7 +260,7 @@ test("H3 sends explicit public parameters and every reference role without WAN s
     const task = await api.createVideoGenerationTask(selected, "镜头推进", [image], { videos, audios });
     expect(task).toEqual({ id: "h3-task", path: "videos", model: selected.model });
     expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
-    expect(post.mock.calls[0]![1]).toEqual({ model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "2K", ratio: "21:9", generation_mode: "references", metadata: { input: { media: [
+    expect(post.mock.calls[0]![1]).toEqual({ model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "2K", ratio: "21:9", metadata: { input: { media: [
         { type: "reference_image", url: "/api/files/image_files/image%3Ah3" },
         { type: "reference_video", url: "/api/files/media_files/file%3Ah3-video" },
         { type: "reference_audio", url: "/api/files/media_files/file%3Ah3-audio" },
@@ -242,7 +273,7 @@ test("H3 rejects inherited parameters, excess references and frame mixing before
     const selected = { ...config, model: "video::MiniMax-H3", vquality: "768", videoSeconds: "4", videoMode: "reference" };
     const image = { id: "i", name: "image", type: "image/png", dataUrl: "", storageKey: "image:h3" };
     const video = { id: "v", name: "video", type: "video/mp4", url: "", storageKey: "file:video" };
-    for (const videoSeconds of ["-1", "3", "16"]) await expect(api.createVideoGenerationTask({ ...selected, videoSeconds }, "画面")).rejects.toThrow("4–15");
+    for (const videoSeconds of ["-1", "3", "31"]) await expect(api.createVideoGenerationTask({ ...selected, videoSeconds }, "画面")).rejects.toThrow("4–30");
     await expect(api.createVideoGenerationTask({ ...selected, vquality: "720" }, "画面")).rejects.toThrow("分辨率");
     await expect(api.createVideoGenerationTask(selected, "画面", Array(10).fill(image))).rejects.toThrow("9");
     await expect(api.createVideoGenerationTask({ ...selected, videoMode: "frames" }, "画面", Array(3).fill(image))).rejects.toThrow("不能混用");
@@ -263,4 +294,17 @@ test("H3 creation timeout is never reposted and saved tasks retain their protoco
     expect(await api.waitForVideoGenerationTask({ ...config, model: "video::seedance" }, task)).toEqual(file);
     expect(get.mock.calls[0]![0]).toEndWith("/videos/h3-existing");
     expect(post).toHaveBeenCalledTimes(1);
+});
+
+test("configured protocol and preset independently determine endpoint and parameters for aliases", async () => {
+    const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "public-alias-task", status: "queued" } }); mocks.push(post);
+    const selected: AiConfig = { ...config, model: "video::custom-alias", videoSize: "16:9", vquality: "1080", videoSeconds: "30", videoFastMode: "false", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3" }] }] };
+    await api.createVideoGenerationTask(selected, "画面");
+    expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
+    expect(post.mock.calls[0]![1]).toEqual({ model: "custom-alias", prompt: "画面", duration: 30, resolution: "1080P", ratio: "16:9", metadata: { parameters: { fast_mode: false } } });
+    const sd: AiConfig = { ...selected, vquality: "720", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "sd-2.5-ch1" }] }] };
+    await expect(api.createVideoGenerationTask({ ...sd, videoSeconds: "-1" }, "画面")).rejects.toThrow("4–30");
+    expect(post).toHaveBeenCalledTimes(1);
+    await api.createVideoGenerationTask(sd, "画面");
+    expect(post.mock.calls[1]![1]).toEqual({ model: "custom-alias", prompt: "画面", duration: 30, resolution: "720P", ratio: "16:9" });
 });

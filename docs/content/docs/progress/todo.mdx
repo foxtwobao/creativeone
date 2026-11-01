@@ -5,7 +5,14 @@ description: Planned follow-up work
 
 # TODO
 
+- TokenONE 视频失败原因透传：lab 的 `/v1/videos/:id` 对已失败 H3 任务未返回错误字段，CreativeOne 无法展示上游已记录的具体原因；需在 TokenONE 项目授权修复并部署后联调，本项目仅明确提示未返回原因。
+
+
+- 统一视频真实联调：实现见[待测清单](/docs/progress/pending-test)。部署后在后台为每个模型显式选择调用类型与参数预设；验证统一视频与 Seedance 原生路径、画布/助手/工作台一致性、在途任务恢复及实际账单。公共 SD 与 Veo/Omni 的部分素材模式仍受 TokenONE 当前素材地址限制，普通签名 URL 可能被拒绝；由网关返回错误，不在 CreativeOne 增加供应商上传密钥、私有适配或自动降级。真实调用及关联项目部署另行授权。
+
 - Seedance 下载真实联调：CreativeOne 网关鉴权下载已转入[待测清单](/docs/progress/pending-test)。目标 TokenONE 须先更新并启用 Doubao 1.4.1，再更新 CreativeOne，验收 RollDek 与官方 Doubao 的公共任务下载入口、任务归属和下载失败恢复；只恢复已有任务，不以重新生成验证下载。本项目不修改或部署 TokenONE。
+
+
 
 ONE 对接以最新指南为主要依据：通用流程遵循 HomeONE `docs/one-auth/appone.md`，模型价格遵循 Reseller `docs/APP_PRICING_API.md` 与 `docs/CREATIVEONE_PRICING_HANDOFF.md`。对照指南检查实现、配置和本仓库说明，差异列为适配事项；现有代码只用于判断完成情况，不据此反推指南过时。示例按指南要求替换为实际交付值；指南之间存在实质冲突时先确认适用规则。
 

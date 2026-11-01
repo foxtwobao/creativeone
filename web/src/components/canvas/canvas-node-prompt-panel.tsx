@@ -1,3 +1,4 @@
+import { SeedanceReferenceNotice } from "@/components/seedance-reference-notice";
 import { useEffect, useState } from "react";
 import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
@@ -5,6 +6,8 @@ import { useTranslation } from "react-i18next";
 
 import { canvasAudioText } from "../../../../shared/canvas-audio";
 import { AudioPriceHint } from "@/components/audio-price-hint";
+import { VeoReferenceNotice } from "@/components/veo-reference-notice";
+import { videoSettingsForModel } from "@/lib/video-settings";
 import { AudioTaskDrawer } from "@/components/audio-task-drawer";
 import { canvasAudioModelPatch } from "@/lib/audio-generation";
 import { modelAudioTypeOf } from "@/stores/use-config-store";
@@ -60,6 +63,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
     const referenceContext = (mode === "video" || mode === "image") ? buildNodeGenerationContext(node.id, nodes, connections, prompt) : undefined;
     const hasAudioText = mode === "audio" && Boolean(canvasAudioText(node.id, nodes, connections));
     const referenceImageCount = referenceContext?.imageCount || 0;
+    const videoSettings = mode === "video" ? videoSettingsForModel(config, config.model, referenceImageCount, { videos: referenceContext?.referenceVideos, audios: referenceContext?.referenceAudios }) : undefined;
 
     // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
     useEffect(() => {
@@ -160,6 +164,8 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                 </Button>
             </div>
             {mode === "audio" ? <div className="mt-3 border-t pt-3" style={{ borderColor: theme.toolbar.border }}><AudioPriceHint model={config.model} type={modelAudioTypeOf(config, config.model)} />{node.metadata?.generationTaskId ? <Button type="text" size="small" onClick={() => setTaskOpen(true)}>查看任务全部版本</Button> : null}<AudioTaskDrawer taskId={taskOpen ? node.metadata?.generationTaskId : undefined} onClose={() => setTaskOpen(false)} /></div> : null}
+            {videoSettings?.profile.family === "seedance_public" ? <SeedanceReferenceNotice profile={videoSettings.profile} /> : null}
+            {videoSettings?.veo ? <div className="mt-3"><VeoReferenceNotice profile={videoSettings.profile} />{videoSettings.error ? <p role="alert" className="mt-1 text-xs">{videoSettings.error}</p> : null}</div> : null}
             <Modal title={t("canvas.promptPanel.editorTitle")} open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
                     <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />

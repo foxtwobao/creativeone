@@ -32,6 +32,8 @@ export function parseAspectRatio(value: string) {
 }
 
 export const videoRatioOptions = [
+    { value: "2:3", width: 2, height: 3 },
+    { value: "3:2", width: 3, height: 2 },
     { value: "1:1", width: 1, height: 1 },
     { value: "3:4", width: 3, height: 4 },
     { value: "4:3", width: 4, height: 3 },

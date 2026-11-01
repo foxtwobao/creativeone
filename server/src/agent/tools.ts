@@ -12,7 +12,7 @@ import { readAssets, storedFileInfo } from "../storage.js";
 import { canvasRequestBody } from "../../../shared/canvas-request.js";
 import { parsePixelSize, parseAspectRatio } from "../../../shared/media-size.js";
 import { videoTaskPath } from "../../../shared/video-tasks.js";
-import { videoModelProfile } from "../../../shared/video-models.js";
+import { channelVideoConfig, channelVideoProfile } from "../../../shared/video-models.js";
 import { imageModelProfile } from "../../../shared/image-models.js";
 import { audioVoices, audioRequestBody } from "../../../shared/audio.js";
 import { readAgentConfig,type AgentConfig } from "./config.js";
@@ -32,14 +32,14 @@ const mediaParams = z.object({
     videoSize:z.string().describe("视频画幅，例如 16:9；不是 ratio 或 size").optional(),
     seconds:z.string().describe("视频时长，使用整数字符串；仅模型支持时可使用 -1 自动时长").optional(),
     vquality:z.string().describe("视频分辨率，使用能力列表中的值，例如 720、1080").optional(),
-    videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional(),audioInput:audioInputSchema.optional(),
+    videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional(),fastMode:z.enum(["true","false"]).optional(),audioInput:audioInputSchema.optional(),
 }).strict();
 const nodeId=z.string().min(1).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。省略时只创建或复用相同内容，不表示修改。").optional();
 const newCopy=z.boolean().describe("仅用户明确要求额外副本或多个版本时设为 true；改参数或重试不得借此重建已有节点。").optional();
 const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
-    z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true}).extend({seconds:z.string().regex(/^(?:-1|[1-9]\d*)$/,"视频时长必须为整数字符串；仅模型支持时可用 -1").describe("视频时长使用整数字符串，例如 3；不支持 2.5 秒").optional()})}).strict(),
+    z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true,fastMode:true}).extend({seconds:z.string().regex(/^(?:-1|[1-9]\d*)$/,"视频时长必须为整数字符串；仅模型支持时可用 -1").describe("视频时长使用整数字符串，例如 3；不支持 2.5 秒").optional()})}).strict(),
     z.object({...mediaNodeFields,kind:z.literal("audio"),parameters:mediaParams.pick({audioInput:true})}).strict(),
 ]);
 export class ToolParameterError extends HttpError {
@@ -247,7 +247,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             let capabilities:unknown,parameters:unknown;
             if (channel.capability === "text") {const target=textGenerationModel(run,model,currentConfig);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
             if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=imageModelProfile(model,channel.image_types[model]);capabilities=profile;}
-            if (channel.capability === "video") { const {family,...profile}=videoModelProfile(model,channel.video_types[model] || "seedance"); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,seconds:{...profile.duration,integer:true,valueType:"string"},videoMode:["frames","reference"]}; }
+            if (channel.capability === "video") { const {family,...profile}=channelVideoProfile(channel, model); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,...profile.durationConfigurable?{seconds:{...profile.duration,integer:true,valueType:"string"}}:{},videoMode:profile.modes,...profile.fastModeOptions ? {fastMode:profile.fastModeOptions.filter(Boolean)} : {}}; }
             if (channel.capability === "audio" && channel.audio_types[model]) capabilities={modes:channel.audio_types[model] === "gemini-tts" ? ["single","duo"] : ["song","instrumental"],voices:channel.audio_types[model] === "gemini-tts" ? audioVoices : []};
             return {model,capability:channel.capability,description:channel.model_descriptions[model] || "",capabilities,parameters};
         })),pricing:external.pricing || {note:"公开价格暂不可用，实际金额以账单为准"} };
@@ -307,17 +307,19 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             }
             if (spec.kind === "audio" && referenceNodes.length) throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
             const metadata={...spec.parameters,prompt:spec.prompt,composerContent:spec.prompt,generationMode:spec.kind,model:`${channel.id}::${spec.model}`,references:[...refs.images,...refs.videos,...refs.audios],status:"idle"};
-            const family=spec.kind === "text" ? undefined : spec.kind === "image" ? channel.image_types![spec.model] : spec.kind === "video" ? channel.video_types?.[spec.model] || "seedance" : channel.audio_types![spec.model];
+            const family=spec.kind === "text" ? undefined : spec.kind === "image" ? channel.image_types![spec.model] : spec.kind === "video" ? channelVideoProfile(channel, spec.model).family : channel.audio_types![spec.model];
+            if (spec.kind === "video" && family === "veo" && ["seconds","generateAudio","watermark"].some(key=>spec.parameters[key]!==undefined)) throw new ToolParameterError("当前视频模型的时长由模型决定，不提供时长、生成音频或水印参数；请省略这些字段。");
+            if (spec.kind === "video" && family !== "h3" && spec.parameters.fastMode !== undefined) throw new ToolParameterError("当前参数预设不提供标准／优先模式。");
             let request:ReturnType<typeof canvasRequestBody>;
-            try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
-            const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,family as any,request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,family as any,request) : undefined;
+            try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
+            const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,family as any,request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,channelVideoConfig(channel,spec.model),request) : undefined;
             if (error) throw new ToolParameterError(error);
             const inputs=[...sources,...referenceNodes];
             const upstreamBody=(body:any) => spec.kind === "audio" ? audioRequestBody(spec.model,family as any,body.audio_input,body.audio_context) : body;
             const expected=upstreamBody(request);
             const matches=(node:any) => {
                 if (node.metadata?.model !== metadata.model || !isDeepStrictEqual(node.metadata?.references || [],metadata.references)) return false;
-                try {return isDeepStrictEqual(upstreamBody(canvasRequestBody(spec.model,spec.kind,family as any,node.metadata,refs)),expected);} catch {return false;}
+                try {return isDeepStrictEqual(upstreamBody(canvasRequestBody(spec.model,spec.kind,family as any,node.metadata,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined)),expected);} catch {return false;}
             };
             const existing=spec.nodeId ? pair(getNode(project,spec.nodeId),spec.kind) : spec.newCopy ? undefined : project.nodes.filter((node:any) => node.type === spec.kind).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id) && matches(node)) && sameSources(nodes[0],inputs));
             if (spec.nodeId && !existing) throw new ToolParameterError("未找到唯一的同类型配置与输出配对，请先读取当前画布，不会自动新建副本。","AGENT_NODE_NOT_EDITABLE");
@@ -370,8 +372,8 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             const model=node.metadata.model.split("::").slice(1).join("::"),channel=await modelChannel(client,node.type,model);
             const generationId=randomUUID();
             await command(client,run,`${call.toolCallId}:${node.id}`,[{type:"put_node",node:{...node,metadata:{...node.metadata,generationId,generationTaskId:undefined,status:"loading"}}}]);
-            const family=node.type === "image" ? channel.image_types![model] : channel.video_types?.[model] || "seedance";
-            const path=node.type === "text" ? "responses" : node.type === "audio" ? "chat/completions" : node.type === "video" ? videoTaskPath(family as any) : node.metadata.references?.length && family !== "banana" ? "images/edits" : "images/generations";
+            const family=node.type === "image" ? channel.image_types![model] : node.type === "video" ? channelVideoProfile(channel, model).family : undefined;
+            const path=node.type === "text" ? "responses" : node.type === "audio" ? "chat/completions" : node.type === "video" ? videoTaskPath(channelVideoConfig(channel,model).callType) : node.metadata.references?.length && family !== "banana" ? "images/edits" : "images/generations";
             const task=await acceptCanvasGeneration(run.user_id,channel,path,{model},{projectId:run.project_id,nodeId:node.id,generationId},external.groupId,{},client);
             taskIds.push(task.id);
         }

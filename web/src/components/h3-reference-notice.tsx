@@ -4,6 +4,7 @@ import { h3VideoDefaults } from "../../../shared/video-models";
 export function H3ReferenceNotice({ onConfigChange, compact = false, referenceImageCount = 0 }: { onConfigChange?: (key: keyof typeof h3VideoDefaults, value: string) => void; compact?: boolean; referenceImageCount?: number }) {
     return <section aria-label="H3 参考素材要求" className="text-xs leading-5">
         <div className="flex items-center gap-1.5 font-medium"><Info className="size-3.5 shrink-0" aria-hidden="true" />H3 素材与费用说明</div>
+        <div className="mt-1">时长 4–30 秒，2K 最长 15 秒；标准／优先模式可能影响费用。</div>
         <div className="mt-1">参考图 ≤ 9 张；视频 ≤ 3 段、合计 ≤ 15 秒；音频 ≤ 3 段、建议合计 ≤ 15 秒。</div>
         <div className="mt-1 opacity-80">参考视频额外计费，先预留 15 秒用量；第 6–9 张参考图按张、按任务加收费用。</div>
         {!compact ? <>

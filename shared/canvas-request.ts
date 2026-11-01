@@ -3,13 +3,13 @@ import { bananaImageBody } from "./image-banana.js";
 import { grokImageBody } from "./image-grok.js";
 import { openAiImageParams } from "./image-openai.js";
 import { parseVideoResolution } from "./media-size.js";
-import { h3VideoDefaults, videoModelProfile, type VideoModelType } from "./video-models.js";
+import { videoSwitchSettings, videoReferenceMode, videoConfiguredProfile, type VideoModelConfig, type VideoModelType } from "./video-models.js";
 import { videoRequestBody } from "./video-request.js";
 import type { ImageModelType } from "./image-models.js";
 import type { CanvasNodeMetadata } from "../web/src/types/canvas.js";
 
 export const canvasImageReferencePrompt = (prompt: string, count: number) => count ? `参考图片编号：${Array.from({ length: count }, (_, index) => `图片${index + 1}`).join("、")}。请按这些编号理解提示词中的图片引用。\n\n${prompt.trim()}` : prompt;
-export function canvasRequestBody(model: string, capability: "image" | "video" | "audio" | "text", family: ImageModelType | VideoModelType | AudioModelType, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "", audioContext = "") {
+export function canvasRequestBody(model: string, capability: "image" | "video" | "audio" | "text", family: ImageModelType | VideoModelType | AudioModelType | undefined, metadata: CanvasNodeMetadata, references: { images: string[]; videos: string[]; audios: string[] }, systemPrompt = "", audioContext = "", videoConfig?: VideoModelConfig) {
     const scene = metadata.prompt || "";
     if (capability === "text") return { model, stream: false, input: [
         ...(systemPrompt.trim() ? [{ role: "system", content: systemPrompt.trim() }] : []),
@@ -27,10 +27,12 @@ export function canvasRequestBody(model: string, capability: "image" | "video" |
         if (family === "grok") return grokImageBody(model, prompt, config.size, config.quality, 1, references.images);
         return { model, prompt, n: 1, ...openAiImageParams(config), ...(references.images.length ? { image_references: references.images } : {}) };
     }
-    const profile = videoModelProfile(model, family as VideoModelType);
-    return videoRequestBody(model, family as VideoModelType, scene, references, {
-        ratio: metadata.videoSize || (family === "h3" ? h3VideoDefaults.videoSize : "auto"), resolution: parseVideoResolution(metadata.vquality || (family === "h3" ? h3VideoDefaults.vquality : "720")), seconds: metadata.seconds || (family === "h3" ? h3VideoDefaults.videoSeconds : "6"),
-        mode: metadata.videoMode === "reference" || family !== "h3" && references.images.length > 2 ? "reference" : "frames",
-        generateAudio: profile.audioOptions && metadata.generateAudio !== "false", watermark: profile.audioOptions && metadata.watermark === "true",
+    if (!videoConfig) throw new Error("缺少视频调用类型和参数预设。");
+    const profile = videoConfiguredProfile(videoConfig);
+    family = profile.family;
+    return videoRequestBody(model, videoConfig, scene, references, {
+        ratio: metadata.videoSize || profile.defaults.ratio, resolution: parseVideoResolution(metadata.vquality || profile.defaults.resolution), seconds: metadata.seconds ?? profile.defaults.seconds,
+        mode: videoReferenceMode(profile, metadata.videoMode, references.images.length),
+        ...videoSwitchSettings(profile, metadata),
     });
 }

@@ -54,7 +54,7 @@ async function prepare(ctx:Awaited<ReturnType<typeof setup>>,prompt="小猫回�
 before(async () => {
     await initializeDatabase();
     for (const [kind,model] of [["text","agent-model"],["image","image-model"],["video","video-model"]]) {
-        const id=randomUUID();await db.query("INSERT INTO channels(id,name,capability,models,image_types,video_types) VALUES($1,$2,$2,$3,$4,$5)",[id,kind,JSON.stringify(kind === "video" ? [model,"wan3.0-video-prime"] : kind === "text" ? [model,"writer-model","vision-writer-model","unverified-text"] : [model]),JSON.stringify(kind === "image" ? {[model]:"openai"} : {}),JSON.stringify(kind === "video" ? {[model]:"seedance","wan3.0-video-prime":"wan"} : {})]);
+        const id=randomUUID();await db.query("INSERT INTO channels(id,name,capability,models,image_types,video_types,video_presets) VALUES($1,$2,$2,$3,$4,$5,$6)",[id,kind,JSON.stringify(kind === "video" ? [model,"wan3.0-video-prime"] : kind === "text" ? [model,"writer-model","vision-writer-model","unverified-text"] : [model]),JSON.stringify(kind === "image" ? {[model]:"openai"} : {}),JSON.stringify(kind === "video" ? {[model]:"seedance","wan3.0-video-prime":"tokenone"} : {}),JSON.stringify(kind === "video" ? {[model]:"doubao-seedance-2-0-260128","wan3.0-video-prime":"wan3.0-video-prime"} : {})]);
         if (kind === "image") imageChannel=id;
     }
     await db.query("INSERT INTO channels(id,name,capability,models,audio_types) VALUES($1,'audio','audio',$2,$3)",[randomUUID(),JSON.stringify(["audio-model","lyria-model","suno-model"]),JSON.stringify({"audio-model":"gemini-tts","lyria-model":"lyria","suno-model":"suno"})]);
@@ -429,6 +429,28 @@ test("image reuse compares effective defaults and equivalent dimension settings"
     const automatic=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,title:"自动图片",parameters:{}}]});
     const explicit=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,title:"换名但仍为同一图片",parameters:{size:"auto",quality:"auto",background:"opaque"}}]});assert.deepEqual(explicit.reusedNodeIds,automatic.createdNodeIds);assert.deepEqual(explicit.createdNodeIds,[]);
     const square=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,title:"正方形图片",parameters:{size:"1:1"}}]});const pixels=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,title:"换名正方形",parameters:{size:"1024x1024",quality:"auto"}}]});assert.deepEqual(pixels.reusedNodeIds,square.createdNodeIds);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,5);
+});
+test("Veo / Omni Agent capabilities omit duration and reuse equivalent drafts across runs",async () => {
+    const {veoModels,videoModelProfile}=await import("../../shared/video-models.js");
+    const {workbenchManifest}=await import("./agent/site-tools.js");
+    const channel=(await db.query("SELECT * FROM channels WHERE capability='video'")).rows[0];
+    try {
+        await db.query("UPDATE channels SET models=models||$2::jsonb,video_types=video_types||$3::jsonb,video_presets=video_presets||$5::jsonb,model_capabilities=model_capabilities||$4::jsonb WHERE id=$1",[channel.id,JSON.stringify(veoModels),JSON.stringify(Object.fromEntries(veoModels.map(model=>[model,"tokenone"]))),JSON.stringify(Object.fromEntries(veoModels.map(model=>[model,{agentEnabled:true,imageInput:false}]))),JSON.stringify(Object.fromEntries(veoModels.map(model=>[model,model])))]);
+        for(const model of veoModels) {
+            const ctx=await setup(),profile=videoModelProfile(model,"veo");
+            const capabilities=await recordedTool(ctx,"get_model_capabilities",{}),entry=capabilities.models.find((item:any)=>item.model===model);
+            assert.equal(entry.parameters.seconds,undefined);assert.equal(entry.capabilities.durationConfigurable,false);assert.deepEqual(entry.parameters.videoMode,profile.modes);
+            const spec={kind:"video",model,title:"默认视频",prompt:"小猫回家",sourceNodeIds:[ctx.source],referenceNodeIds:[],parameters:{}};
+            const first=await recordedTool(ctx,"prepare_media_nodes",{nodes:[spec]}),next=await anotherRun(ctx);
+            const repeated=await recordedTool(next,"prepare_media_nodes",{nodes:[{...spec,parameters:{vquality:profile.resolutions[0],videoSize:"16:9",videoMode:profile.modes[0]}}]});
+            assert.deepEqual(repeated.reusedNodeIds,first.createdNodeIds);assert.deepEqual(repeated.createdNodeIds,[]);
+            for(const parameters of [{seconds:"8"},{generateAudio:"true"},{watermark:"false"}]) await assert.rejects(()=>recordedTool(ctx,"prepare_media_nodes",{nodes:[{...spec,parameters}]}));
+            assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,3);
+            const manifest:any=await transaction(async client=>workbenchManifest(client,await lockRun(client,ctx.id,ctx.user),"workbench_video_generate",{model,prompt:"小猫回家",count:1,references:[],parameters:{}}));
+            assert.deepEqual(Object.keys(manifest.request).sort(),["model","prompt","resolution","ratio"].sort());
+            await assert.rejects(()=>transaction(async client=>workbenchManifest(client,await lockRun(client,ctx.id,ctx.user),"workbench_video_generate",{model,prompt:"小猫回家",count:1,references:[],parameters:{seconds:"8"}})));
+        }
+    } finally {await db.query("UPDATE channels SET models=$2,video_types=$3,model_capabilities=$4,video_presets=$5 WHERE id=$1",[channel.id,JSON.stringify(channel.models),JSON.stringify(channel.video_types),JSON.stringify(channel.model_capabilities),JSON.stringify(channel.video_presets)]);}
 });
 test("WAN and Seedance reuse effective defaults while real generation changes stay distinct",async () => {
     for(const model of ["wan3.0-video-prime","video-model"]) {
@@ -857,7 +879,7 @@ test("disabling saves an in-flight response and reenabling executes its saved to
 });
 test("model capability administration persists eligibility and rejects unrelated models and nontext vision",async()=>{
     const admin=randomUUID(),api=await agentHttpFixture([admin]),channels=(await db.query("SELECT * FROM channels")).rows,text=channels.find(row=>row.capability==="text"),image=channels.find(row=>row.capability==="image");
-    const payload=(row:any)=>({models:row.models,default_model:row.models[0],image_types:row.image_types,video_types:row.video_types,audio_types:row.audio_types,model_descriptions:row.model_descriptions,model_capabilities:row.model_capabilities,enabled:row.enabled});
+    const payload=(row:any)=>({models:row.models,default_model:row.models[0],image_types:row.image_types,video_types:row.video_types,video_presets:row.video_presets,audio_types:row.audio_types,model_descriptions:row.model_descriptions,model_capabilities:row.model_capabilities,enabled:row.enabled});
     try{
         assert.equal((await api.call(randomUUID(),"PUT","/admin/channels/text",payload(text))).status,403);
         assert.equal((await api.call(admin,"PUT","/admin/channels/text",{...payload(text),model_capabilities:{unknown:{agentEnabled:true,imageInput:false}}})).status,400);
