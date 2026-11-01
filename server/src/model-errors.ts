@@ -96,6 +96,7 @@ const messages: Record<string, string> = {
     APP_DATABASE_UNAVAILABLE: "模型服务暂时不可用，请稍后重试；如持续失败，请联系管理员。",
     APP_SERVICE_UNAVAILABLE: "模型服务暂时不可用，请稍后重试；如持续失败，请联系管理员。",
     TASK_GROUP_CHANGED: "应用默认分组已变更，暂不能查询原分组的视频任务，请联系管理员处理。",
+    INVALID_VIDEO_MODEL_TYPES: "请为视频模型配置匹配的调用类型和参数预设。",
     VIDEO_MODEL_TYPE_REQUIRED: "请为每个视频模型选择调用类型。",
     INVALID_WAN_MODEL: "WAN 请选择 wan3.0-video 或 wan3.0-video-prime 公共模型。",
     WAN_REFERENCE_VIDEO_UNSUPPORTED: "当前 WAN 图生模型不支持参考视频。",
@@ -155,7 +156,7 @@ export function modelErrorMessage(code: string | null | undefined, upstream?: Ht
 
 export function taskErrorMessage(task: { status: string; error?: string | null; upstream_error?: HttpError["upstreamError"] }): string | undefined {
     if (!["failed", "unknown", "cancelled", "expired"].includes(task.status)) return undefined;
-    return modelErrorMessage(task.error, task.upstream_error) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "生成失败，请查看生成任务详情。");
+    return modelErrorMessage(task.error, task.upstream_error) || (task.error ? upstreamErrorDetails(task.error).message : undefined) || (task.status === "unknown" ? "任务结果尚未确认，请查看生成任务；请勿重复提交。" : "模型服务未返回失败原因。");
 }
 
 // Diagnostics are displayed as plain text after credential and URL redaction.

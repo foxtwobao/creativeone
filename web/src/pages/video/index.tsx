@@ -1,3 +1,4 @@
+import { SeedanceReferenceNotice } from "@/components/seedance-reference-notice";
 import WorkbenchAgentNotice from "@/components/workbench-agent-notice";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { fetchGenerationHistory, removeGenerationHistory } from "@/services/api/history";
@@ -16,7 +17,8 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { ModelPicker } from "@/components/model-picker";
 import { WanReferenceNotice } from "@/components/wan-reference-notice";
 import { H3ReferenceNotice } from "@/components/h3-reference-notice";
-import { normalizeVideoResolutionValue, videoModeLabel, videoSizeLabel } from "@/lib/video-settings";
+import { VeoReferenceNotice } from "@/components/veo-reference-notice";
+import { normalizeVideoResolutionValue, videoSizeLabel } from "@/lib/video-settings";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
@@ -26,7 +28,7 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-import { videoModeOptions, videoResolutionLabel, videoSecondsLabel, videoSizeOptions, videoSettingsForModel } from "@/lib/video-settings";
+import { videoResolutionLabel, videoSizeOptions, videoSettingsForModel } from "@/lib/video-settings";
 import i18n from "@/i18n";
 import { needsModelAuthorization, splitErrorMessage } from "@/services/api/error-message";
 
@@ -71,7 +73,7 @@ type GenerationLog = {
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "videoSize" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "videoSize" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoFastMode" | "videoMode">;
 
 
 
@@ -440,6 +442,7 @@ export default function VideoPage() {
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
+        updateConfig("videoFastMode", log.config.videoFastMode ?? "");
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
         setResults(log.status === "pending" ? [{ id: log.id, status: activeLogIdsRef.current.has(log.id) ? "pending" : "failed", error: "任务已保留，可继续查询" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
@@ -471,7 +474,7 @@ export default function VideoPage() {
                             {referenceAudios.map((item) => <span key={item.id}>音频：{item.name}<button aria-label={`移除 ${item.name}`} onClick={() => setReferenceAudios((value) => value.filter((ref) => ref.id !== item.id))}><X className="ml-1 inline size-3" /></button></span>)}
                         </div> : null}
                         <div className="studio-input-row">
-                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" onClick={() => videoInputRef.current?.click()} disabled={videoSettings.profile.maxVideos === 0}>上传参考视频</Button><Button type="text" onClick={() => audioInputRef.current?.click()}>上传参考音频</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button>{videoSettings.wan ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><WanReferenceNotice showDetails={false} /></section> : videoSettings.h3 ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><H3ReferenceNotice compact referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : null}</div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
+                            <Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} disabled={videoSettings.profile.maxImages === 0} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" onClick={() => videoInputRef.current?.click()} disabled={videoSettings.profile.maxVideos === 0}>上传参考视频</Button><Button type="text" disabled={videoSettings.profile.maxAudios === 0} onClick={() => audioInputRef.current?.click()}>上传参考音频</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button>{videoSettings.wan ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><WanReferenceNotice showDetails={false} /></section> : videoSettings.h3 ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><H3ReferenceNotice compact referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : videoSettings.veo ? <section className="mt-2 w-[min(320px,calc(100vw-48px))] border-t border-current/10 pt-3"><VeoReferenceNotice profile={videoSettings.profile} /></section> : null}</div>}><button className="studio-icon" aria-label="添加参考素材"><Plus size={23} strokeWidth={1.5} /></button></Popover>
                             <Input.TextArea aria-label="视频创作提示词" variant="borderless" autoSize={{ minRows: 1, maxRows: 8 }} value={prompt} placeholder="描述画面、动作与运镜，让故事动起来…" onChange={(event) => setPrompt(event.target.value)} />
                             <button className="studio-send" aria-label="开始生成视频" disabled={!canGenerate || running || Boolean(agentTaskIds?.length)} onClick={() => void generate()}>{running ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}</button>
                         </div>
@@ -480,14 +483,15 @@ export default function VideoPage() {
                             <Popover trigger="click" placement="bottomRight" content={<GenerationSettings referenceImageCount={references.length} media={{ videos: referenceVideos, audios: referenceAudios }} showModel={false} />}><button className="studio-chip" onClick={() => window.dispatchEvent(new CustomEvent("model-picker-open", { detail: "parameters" }))}><SlidersHorizontal size={14} />参数</button></Popover>
                         </div>
                     </div>
-                    <div className="studio-composer-caption"><span>{modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(videoSettings.resolution)} · {videoSizeLabel(videoSettings.ratio)} · {videoSecondsLabel(videoSettings.seconds)} · {videoModeLabel(videoSettings.mode)}</span><span>{uploadingMedia ? "参考素材上传中…" : "点击生成 · Enter 换行"}</span></div>
-                    {videoSettings.wan ? <section className="mt-4 px-3.5"><WanReferenceNotice /></section> : videoSettings.h3 ? <section className="mt-4 px-3.5"><H3ReferenceNotice onConfigChange={updateConfig} referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : null}
+                    <div className="studio-composer-caption"><span>{modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(videoSettings.resolution)} · {videoSizeLabel(videoSettings.ratio)} · {videoSettings.durationLabel} · {videoSettings.modeLabel}</span><span>{uploadingMedia ? "参考素材上传中…" : "点击生成 · Enter 换行"}</span></div>
+                    {videoSettings.profile.family === "seedance_public" ? <section className="mt-4 px-3.5"><SeedanceReferenceNotice profile={videoSettings.profile} /></section> : null}
+                    {videoSettings.wan ? <section className="mt-4 px-3.5"><WanReferenceNotice /></section> : videoSettings.h3 ? <section className="mt-4 px-3.5"><H3ReferenceNotice onConfigChange={updateConfig} referenceImageCount={videoSettings.mode === "reference" ? references.length : 0} /></section> : videoSettings.veo ? <section className="mt-4 px-3.5"><VeoReferenceNotice profile={videoSettings.profile} /></section> : null}
                     {videoSettings.error ? <p role="alert" className="text-xs text-muted-foreground">{videoSettings.error}</p> : null}
                 </section>
                 {results.length ? <section className="studio-results">
                     <header><h2>{previewLog ? "历史作品" : "生成结果"}</h2><span>{running ? `正在生成 · ${formatDuration(elapsedMs)}` : "每一帧，都是灵感"}</span></header>
                     <div className="grid gap-4">{results.map((result) => result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} resumable={Boolean(logs.find((log) => log.id === result.id && log.status === "pending" && log.task))} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />)}</div>
-                </section> : <section className="studio-inspiration"><div className="studio-inspiration-empty py-8"><VideoIcon size={28} strokeWidth={1.25} /><p>用文字开始，或添加参考图，让静止的画面成为故事。</p><button className="studio-chip" onClick={() => fileInputRef.current?.click()}><Plus size={14} />添加参考图</button></div></section>}
+                </section> : <section className="studio-inspiration"><div className="studio-inspiration-empty py-8"><VideoIcon size={28} strokeWidth={1.25} /><p>用文字开始，或添加参考图，让静止的画面成为故事。</p><button className="studio-chip" disabled={videoSettings.profile.maxImages === 0} onClick={() => fileInputRef.current?.click()}><Plus size={14} />添加参考图</button></div></section>}
                 <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
             </main>
             <input
@@ -538,23 +542,25 @@ function GenerationSettings({ showModel = true, referenceImageCount, media }: { 
     const config = useEffectiveConfig();
     const model = config.videoModel || config.model;
     const settings = videoSettingsForModel(config, model, referenceImageCount, media);
-    const { wan, h3, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = settings;
+    const { profile, wan, h3, veo, modes, durationConfigurable, ratio, ratios, resolution, mode, seconds, forcedReference, generateAudio, watermark, error, resolutions, secondsRange, autoSeconds, automaticDuration, framesAdaptive } = settings;
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     return <div className="studio-settings">
         <h3>视频生成设置</h3>
         {error ? <p role="alert" className="text-xs text-muted-foreground">{error}</p> : null}
         {showModel ? <div><span>视频模型</span><ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} /></div> : null}
-        {wan ? <section className="mb-4"><WanReferenceNotice showDetails={showModel} /></section> : h3 ? <section className="mb-4"><H3ReferenceNotice onConfigChange={updateConfig} compact={!showModel} referenceImageCount={mode === "reference" ? referenceImageCount : 0} /></section> : null}
+        {profile.family === "seedance_public" ? <SeedanceReferenceNotice profile={profile} /> : null}
+        {wan ? <section className="mb-4"><WanReferenceNotice showDetails={showModel} /></section> : h3 ? <section className="mb-4"><H3ReferenceNotice onConfigChange={updateConfig} compact={!showModel} referenceImageCount={mode === "reference" ? referenceImageCount : 0} /></section> : veo ? <section className="mb-4"><VeoReferenceNotice profile={profile} /></section> : null}
         <div><span>分辨率</span><Select aria-label="视频分辨率" value={resolution} options={resolutions} onChange={(value) => updateConfig("vquality", value)} /></div>
         <div><span>宽高比</span><Select aria-label="视频宽高比" value={ratio} options={videoSizeOptions.filter((item) => ratios.some((option) => option.value === item.value))} onChange={(value) => updateConfig("videoSize", value)} /></div>
-        <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} changeOnBlur={false} precision={0} value={automaticDuration ? null : Number(seconds)} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div>
-        {autoSeconds ? <div><span>自动时长</span><Switch aria-label="自动时长" checked={seconds === "-1"} onChange={(value) => updateConfig("videoSeconds", value ? "-1" : "6")} /></div> : null}
+        {durationConfigurable ? <div><span>时长（秒）</span><InputNumber aria-label="视频时长" className="w-full" min={secondsRange.min} max={secondsRange.max} disabled={automaticDuration} changeOnBlur={false} precision={0} value={automaticDuration ? null : Number(seconds)} onChange={(value) => { if (value !== null) updateConfig("videoSeconds", String(value)); }} /></div> : null}
+        {autoSeconds ? <div><span>自动时长</span><Switch aria-label="自动时长" checked={seconds === "-1"} onChange={(value) => updateConfig("videoSeconds", value ? "-1" : profile.defaults.seconds)} /></div> : null}
         {framesAdaptive ? <p className="text-xs text-muted-foreground">首尾帧生成沿用首帧比例，请选择自动宽高比。</p> : null}
-        <div><span>参考模式</span><Select aria-label="视频参考模式" value={mode} options={videoModeOptions.map((item) => ({ ...item, disabled: forcedReference && item.value === "frames" }))} onChange={(value) => updateConfig("videoMode", value)} /></div>
+        {profile.maxImages !== 0 ? <div><span>参考模式</span><Select aria-label="视频参考模式" value={mode} options={modes.map((item) => ({ ...item, disabled: forcedReference && item.value === "frames" }))} onChange={(value) => updateConfig("videoMode", value)} /></div> : null}
+        {h3 ? <div><span>处理模式（影响计费）</span><Select aria-label="H3 处理模式" value={config.videoFastMode || ""} options={[{ value: "", label: "默认" }, { value: "false", label: "标准" }, { value: "true", label: "优先" }]} onChange={(value) => updateConfig("videoFastMode", value)} /></div> : null}
         {settings.audioOptions ? <><div><span>生成音频</span><Switch aria-label="生成音频" checked={generateAudio} onChange={(value) => updateConfig("videoGenerateAudio", String(value))} /></div>
         <div><span>视频水印</span><Switch aria-label="视频水印" checked={watermark} onChange={(value) => updateConfig("videoWatermark", String(value))} /></div></> : null}
-        {forcedReference ? <p className="pt-2 text-xs text-muted-foreground">超过两张图片，已使用参考图模式。</p> : null}
+        {forcedReference && referenceImageCount > 2 ? <p className="pt-2 text-xs text-muted-foreground">超过两张图片，已使用参考图模式。</p> : null}
     </div>;
 }
 
@@ -684,7 +690,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                     <div className="mt-2 flex flex-wrap gap-1">
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds}s</Tag>
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds ? `${log.seconds}s` : "模型决定时长"}</Tag>
                     </div>
                 </div>
                 <div className="grid justify-items-end gap-2">
@@ -755,15 +761,17 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
+    const defaults = videoSettingsForModel(useConfigStore.getState().config, log.config?.videoModel || log.model || "").profile.defaults;
     return {
         model: log.config?.model || log.model || "",
         videoModel: log.config?.videoModel || log.model || "",
         videoSize: log.config?.videoSize || log.size || "",
         vquality: normalizeResolution(log.config?.vquality || log.resolution || ""),
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
-        videoGenerateAudio: log.config?.videoGenerateAudio || "true",
-        videoWatermark: log.config?.videoWatermark || "false",
-        videoMode: log.config?.videoMode === "reference" ? "reference" : "frames",
+        videoGenerateAudio: log.config?.videoGenerateAudio || String(defaults.generateAudio),
+        videoFastMode: log.config?.videoFastMode ?? defaults.fastMode,
+        videoWatermark: log.config?.videoWatermark || String(defaults.watermark),
+        videoMode: log.config?.videoMode || defaults.mode,
     };
 }
 
@@ -778,7 +786,8 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         vquality: settings.resolution,
         videoGenerateAudio: String(settings.generateAudio),
         videoWatermark: String(settings.watermark),
-        videoMode: config.videoMode === "reference" ? "reference" : "frames",
+        videoFastMode: settings.fastMode === undefined ? "" : String(settings.fastMode),
+        videoMode: settings.mode,
     };
 }
 

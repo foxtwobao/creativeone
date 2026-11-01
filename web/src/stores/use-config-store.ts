@@ -1,10 +1,11 @@
+import { videoParameterPatch } from "../../../shared/video-models";
 import { registerCloudRetry } from "@/services/cloud-storage";
 import { create } from "zustand";
 import { cloudSession } from "@/services/api/cloud";
 import { getAccountResource, changeAccountResource } from "@/services/api/account";
 import { useCloudStore } from "@/stores/use-cloud-store";
 import type { ImageModelType } from "../../../shared/image-models";
-import { h3VideoDefaults, videoModelProfile, type VideoModelType } from "../../../shared/video-models";
+import { videoConfiguredProfile, videoModelProfile, type VideoCallType, type VideoModelType, videoParameterPresets, type VideoModelConfig } from "../../../shared/video-models";
 import { parseVideoResolution } from "../../../shared/media-size";
 
 
@@ -18,7 +19,8 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     imageType?: ImageModelType;
-    videoType?: VideoModelType;
+    videoType?: VideoCallType;
+    videoPreset?: string;
     audioType?: AudioModelType;
     description?: string;
     script?: string;
@@ -52,6 +54,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoFastMode: string;
     videoMode: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
@@ -84,6 +87,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoFastMode: "",
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
@@ -100,7 +104,7 @@ const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "mode
 function applyCloudConfig(config: AiConfig): AiConfig {
     const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
         id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
-        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], audioType: channel.audio_types?.[name], description: channel.model_descriptions?.[name] })),
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], videoPreset: channel.video_presets?.[name], audioType: channel.audio_types?.[name], description: channel.model_descriptions?.[name] })),
     }));
     const next = { ...config, channels, models: modelOptionsFromChannels(channels), baseUrl: "", apiKey: "", apiFormat: "openai" as const };
     next.audioVoice = audioVoices.includes(config.audioVoice) ? config.audioVoice : defaultSpeechInput.voice;
@@ -149,23 +153,28 @@ export function modelAudioTypeOf(config: AiConfig, value: string) {
 }
 
 export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelType {
-    return findChannelModel(config, value)?.model.videoType || "seedance";
+    return modelVideoProfileOf(config, value).family;
+}
+
+export function modelVideoConfigOf(config: AiConfig, value: string): VideoModelConfig {
+    const model = findChannelModel(config, value)?.model;
+    if (!model?.videoType || !model.videoPreset) throw new Error("请在管理后台配置视频调用类型和参数预设。");
+    return { callType: model.videoType, preset: model.videoPreset };
+}
+export function modelVideoProfileOf(config: AiConfig, value: string) {
+    const model = findChannelModel(config, value)?.model;
+    return model?.videoType && model.videoPreset && videoParameterPresets[model.videoPreset]?.callType === model.videoType ? videoConfiguredProfile({ callType: model.videoType, preset: model.videoPreset }) : { ...videoModelProfile("", "seedance"), resolutions: [] };
 }
 
 export function videoModelSelectionPatch(config: AiConfig, model: string) {
-    const patch: Partial<Pick<AiConfig, keyof typeof h3VideoDefaults>> = {};
-    if (modelVideoTypeOf(config, config.videoModel) === "h3" && modelVideoTypeOf(config, model) === "wan") {
-        const profile = videoModelProfile(model, "wan");
-        if (!profile.resolutions.includes(parseVideoResolution(config.vquality))) patch.vquality = defaultConfig.vquality;
-        if (!profile.ratios.includes(config.videoSize)) patch.videoSize = defaultConfig.videoSize;
-        return patch;
+    const profile = modelVideoProfileOf(config, model);
+    const switches: Partial<AiConfig> = {};
+    if (profile.resolutions.length) {
+        for (const [key, fallback] of [["videoGenerateAudio", String(profile.defaults.generateAudio)], ["videoWatermark", String(profile.defaults.watermark)]] as const) if (!["true", "false"].includes(config[key])) switches[key] = fallback;
+        if (profile.fastModeOptions && !profile.fastModeOptions.includes(config.videoFastMode)) switches.videoFastMode = profile.defaults.fastMode;
     }
-    if (modelVideoTypeOf(config, model) !== "h3") return patch;
-    const profile = videoModelProfile(model, "h3"), seconds = Number(config.videoSeconds);
-    if (!profile.resolutions.includes(parseVideoResolution(config.vquality))) patch.vquality = h3VideoDefaults.vquality;
-    if (!Number.isInteger(seconds) || seconds < profile.duration!.min || seconds > profile.duration!.max) patch.videoSeconds = h3VideoDefaults.videoSeconds;
-    if (!profile.ratios.includes(config.videoSize)) patch.videoSize = h3VideoDefaults.videoSize;
-    return patch;
+    const values = videoParameterPatch(profile, { resolution: parseVideoResolution(config.vquality), ratio: config.videoSize, seconds: config.videoSeconds, mode: config.videoMode });
+    return { ...switches, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [{ resolution: "vquality", ratio: "videoSize", seconds: "videoSeconds", mode: "videoMode" }[key], value])) } as Partial<AiConfig>;
 }
 
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
@@ -236,10 +245,15 @@ export async function loadUserSettings() {
     const saved = await getAccountResource<Partial<AiConfig>>("/settings");
     if (version !== settingsVersion) return;
     const config = applyCloudConfig({ ...defaultConfig, ...saved });
-    if (modelVideoTypeOf(config, config.videoModel) === "h3") {
-        for (const key of ["videoSeconds", "vquality", "videoSize"] as const) if (saved[key] === undefined) config[key] = h3VideoDefaults[key];
+    const profile = modelVideoProfileOf(config, config.videoModel);
+    if (profile.resolutions.length) {
+        const defaults = profile.defaults;
+        const initial = { vquality: defaults.resolution, videoSize: defaults.ratio, videoSeconds: defaults.seconds, videoMode: defaults.mode, videoGenerateAudio: String(defaults.generateAudio), videoWatermark: String(defaults.watermark), videoFastMode: defaults.fastMode };
+        for (const key of Object.keys(initial) as (keyof typeof initial)[]) if (saved[key] === undefined) config[key] = initial[key];
     }
-    useConfigStore.setState({ config });
+    const patch = videoModelSelectionPatch(config, config.videoModel);
+    useConfigStore.setState({ config: { ...config, ...patch } });
+    if (Object.keys(patch).length) await saveSettings(patch);
 }
 
 export function useEffectiveConfig() {

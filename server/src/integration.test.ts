@@ -292,7 +292,7 @@ test("Grok edits preserve JSON references and model-specific parameters", async 
 
 test("video model configuration exposes types and rejects mismatched protocols before upstream calls", async () => {
     const config = { models: ["seedance-test", "wan3.0-video", "wan3.0-video-prime"], default_model: "seedance-test", enabled: true,
-        video_types: { "seedance-test": "seedance", "wan3.0-video": "wan", "wan3.0-video-prime": "wan" } };
+        video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone", "wan3.0-video-prime": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3.0-video", "wan3.0-video-prime": "wan3.0-video-prime" } };
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: {} })).status, 400);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: { ...config.video_types, extra: "wan" } })).status, 400);
     const response = await call("/admin/channels/video", admin, "PUT", config);
@@ -314,7 +314,7 @@ test("video model configuration exposes types and rejects mismatched protocols b
         { ...wan, metadata: media([{ type: "last_frame", url: "https://example.test/a.jpg" }]) },
         { ...wan, metadata: media([{ type: "first_frame", url: "https://example.test/a.jpg" }, { type: "reference_audio", url: "https://example.test/a.mp3" }]) },
     ]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body)).status, 400);
-    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["wan3.0-video-720p"], default_model: "wan3.0-video-720p", enabled: true, video_types: { "wan3.0-video-720p": "wan" } })).status, 400);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["wan3.0-video-720p"], default_model: "wan3.0-video-720p", enabled: true, video_types: { "wan3.0-video-720p": "tokenone" }, video_presets: { "wan3.0-video-720p": "wan3.0-video-720p" } })).status, 400);
     assert.equal(forwardedRequests.length, before);
 });
 
@@ -632,7 +632,7 @@ test("WAN and Seedance content errors pause saving and resume the same task with
 test("model descriptions are admin-managed, preserved verbatim and never change upstream model IDs", async () => {
     const model = "wan3.0-video";
     const description = "团队常用型号\n请先确认参考素材";
-    const body = { models: [model], video_types: { [model]: "wan" }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
+    const body = { models: [model], video_types: { [model]: "tokenone" }, video_presets: { [model]: model }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
     assert.equal((await call("/admin/channels/video", alice, "PUT", body)).status, 403);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...body, model_descriptions: { unconfigured: description } })).status, 400);
     assert.equal((await call("/admin/channels/video", admin, "PUT", body)).status, 200);
@@ -922,7 +922,7 @@ test("canvas WAN signs authoritative nested frame media and downloads through pu
 
 test("canvas video results attach through the worker without a canvas result write", async () => {
     const { executeMediaTask } = await import("./generation-executor.js");
-    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["seedance-test", "wan3.0-video"], default_model: "seedance-test", enabled: true, video_types: { "seedance-test": "seedance", "wan3.0-video": "wan" } })).status, 200);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["seedance-test", "wan3.0-video"], default_model: "seedance-test", enabled: true, video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3.0-video" } })).status, 200);
     videoCreateResponse = { id: "task-canvas-video", status: "queued" };
     videoQueryResponse = { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } };
     const node = { id: "video-output", type: "video", title: "video", position: { x: 21, y: 35 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading" } };
@@ -1167,32 +1167,32 @@ test("admin media uses the task owner for previews, multi-image results and vide
 
 
 async function enableH3() {
-    const response = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3", "wan3.0-video", "seedance-test"], default_model: "MiniMax-H3", enabled: true, video_types: { "MiniMax-H3": "h3", "wan3.0-video": "wan", "seedance-test": "seedance" } });
+    const response = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3", "wan3.0-video", "seedance-test"], default_model: "MiniMax-H3", enabled: true, video_types: { "MiniMax-H3": "tokenone", "wan3.0-video": "tokenone", "seedance-test": "seedance" }, video_presets: { "MiniMax-H3": "MiniMax-H3", "wan3.0-video": "wan3.0-video", "seedance-test": "doubao-seedance-2-0-260128" } });
     assert.equal(response.status, 200);
 }
 
 test("H3 configuration, strict request fields and reference counts are enforced before upstream calls", async () => {
     await enableH3();
-    const invalidModel = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3-768p"], default_model: "MiniMax-H3-768p", enabled: true, video_types: { "MiniMax-H3-768p": "h3" } });
+    const invalidModel = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3-768p"], default_model: "MiniMax-H3-768p", enabled: true, video_types: { "MiniMax-H3-768p": "tokenone" }, video_presets: { "MiniMax-H3-768p": "MiniMax-H3-768p" } });
     assert.equal(invalidModel.status, 400);
-    const body = { model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "768P", ratio: "16:9", generation_mode: "frames" };
+    const body = { model: "MiniMax-H3", prompt: "镜头推进", duration: 4, resolution: "768P", ratio: "16:9" };
     const media = (types: string[]) => ({ input: { media: types.map((type) => ({ type, url: "https://example.test/ref" })) } });
     const before = forwardedRequests.length;
     assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", body)).status, 403);
     for (const invalid of [
-        { ...body, duration: 3 }, { ...body, duration: 16 }, { ...body, duration: -1 },
+        { ...body, duration: 3 }, { ...body, duration: 31 }, { ...body, duration: 16, resolution: "2K" }, { ...body, duration: -1 },
         { ...body, resolution: "720P" }, { ...body, watermark: false }, { ...body, content: [] },
-        { ...body, generation_mode: undefined }, { ...body, metadata: media(["last_frame"]) },
-        { ...body, generation_mode: "references", metadata: media(Array(10).fill("reference_image")) },
-        { ...body, generation_mode: "references", metadata: media(Array(4).fill("reference_video")) },
-        { ...body, generation_mode: "references", metadata: media(Array(4).fill("reference_audio")) },
-        { ...body, metadata: media(["reference_video"]) },
-        { ...body, generation_mode: "references", metadata: media(["first_frame", "reference_audio"]) },
+        { ...body, generation_mode: "frames" }, { ...body, metadata: media(["last_frame"]) },
+        { ...body, metadata: media(Array(10).fill("reference_image")) },
+        { ...body, metadata: media(Array(4).fill("reference_video")) },
+        { ...body, metadata: media(Array(4).fill("reference_audio")) },
+        { ...body, metadata: media(["first_frame", "reference_video"]) },
+        { ...body, metadata: media(["first_frame", "reference_audio"]) },
     ]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", invalid)).status, 400);
     assert.equal(forwardedRequests.length, before);
     for (const count of [5, 6, 9]) {
         videoCreateResponse = { id: `task-h3-images-${count}`, status: "queued" };
-        const request = { ...body, generation_mode: "references", metadata: media(Array(count).fill("reference_image")) };
+        const request = { ...body, metadata: media(Array(count).fill("reference_image")) };
         assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", request)).status, 200);
         assert.equal(forwardedRequests.at(-1)!.body.metadata.input.media.length, count);
     }
@@ -1206,7 +1206,7 @@ test("H3 multimodal files remain owner scoped; history and download recovery ret
         const image = `/api/files/image_files/image:${randomUUID()}`, video = `/api/files/media_files/file:${randomUUID()}`, audio = `/api/files/media_files/file:${randomUUID()}`;
         for (const [url, bytes, mime] of [[image, jpegBytes, "image/jpeg"], [video, videoBytes, "video/mp4"], [audio, new Uint8Array([1, 2, 3]), "audio/mpeg"]] as const) assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": mime }, body: bytes })).status, 200);
         const items = [{ type: "reference_image", url: image }, { type: "reference_video", url: video }, { type: "reference_audio", url: audio }];
-        const body = { model: "MiniMax-H3", prompt: "参考主体、动作与音乐", duration: 15, resolution: "2K", ratio: "21:9", generation_mode: "references", metadata: { input: { media: items } } };
+        const body = { model: "MiniMax-H3", prompt: "参考主体、动作与音乐", duration: 15, resolution: "2K", ratio: "21:9", metadata: { input: { media: items } } };
         const before = forwardedRequests.length;
         assert.equal((await call(`/ai/${videoChannel}/v1/videos`, bob, "POST", body)).status, 404);
         assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { ...body, metadata: { input: { media: [{ type: "reference_image", url: video }] } } })).status, 400);
@@ -1217,7 +1217,7 @@ test("H3 multimodal files remain owner scoped; history and download recovery ret
         const taskId = created.headers.get("X-Generation-Task-Id")!;
         const sent = forwardedRequests.at(-1)!.body;
         assert.equal(sent.resolution, "2K");
-        assert.equal(sent.generation_mode, "references");
+        assert.equal(sent.generation_mode, undefined);
         assert.deepEqual(sent.metadata.input.media.map((item: any) => item.type), items.map((item) => item.type));
         for (const item of sent.metadata.input.media) assert.match(item.url, /^https:\/\/creativeone.test\/api\/public\/media\//);
         const snapshot = (await db.query("SELECT request FROM generation_tasks WHERE id=$1", [taskId])).rows[0].request;
@@ -1250,12 +1250,12 @@ test("H3 canvas uses saved parameters, publishes the public task path and stops 
     const project = await canvasOutput(node, videoChannel, "MiniMax-H3", "H3 权威提示词");
     Object.assign(node.metadata, { vquality: "2k", seconds: "15", videoSize: "21:9", videoMode: "reference" });
     assert.equal((await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node }] } })).status, 200);
-    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "MiniMax-H3", prompt: "ignored", duration: 4, resolution: "768P", ratio: "adaptive", generation_mode: "frames", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+    const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "MiniMax-H3", prompt: "ignored", duration: 4, resolution: "768P", ratio: "adaptive", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
     assert.equal(created.status, 202);
     const taskId = (await created.json()).canvasTaskId;
     videoCreateResponse = { id: "task-h3-canvas", status: "queued" };
     await executeMediaTask(taskId);
-    assert.deepEqual(forwardedRequests.at(-1)!.body, { model: "MiniMax-H3", prompt: "H3 权威提示词", duration: 15, resolution: "2K", ratio: "21:9", generation_mode: "frames" });
+    assert.deepEqual(forwardedRequests.at(-1)!.body, { model: "MiniMax-H3", prompt: "H3 权威提示词", duration: 15, resolution: "2K", ratio: "21:9" });
     videoQueryResponse = { status: "failed", error: { message: "H3 generation failed" } };
     await processVideoTask(taskId);
     const failedQueries = forwardedRequests.length;
@@ -1267,6 +1267,110 @@ test("H3 canvas uses saved parameters, publishes the public task path and stops 
     assert.equal(saved.metadata.videoTaskId, "task-h3-canvas");
 });
 
+
+async function enableVeo() {
+    const { veoModels } = await import("../../shared/video-models.js");
+    const response = await call("/admin/channels/video", admin, "PUT", { models: veoModels, default_model: veoModels[0], enabled: true, video_types: Object.fromEntries(veoModels.map((model) => [model, "tokenone"])), video_presets: Object.fromEntries(veoModels.map(model => [model, model])) });
+    assert.equal(response.status, 200);
+    videoChannel = (await response.json()).channel.id;
+}
+
+test("Veo / Omni model configuration and strict fields are checked before contacting upstream", async () => {
+    await enableVeo();
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["omni-flash"], default_model: "omni-flash", enabled: true, video_types: { "omni-flash": "tokenone" }, video_presets: { "omni-flash": "omni-flash" } })).status, 400);
+    const body = { model: "veo-3.1", prompt: "海边", resolution: "720P", ratio: "16:9" };
+    const before = forwardedRequests.length;
+    assert.equal((await call(`/ai/${videoChannel}/v1/contents/generations/tasks`, alice, "POST", body)).status, 403);
+    for (const invalid of [{ ...body, seconds: 8 }, { ...body, duration: 8 }, { ...body, resolution: "1080P" }, { ...body, size: "1920x1080" }, { ...body, generation_mode: "reference", reference_images: ["https://example.com/a"] }, { ...body, generation_mode: "first_frame", reference_images: ["data:image/png;base64,YQ=="] }]) assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", invalid)).status, 400);
+    assert.equal(forwardedRequests.length, before);
+});
+
+test("Veo forwards documented fields unchanged including omitted mode defaults", async () => {
+    await enableVeo();
+    for (const body of [
+        { model: "veo-3.1-fast", prompt: "海边", resolution: "720P", ratio: "16:9" },
+        { model: "veo-3.1-fast", prompt: "海边", resolution: "720P", ratio: "16:9", metadata: { input: { media: ["https://example.com/a.jpg", "https://example.com/b.jpg", "https://example.com/c.jpg"].map(url => ({ type: "reference_image", url })) } } },
+    ]) {
+        const response = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body);
+        assert.equal(response.status, 200);
+        assert.deepEqual(forwardedRequests.at(-1)!.body, body);
+    }
+});
+
+test("Veo / Omni signs owned images, preserves history and resumes authenticated content saving without regeneration", async () => {
+    await enableVeo();
+    const previousOrigin = env.APP_ORIGIN;
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const image = `/api/files/image_files/image:${randomUUID()}`, video = `/api/files/media_files/file:${randomUUID()}`;
+        for (const [url, bytes, mime] of [[image, jpegBytes, "image/jpeg"], [video, videoBytes, "video/mp4"]] as const) assert.equal((await realFetch(`${base}${url}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": mime }, body: bytes })).status, 200);
+        const body = { model: "omni-flash-video", prompt: "参考主体", resolution: "720P", ratio: "9:16", metadata: { input: { media: [{ type: "reference_image", url: image }] } } };
+        const before = forwardedRequests.length;
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, bob, "POST", body)).status, 404);
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { ...body, metadata: { input: { media: [{ type: "reference_image", url: video }] } } })).status, 400);
+        assert.equal(forwardedRequests.length, before);
+        videoCreateResponse = { id: "task-omni-recovery", status: "queued" };
+        const created = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", body);
+        assert.equal(created.status, 200);
+        const taskId = created.headers.get("X-Generation-Task-Id")!;
+        const sent = forwardedRequests.at(-1)!.body;
+        assert.deepEqual(Object.keys(sent).sort(), Object.keys(body).sort());
+        assert.equal(sent.metadata.input.media[0].type, "reference_image");
+        const signed = new URL(sent.metadata.input.media[0].url);
+        assert.equal(signed.origin, env.APP_ORIGIN);
+        assert.equal((await realFetch(`${base}${signed.pathname}${signed.search}`, { method: "HEAD" })).status, 200);
+        assert.deepEqual((await db.query("SELECT request FROM generation_tasks WHERE id=$1", [taskId])).rows[0].request.metadata.input.media, [{ type: "reference_image", url: image }]);
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos/task-omni-recovery`, bob)).status, 404);
+        videoQueryResponse = { status: "completed", content: { url: "https://example.com/output.mp4" } };
+        videoDownloadFails = true;
+        await processVideoTask(taskId);
+        assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "unknown");
+        videoDownloadFails = false;
+        assert.equal((await call(`/ai/${videoChannel}/v1/videos/task-omni-recovery/resume`, alice, "POST", {})).status, 200);
+        await processVideoTask(taskId);
+        const completed = await (await call(`/ai/${videoChannel}/v1/videos/task-omni-recovery`)).json();
+        assert.equal(completed.status, "completed");
+        assert.ok(completed.file.storageKey);
+        assert.equal(forwardedRequests.slice(before).filter((item) => item.url === "https://tokenone.test/v1/videos").length, 1);
+        const history = await (await call("/history/video?upstreamId=task-omni-recovery")).json();
+        assert.equal(history.logs[0].config.vquality, "720");
+        assert.equal(history.logs[0].config.videoSize, "9:16");
+        assert.equal(history.logs[0].config.videoMode, "reference");
+        assert.equal(history.logs[0].config.videoSeconds, "");
+        assert.equal(history.logs[0].references[0].url, image);
+    } finally { env.APP_ORIGIN = previousOrigin; videoDownloadFails = false; }
+});
+
+test("Veo canvas dispatches authoritative image references and parameters, then attaches the saved result", async () => {
+    await enableVeo();
+    const { executeMediaTask } = await import("./generation-executor.js");
+    const previousOrigin = env.APP_ORIGIN;
+    try {
+        env.APP_ORIGIN = "https://creativeone.test";
+        const image = `/api/files/image_files/image:${randomUUID()}`;
+        assert.equal((await realFetch(`${base}${image}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "image/jpeg" }, body: jpegBytes })).status, 200);
+        const node = { id: "veo-output", type: "video", title: "Veo", position: { x: 0, y: 0 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading", references: [image] } as Record<string, any> };
+        const project = await canvasOutput(node, videoChannel, "veo-3.1-1080p", "画布权威提示词");
+        Object.assign(node.metadata, { vquality: "1080", seconds: "15", videoSize: "9:16", videoMode: "frames" });
+        assert.equal((await call(`/projects/${project.id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: project.contentRevision, baseGenerationRevision: project.generationRevision, command: { type: "edit_project", patch: {}, graphEdits: [{ type: "put_node", node }] } })).status, 200);
+        const response = await call(`/ai/${videoChannel}/v1/videos`, alice, "POST", { model: "veo-3.1-1080p", prompt: "ignored", resolution: "1080P", ratio: "16:9", canvas_context: { projectId: project.id, nodeId: node.id, generationId: node.metadata.generationId } });
+        assert.equal(response.status, 202);
+        const taskId = (await response.json()).canvasTaskId;
+        videoCreateResponse = { id: "task-veo-canvas", status: "queued" };
+        await executeMediaTask(taskId);
+        const sent = forwardedRequests.at(-1)!.body;
+        assert.deepEqual({ ...sent, metadata: undefined }, { model: "veo-3.1-1080p", prompt: "画布权威提示词", resolution: "1080P", ratio: "9:16", metadata: undefined });
+        assert.equal(sent.metadata.input.media[0].type, "first_frame");
+        assert.match(sent.metadata.input.media[0].url, /^https:\/\/creativeone.test\/api\/public\/media\//);
+        videoQueryResponse = { status: "completed", content: { url: "https://example.com/output.mp4" } };
+        await processVideoTask(taskId);
+        const saved = (await (await call(`/projects/${project.id}`)).json()).project.nodes.find((item: any) => item.id === node.id);
+        assert.equal(saved.metadata.status, "success");
+        assert.equal(saved.metadata.videoTaskPath, "videos");
+        assert.equal(saved.metadata.videoTaskId, "task-veo-canvas");
+        assert.ok(saved.metadata.storageKey);
+    } finally { env.APP_ORIGIN = previousOrigin; }
+});
 
 test("account switching and logout invalidate stale clients", async () => {
     const changed = await realFetch(`${base}/api/tasks`, { headers: { ...headers(bob), "X-Expected-User": alice } });
@@ -1312,4 +1416,65 @@ test("admin task stats use Shanghai day boundaries and exclude administrators by
     const empty = (await (await call(`/admin/tasks/stats?userId=${randomUUID()}`, admin)).json()).stats;
     assert.ok(empty.every((row: any) => row.images + row.videos + row.succeeded + row.failed === 0));
     assert.equal((await call("/admin/tasks/stats?includeAdmins=invalid", admin)).status, 400);
+});
+
+test("admin presets are explicit and public aliases preserve zero values and parameter-only metadata", async () => {
+    const model = "custom-public-video";
+    const config = { models: [model], default_model: model, enabled: true, video_types: { [model]: "tokenone" }, video_presets: { [model]: "MiniMax-H3" } };
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_presets: {} })).status, 400);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: { [model]: "seedance" } })).status, 400);
+    const saved = await call("/admin/channels/video", admin, "PUT", config);
+    assert.equal(saved.status, 200);
+    const channel = (await saved.json()).channel.id;
+    const body = { model, prompt: "画面", duration: 30, resolution: "1080P", ratio: "16:9", metadata: { parameters: { fast_mode: false } } };
+    videoCreateResponse = { id: "task-public-alias-completed", status: "completed" };
+    const created = await call(`/ai/${channel}/v1/videos`, alice, "POST", body);
+    assert.equal(created.status, 200);
+    assert.deepEqual(forwardedRequests.at(-1)!.body, body);
+    const taskId = created.headers.get("X-Generation-Task-Id")!;
+    const before = videoDownloads;
+    let queries = 0;
+    videoQueryHandler = async () => { queries++; return new Response("", { status: 429, headers: { "Retry-After": "60" } }); };
+    try { await processVideoTask(taskId); await processVideoTask(taskId); assert.equal(queries, 1); }
+    finally { videoQueryHandler = undefined; await db.query("UPDATE generation_tasks SET upstream_error=NULL WHERE id=$1", [taskId]); }
+    videoQueryResponse = { status: "unexpected-state", progress: 100 };
+    await processVideoTask(taskId);
+    assert.equal(videoDownloads, before);
+    assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "pending");
+    await db.query("UPDATE generation_tasks SET upstream_error=upstream_error-'retryAt' WHERE id=$1", [taskId]);
+    videoQueryResponse = { status: "queued" };
+    await processVideoTask(taskId);
+    assert.equal((await db.query("SELECT upstream_error FROM generation_tasks WHERE id=$1", [taskId])).rows[0].upstream_error, null);
+    const createsBefore = forwardedRequests.filter(request => request.url.endsWith("/videos")).length;
+    videoQueryHandler = async () => Response.json({ error: { message: "query denied" } }, { status: 403 });
+    try {
+        for (let failure = 1; failure <= 4; failure++) {
+            const started = Date.now();
+            await processVideoTask(taskId);
+            const row = (await db.query("SELECT status,upstream_error FROM generation_tasks WHERE id=$1", [taskId])).rows[0];
+            assert.equal(row.upstream_error.queryFailures, failure);
+            assert.equal(row.status, failure === 4 ? "unknown" : "pending");
+            if (failure < 4) {
+                assert.ok(row.upstream_error.retryAt >= started + [10000, 20000, 40000][failure - 1]);
+                await processVideoTask(taskId);
+                assert.equal((await db.query("SELECT upstream_error FROM generation_tasks WHERE id=$1", [taskId])).rows[0].upstream_error.queryFailures, failure);
+                await db.query("UPDATE generation_tasks SET upstream_error=upstream_error-'retryAt' WHERE id=$1", [taskId]);
+            }
+        }
+        await processVideoTask(taskId);
+        assert.equal((await db.query("SELECT upstream_error FROM generation_tasks WHERE id=$1", [taskId])).rows[0].upstream_error.queryFailures, 4);
+        assert.equal(forwardedRequests.filter(request => request.url.endsWith("/videos")).length, createsBefore);
+        assert.equal((await call(`/ai/${channel}/v1/videos/task-public-alias-completed/resume`, alice, "POST", {})).status, 200);
+        assert.equal((await db.query("SELECT upstream_error FROM generation_tasks WHERE id=$1", [taskId])).rows[0].upstream_error, null);
+    } finally { videoQueryHandler = undefined; }
+    videoQueryResponse = { status: "completed" };
+    await processVideoTask(taskId);
+    assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "succeeded");
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_presets: { [model]: "wan3.0-video" } })).status, 200);
+    const wan = { ...body, resolution: "720P", metadata: { parameters: { seed: 0, audio: false, watermark: false } } };
+    videoCreateResponse = { id: "task-public-alias-failed", status: "failed" };
+    const failed = await call(`/ai/${channel}/v1/videos`, alice, "POST", wan);
+    assert.equal(failed.status, 200);
+    assert.equal((await failed.json()).status, "failed");
+    assert.deepEqual(forwardedRequests.at(-1)!.body, wan);
 });

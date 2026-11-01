@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE UNIQUE INDEX IF NOT EXISTS channels_capability ON channels(capability);
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS image_types jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS video_types jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS video_presets jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS model_descriptions jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS key_bindings (
     user_id uuid NOT NULL REFERENCES users(id), group_id text NOT NULL,

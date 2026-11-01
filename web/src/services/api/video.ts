@@ -8,13 +8,13 @@ import { cloudApi, cloudFileUrl } from "./cloud";
 import { videoSettingsForModel } from "@/lib/video-settings";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl, uploadImage } from "@/services/image-storage";
-import { buildApiUrl, modelOptionName, modelVideoTypeOf, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, modelOptionName, modelVideoTypeOf, modelVideoConfigOf, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { VIDEO_POLL_INTERVAL_MS, type VideoTaskPath } from "../../../../shared/video-tasks";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { CanvasGenerationContext } from "./image";
 
-type VideoResponse = { id: string; task_id?: string; status?: string; error?: string | { message?: string }; file?: UploadedFile };
+type VideoResponse = { id: string; status?: string; error?: string | { message?: string }; file?: UploadedFile };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal; canvasContext?: CanvasGenerationContext };
@@ -84,14 +84,14 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     assertVideoConfig(requestConfig, requestConfig.model);
     const settings = videoSettingsForModel(config, selectedModel, references.length, options);
     if (settings.error) throw new Error(settings.error);
-    if (modelVideoTypeOf(config, selectedModel) !== "seedance") return createPublicVideoTask(config, requestConfig, selectedModel, prompt, references, options);
+    if (modelVideoConfigOf(config, selectedModel).callType !== "seedance") return createPublicVideoTask(config, requestConfig, selectedModel, prompt, references, options);
     const [images, videos, audios] = await Promise.all([
         Promise.all(references.map((image) => imageToDataUrl(image))),
         Promise.all((options?.videos || []).map(async (video) => video.storageKey ? resolveMediaUrl(video.storageKey, video.url) : video.url)),
         Promise.all((options?.audios || []).map(async (audio) => audio.storageKey ? resolveMediaUrl(audio.storageKey, audio.url) : audio.url)),
     ]);
     const { mode, ratio, resolution, seconds, generateAudio, watermark } = settings;
-    const body = { ...videoRequestBody(modelOptionName(selectedModel), "seedance", prompt, { images, videos, audios }, { seconds, ratio, resolution, mode, generateAudio, watermark }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
+    const body = { ...videoRequestBody(modelOptionName(selectedModel), modelVideoConfigOf(config, selectedModel), prompt, { images, videos, audios }, { seconds, ratio, resolution, mode, generateAudio, watermark }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
 
     try {
         const response = (await axios.post<ApiVideoResponse & { canvasTaskId?: string }>(aiApiUrl(requestConfig, "/contents/generations/tasks"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data;
@@ -135,11 +135,10 @@ async function referenceUrl(namespace: "image_files" | "media_files", item: { st
 }
 
 async function createPublicVideoTask(config: AiConfig, requestConfig: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const { mode, ratio, seconds, resolution } = videoSettingsForModel(config, model, references.length, options);
+    const { mode, ratio, seconds, resolution, generateAudio, watermark, fastMode } = videoSettingsForModel(config, model, references.length, options);
     const [reference_images, reference_videos, reference_audios] = await Promise.all([
         Promise.all(references.map(async (image, index) => {
-            const url = await imageToDataUrl(image, options);
-            const key = image.storageKey || (await uploadImage(url, options)).storageKey;
+            const key = image.storageKey || (await uploadImage(await imageToDataUrl(image, options), options)).storageKey;
             if (!key) throw new Error("参考图片上传失败");
             return { url: cloudFileUrl("image_files", key), role: mode === "reference" ? "reference_image" : index === 0 ? "first_frame" : "last_frame" };
         })),
@@ -150,11 +149,11 @@ async function createPublicVideoTask(config: AiConfig, requestConfig: AiConfig, 
             return { url: await referenceUrl("media_files", audio, options) };
         })),
     ]);
-    const body = { ...videoRequestBody(modelOptionName(model), modelVideoTypeOf(config, model), prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution, generateAudio: false, watermark: false }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
+    const body = { ...videoRequestBody(modelOptionName(model), modelVideoConfigOf(config, model), prompt, { images: reference_images.map((image) => image.url), videos: reference_videos.map((video) => video.url), audios: reference_audios.map((audio) => audio.url) }, { seconds, ratio, mode, resolution, generateAudio, watermark, fastMode }), ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) };
     try {
         const response = (await axios.post<ApiVideoResponse & { canvasTaskId?: string }>(aiApiUrl(requestConfig, "/videos"), body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data;
         const created = unwrapVideoResponse(await canvasGenerationResult(response, options?.signal));
-        const id = created.id || created.task_id;
+        const id = created.id;
         if (!id) throw new Error(apiText("noVideoTaskId"));
         return { id, path: "videos", model, generationTaskId: response.canvasTaskId };
     } catch (error) {

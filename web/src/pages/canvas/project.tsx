@@ -2,7 +2,7 @@ import { acknowledgeAgentUiAction } from "@/services/api/server-agent";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { useAudioPlayback } from "@/hooks/use-audio-playback";
 import { features } from "@/constant/features";
-import { resolveVideoMode } from "@/lib/video-settings";
+import { videoSettingsForModel } from "@/lib/video-settings";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
@@ -22,7 +22,7 @@ import { modelOptionName } from "@/stores/use-config-store";
 import { preserveCanvasGeneration } from "../../../../shared/canvas-generations";
 import { audioSubmission, submitAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, resumeVideoGenerationTask, waitForVideoGenerationTask } from "@/services/api/video";
-import { modelAudioTypeOf, defaultConfig, modelVideoTypeOf, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelAudioTypeOf, defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { ensureImagePreview, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -379,7 +379,7 @@ function InfiniteCanvasPage() {
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios, canvasContext: await prepareCanvasGeneration(nodeId) });
-            setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskPath: task.path, videoTaskModel: task.model, model: config.model, videoMode: resolveVideoMode(config.videoMode, images?.length || 0, modelVideoTypeOf(config, config.model) !== "h3") } } : item)));
+            setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskPath: task.path, videoTaskModel: task.model, model: config.model, videoMode: videoSettingsForModel(config, config.model, images?.length || 0).mode } } : item)));
             const video = await waitForVideoGenerationTask(config, task, { signal });
             setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
         },
@@ -420,6 +420,7 @@ function InfiniteCanvasPage() {
                                   vquality: generationConfig.vquality,
                                   generateAudio: generationConfig.videoGenerateAudio,
                                   watermark: generationConfig.videoWatermark,
+                            fastMode: generationConfig.videoFastMode,
                                   videoMode: generationConfig.videoMode,
                               })
                             : item,
@@ -2646,7 +2647,8 @@ function InfiniteCanvasPage() {
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
+                            fastMode: generationConfig.videoFastMode,
+                            videoMode: videoSettingsForModel(generationConfig, generationConfig.model, generationContext.referenceImages.length).mode,
                             references: generationReferenceUrls(generationContext),
                         },
                     };
@@ -2665,7 +2667,8 @@ function InfiniteCanvasPage() {
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            videoMode: resolveVideoMode(generationConfig.videoMode, generationContext.referenceImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
+                            fastMode: generationConfig.videoFastMode,
+                            videoMode: videoSettingsForModel(generationConfig, generationConfig.model, generationContext.referenceImages.length).mode,
                             references: generationReferenceUrls(generationContext),
                         }, generationContext.referenceVideos, generationContext.referenceAudios);
                     } finally {
@@ -2850,7 +2853,8 @@ function InfiniteCanvasPage() {
                         vquality: generationConfig.vquality,
                         generateAudio: generationConfig.videoGenerateAudio,
                         watermark: generationConfig.videoWatermark,
-                        videoMode: resolveVideoMode(generationConfig.videoMode, retryImages.length, modelVideoTypeOf(generationConfig, generationConfig.model) !== "h3"),
+                            fastMode: generationConfig.videoFastMode,
+                        videoMode: videoSettingsForModel(generationConfig, generationConfig.model, retryImages.length).mode,
                     }, context?.referenceVideos || [], context?.referenceAudios || []);
                     return;
                 }

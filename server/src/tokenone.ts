@@ -8,17 +8,18 @@ import { requireAdmin, type User } from "./auth.js";
 import { HttpError } from "./http.js";
 import { tokenoneError } from "./model-errors.js";
 import { imageModelTypes, type ImageModelType } from "../../shared/image-models.js";
-import { videoModelTypes, wanModelProfile, type VideoModelType } from "../../shared/video-models.js";
+import { videoCallTypes, videoParameterPresets, type VideoCallType } from "../../shared/video-models.js";
 
 import { audioModelTypes, type AudioModelType } from "../../shared/audio.js";
 
 const capabilitySchema = z.enum(["image", "text", "video", "audio"]);
 const capabilityNames = { image: "图片", text: "文本", video: "视频", audio: "音频" };
-export type Channel = { id: string; capability: z.infer<typeof capabilitySchema>; models: string[]; image_types?: Record<string, ImageModelType>; video_types?: Record<string, VideoModelType>; audio_types?: Record<string, AudioModelType>; model_capabilities?:Record<string,{agentEnabled:boolean;imageInput:boolean}>;enabled: boolean };
+export type Channel = { id: string; capability: z.infer<typeof capabilitySchema>; models: string[]; image_types?: Record<string, ImageModelType>; video_types?: Record<string, VideoCallType>; video_presets?: Record<string, string>; audio_types?: Record<string, AudioModelType>; model_capabilities?:Record<string,{agentEnabled:boolean;imageInput:boolean}>;enabled: boolean };
 export const featureModelsSchema = z.object({
     models: z.array(z.string().trim().min(1)), default_model: z.string().trim(), enabled: z.boolean(),
     image_types: z.record(z.string(), z.enum(imageModelTypes)).default({}),
-    video_types: z.record(z.string(), z.enum(videoModelTypes)).default({}),
+    video_types: z.record(z.string(), z.enum(videoCallTypes)).default({}),
+    video_presets: z.record(z.string(), z.string()).default({}),
     audio_types: z.record(z.string(), z.enum(audioModelTypes)).default({}),
     model_descriptions: z.record(z.string(), z.string().trim()).default({}),
     model_capabilities:z.record(z.string(),z.object({agentEnabled:z.boolean(),imageInput:z.boolean()}).strict()).default({}),
@@ -91,7 +92,7 @@ async function withReadCancellation<T>(res: Response, run: (signal: AbortSignal)
     finally { res.off("close", cancel); }
 }
 channelRouter.get("/channels", async (_req, res) => {
-    const { rows } = await db.query("SELECT id,name,capability,models,image_types,video_types,audio_types,model_descriptions,is_default FROM channels WHERE enabled ORDER BY is_default DESC,name,id");
+    const { rows } = await db.query("SELECT id,name,capability,models,image_types,video_types,video_presets,audio_types,model_descriptions,is_default FROM channels WHERE enabled ORDER BY is_default DESC,name,id");
     res.json({ channels: rows });
 });
 channelRouter.get("/admin/groups", requireAdmin, (_req, res) => withReadCancellation(res, async signal => {
@@ -108,7 +109,7 @@ channelRouter.get("/admin/models", requireAdmin, (_req, res) => withReadCancella
     res.json({ models: [...new Set(result.data.data.map((model) => model.id))] });
 }));
 channelRouter.get("/admin/channels", requireAdmin, async (_req, res) => {
-    const { rows } = await db.query("SELECT id,capability,models,image_types,video_types,audio_types,model_descriptions,model_capabilities,enabled,COALESCE(models->>0,'') AS default_model FROM channels ORDER BY capability");
+    const { rows } = await db.query("SELECT id,capability,models,image_types,video_types,video_presets,audio_types,model_descriptions,model_capabilities,enabled,COALESCE(models->>0,'') AS default_model FROM channels ORDER BY capability");
     res.json({ channels: rows });
 });
 channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) => {
@@ -119,16 +120,16 @@ channelRouter.put("/admin/channels/:capability", requireAdmin, async (req, res) 
     if (capability === "audio" && models.some((model) => !config.audio_types[model])) throw new HttpError(400, "AUDIO_MODEL_TYPE_REQUIRED");
     if (Object.keys(config.audio_types).some((model) => capability !== "audio" || !models.includes(model))) throw new HttpError(400, "INVALID_AUDIO_MODEL_TYPES");
     if (capability === "video" && models.some((model) => !config.video_types[model])) throw new HttpError(400, "VIDEO_MODEL_TYPE_REQUIRED");
-    if (capability === "video" && models.some((model) => config.video_types[model] === "wan" && !wanModelProfile(model))) throw new HttpError(400, "INVALID_WAN_MODEL");
-    if (capability === "video" && models.some((model) => config.video_types[model] === "h3" && model !== "MiniMax-H3")) throw new HttpError(400, "INVALID_H3_MODEL");
+    if (capability === "video" && models.some(model => !videoParameterPresets[config.video_presets[model]] || videoParameterPresets[config.video_presets[model]].callType !== config.video_types[model])) throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES");
+    if (Object.keys(config.video_presets).some(model => capability !== "video" || !models.includes(model))) throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES");
     if (Object.keys(config.image_types).some((model) => capability !== "image" || !models.includes(model))) throw new HttpError(400, "INVALID_IMAGE_MODEL_TYPES");
     if (Object.keys(config.video_types).some((model) => capability !== "video" || !models.includes(model))) throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES");
     if (Object.keys(config.model_descriptions).some((model) => !models.includes(model))) throw new HttpError(400, "INVALID_MODEL_DESCRIPTIONS");
     if(Object.entries(config.model_capabilities).some(([model,flags])=>!models.includes(model)||capability!=="text"&&flags.imageInput))throw new HttpError(400,"INVALID_MODEL_CAPABILITIES");
-    const { rows } = await db.query(`INSERT INTO channels (id,name,capability,models,image_types,video_types,audio_types,model_descriptions,enabled,model_capabilities,is_default) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)
-        ON CONFLICT (capability) DO UPDATE SET name=EXCLUDED.name,models=EXCLUDED.models,image_types=EXCLUDED.image_types,video_types=EXCLUDED.video_types,audio_types=EXCLUDED.audio_types,model_descriptions=EXCLUDED.model_descriptions,model_capabilities=EXCLUDED.model_capabilities,enabled=EXCLUDED.enabled,is_default=true
-        RETURNING id,capability,models,image_types,video_types,audio_types,model_descriptions,model_capabilities,enabled,COALESCE(models->>0,'') AS default_model`,
-        [randomUUID(), capabilityNames[capability], capability, JSON.stringify(models), JSON.stringify(config.image_types), JSON.stringify(config.video_types), JSON.stringify(config.audio_types), JSON.stringify(config.model_descriptions), config.enabled,JSON.stringify(config.model_capabilities)]);
+    const { rows } = await db.query(`INSERT INTO channels (id,name,capability,models,image_types,video_types,video_presets,audio_types,model_descriptions,enabled,model_capabilities,is_default) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)
+        ON CONFLICT (capability) DO UPDATE SET name=EXCLUDED.name,models=EXCLUDED.models,image_types=EXCLUDED.image_types,video_types=EXCLUDED.video_types,video_presets=EXCLUDED.video_presets,audio_types=EXCLUDED.audio_types,model_descriptions=EXCLUDED.model_descriptions,model_capabilities=EXCLUDED.model_capabilities,enabled=EXCLUDED.enabled,is_default=true
+        RETURNING id,capability,models,image_types,video_types,video_presets,audio_types,model_descriptions,model_capabilities,enabled,COALESCE(models->>0,'') AS default_model`,
+        [randomUUID(), capabilityNames[capability], capability, JSON.stringify(models), JSON.stringify(config.image_types), JSON.stringify(config.video_types), JSON.stringify(config.video_presets), JSON.stringify(config.audio_types), JSON.stringify(config.model_descriptions), config.enabled,JSON.stringify(config.model_capabilities)]);
     res.json({ channel: rows[0] });
 });
 

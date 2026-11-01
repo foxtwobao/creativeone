@@ -8,11 +8,11 @@ import { db, transaction } from "./db.js";
 import { env } from "./config.js";
 import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError, requireUuid } from "./http.js";
-import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signWanMedia, fileReferences, collectDeletedFiles } from "./storage.js";
+import { assertReferenceImages, assertReferenceImageSize, saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signVideoMedia, fileReferences, collectDeletedFiles } from "./storage.js";
 import { readBytes } from "./media.js";
 import { tokenoneError, modelErrorMessage, taskErrorMessage, upstreamErrorDetails } from "./model-errors.js";
-import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError, wanRequestSchema, h3RequestSchema } from "./model-capabilities.js";
-import { videoModelProfile, wanModelProfile, type VideoModelType } from "../../shared/video-models.js";
+import { imageRequestCapabilityError, videoRequestCapabilityError, videoDurationCapabilityError } from "./model-capabilities.js";
+import { channelVideoConfig, channelVideoProfile, videoConfiguredProfile, type VideoModelConfig, type VideoModelType } from "../../shared/video-models.js";
 import { videoTaskPath } from "../../shared/video-tasks.js";
 import { executeMediaTask, persistImages } from "./generation-executor.js";
 import { readAccountData } from "./account-data.js";
@@ -32,8 +32,8 @@ const canvasContextSchema = z.object({
     outputId: z.string().trim().min(1).optional(),
 }).strict();
 
-export async function assertVideoDurations(userId: string, model: string, family: VideoModelType, references: { videos: string[]; audios: string[] }, client: Pick<typeof db, "query"> = db) {
-    if (videoModelProfile(model, family).referenceSeconds === null) return;
+export async function assertVideoDurations(userId: string, model: string, config: VideoModelConfig, references: { videos: string[]; audios: string[] }, client: Pick<typeof db, "query"> = db) {
+    if (videoConfiguredProfile(config).referenceSeconds === null) return;
     const duration = async (urls: string[]) => {
         let seconds = 0;
         for (const url of urls) {
@@ -43,7 +43,7 @@ export async function assertVideoDurations(userId: string, model: string, family
         }
         return seconds;
     };
-    if (videoDurationCapabilityError(model, family, await duration(references.videos), await duration(references.audios))) throw new HttpError(400, "REFERENCE_DURATION_EXCEEDED");
+    if (videoDurationCapabilityError(model, config, await duration(references.videos), await duration(references.audios))) throw new HttpError(400, "REFERENCE_DURATION_EXCEEDED");
 }
 
 export async function acceptCanvasGeneration(userId: string, channel: Channel, path: string, submitted: Record<string, any>, canvasContext: z.infer<typeof canvasContextSchema>, groupId: string, canvasSettings: Record<string, any>, client: Pick<typeof db, "query">) {
@@ -87,14 +87,14 @@ export async function acceptCanvasGeneration(userId: string, channel: Channel, p
         else if (source.type === "text" && !source.metadata?.content?.trim()) throw new HttpError(409, "CANVAS_REFERENCE_NOT_READY");
     };
     for (const edge of project.connections.filter((edge: any) => edge.toNodeId === node.id)) assertReady(project.nodes.find((source: any) => source.id === edge.fromNodeId));
-    const family = channel.capability === "image" ? channel.image_types![submitted.model] : channel.capability === "audio" ? channel.audio_types![submitted.model] : channel.video_types?.[submitted.model] || "seedance";
+    const family = channel.capability === "image" ? channel.image_types![submitted.model] : channel.capability === "audio" ? channel.audio_types![submitted.model] : channel.capability === "video" ? channelVideoProfile(channel, submitted.model).family : undefined;
     if (channel.capability === "audio") audioInputSchema.parse(savedMetadata.audioInput);
-    try { requestSnapshot = canvasRequestBody(submitted.model, channel.capability as "image" | "video" | "audio" | "text", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : ""); }
+    try { requestSnapshot = canvasRequestBody(submitted.model, channel.capability as "image" | "video" | "audio" | "text", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : "", channel.capability === "video" ? channelVideoConfig(channel, submitted.model) : undefined); }
     catch { throw new HttpError(400, "MODEL_CAPABILITY_INVALID"); }
-    const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(submitted.model, family as any, requestSnapshot) : ["audio", "text"].includes(channel.capability) ? undefined : videoRequestCapabilityError(submitted.model, family as any, requestSnapshot);
+    const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(submitted.model, family as any, requestSnapshot) : ["audio", "text"].includes(channel.capability) ? undefined : videoRequestCapabilityError(submitted.model, channelVideoConfig(channel, submitted.model), requestSnapshot);
     if (capabilityError) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
-    if (channel.capability === "video") await assertVideoDurations(userId, submitted.model, family as VideoModelType, references, client);
-    const expectedPath = channel.capability === "text" ? "responses" : channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(family as VideoModelType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
+    if (channel.capability === "video") await assertVideoDurations(userId, submitted.model, channelVideoConfig(channel, submitted.model), references, client);
+    const expectedPath = channel.capability === "text" ? "responses" : channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(channelVideoConfig(channel, submitted.model).callType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
     if (path !== expectedPath) throw new HttpError(409, "CANVAS_GENERATION_CHANGED");
     await assertReferenceImages(userId, requestSnapshot, client);
     requestSnapshot = { ...requestSnapshot, user_prompt: savedMetadata.prompt, canvas_source: { node, contentRevision: project.content_revision }, canvas_submission: submission };
@@ -173,7 +173,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         if (req.method === "POST") {
             await transaction(async (client) => {
                 await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [user.id]);
-                await client.query("UPDATE generation_tasks SET status='pending',error=NULL,canvas_attached=false,updated_at=now() WHERE id=$1 AND status='unknown'", [task.id]);
+                await client.query("UPDATE generation_tasks SET status='pending',error=NULL,upstream_error=NULL,canvas_attached=false,updated_at=now() WHERE id=$1 AND status='unknown'", [task.id]);
                 await attachCanvasTask(task.id, client);
             });
             return res.json({ id: task.upstream_id, status: "queued" });
@@ -194,13 +194,8 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         }
         if (req.method === "POST" && channel.capability === "image" && !channel.image_types?.[req.body.model]) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
         if (req.method === "POST" && channel.capability === "video") {
-            const kind = channel.video_types?.[req.body.model] || "seedance";
-            if (path !== videoTaskPath(kind)) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
-            if (kind === "wan") {
-                req.body = wanRequestSchema.parse(req.body);
-                if (!wanModelProfile(req.body.model)) throw new HttpError(400, "INVALID_WAN_MODEL");
-            }
-            if (kind === "h3") req.body = h3RequestSchema.parse(req.body);
+            try { channelVideoConfig(channel, req.body.model); } catch { throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES"); }
+            if (path !== videoTaskPath(channelVideoConfig(channel, req.body.model).callType)) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
         }
     }
     if (req.method === "POST" && ["image", "video"].includes(channel.capability)) {
@@ -208,13 +203,13 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         for (const file of req.files as Express.Multer.File[] || []) if (channel.capability === "image" || file.mimetype.startsWith("image/")) assertReferenceImageSize(file.size);
         const error = channel.capability === "image"
             ? imageRequestCapabilityError(req.body.model, channel.image_types![req.body.model], req.body, (req.files as Express.Multer.File[] || []).filter((file) => file.fieldname !== "mask").length)
-            : videoRequestCapabilityError(req.body.model, channel.video_types?.[req.body.model] || "seedance", req.body);
+            : videoRequestCapabilityError(req.body.model, channelVideoConfig(channel, req.body.model), req.body);
         if (error) return res.status(400).json({ error: "MODEL_CAPABILITY_INVALID", message: error, retryable: false, requestId: res.locals.requestId });
     }
     if (canvasContext && !["image", "video", "audio", "text"].includes(channel.capability)) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
     if (canvasContext && req.is("multipart/form-data")) throw new HttpError(400, "INVALID_REQUEST");
     let requestSnapshot: Record<string, any> = { ...structuredClone(req.body || {}), ...(userPrompt === undefined ? {} : { user_prompt: userPrompt }), ...(audioSubmission ? { audio_title: audioSubmission.title || "" } : {}) };
-    if (!canvasContext && path === "videos") await signWanMedia(user.id, req.body.metadata?.input.media || []);
+    if (!canvasContext && path === "videos") await signVideoMedia(user.id, req.body);
     if (!canvasContext && path === "contents/generations/tasks") for (const part of req.body.content || []) {
         const url = part.type === "video_url" ? part.video_url?.url : undefined;
         if (typeof url !== "string" || !url.startsWith("/api/files/media_files/")) continue;
@@ -350,7 +345,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         let status = "succeeded";
         if (channel.capability === "video") {
             const video = result.data || result;
-            const upstreamId = video.id || video.task_id;
+            const upstreamId = video.id || (path !== "videos" ? video.task_id : undefined);
             if (typeof upstreamId !== "string" || !/^[\w-]+$/.test(upstreamId)) throw new HttpError(502, "INVALID_VIDEO_TASK");
             status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : "pending";
             if (status === "failed") await db.query("UPDATE generation_tasks SET upstream_error=$2 WHERE id=$1", [taskId, JSON.stringify(upstreamErrorDetails(video))]);

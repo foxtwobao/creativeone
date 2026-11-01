@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { db, transaction } from "./db.js";
 import { ensureKey, upstreamUrl, modelProvider, type Channel } from "./tokenone.js";
 import { HttpError } from "./http.js";
-import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signWanMedia } from "./storage.js";
+import { saveFile, storedFileInfo, inlineStoredFile, mediaReferenceForUser, signVideoMedia } from "./storage.js";
 import { downloadRemoteMedia } from "./media.js";
 import { tokenoneError, modelErrorMessage, upstreamErrorDetails } from "./model-errors.js";
 import { audioRequestBody, type AudioResult } from "../../shared/audio.js";
@@ -42,7 +42,7 @@ async function mediaBody(userId: string, path: string, channel: Channel, snapsho
     delete input.user_prompt;
     delete input.canvas_source;
     delete input.canvas_submission;
-    if (path === "videos") await signWanMedia(userId, input.metadata?.input.media || []);
+    if (path === "videos") await signVideoMedia(userId, input);
     if (path === "contents/generations/tasks") for (const part of input.content || []) {
         const url = part.video_url?.url || part.audio_url?.url;
         if (typeof url === "string" && url.startsWith("/api/files/media_files/")) {
@@ -87,7 +87,7 @@ export async function executeMediaTask(taskId: string) {
         if (!task || task.upstream_id || !["pending", "running"].includes(task.status)) return;
         if (task.status === "running" && task.execution_token && !(["audio", "text"].includes(task.capability) && task.upstream_result)) {
             const video = task.capability === "video" ? task.upstream_result?.data || task.upstream_result : undefined;
-            const upstreamId = video?.id || video?.task_id;
+            const upstreamId = video?.id || (task.path !== "videos" ? video?.task_id : undefined);
             const knownVideo = typeof upstreamId === "string" && /^[\w-]+$/.test(upstreamId);
             await owner.query("UPDATE generation_tasks SET status=$3,error=$4,upstream_id=$5,result=CASE WHEN $5::text IS NOT NULL THEN $6::jsonb ELSE result END,execution_token=NULL,updated_at=now() WHERE id=$1 AND execution_token=$2", [taskId, task.execution_token, knownVideo ? "pending" : "unknown", knownVideo ? null : "UPSTREAM_RESULT_UNKNOWN", knownVideo ? upstreamId : null, JSON.stringify({ id: upstreamId, status: "queued" })]);
             await finishCanvasTask(taskId);
@@ -127,7 +127,7 @@ export async function executeMediaTask(taskId: string) {
                 const upstream = await fetch(upstreamUrl(task.path), { method: "POST", headers: { ...request.headers, Authorization: `Bearer ${key.key}` }, body: request.body, redirect: "error", signal, ...(task.capability === "audio" ? { dispatcher: audioDispatcher } : {}) });
                 if (!upstream.ok) { const error = await tokenoneError(upstream); await saveError(error.upstreamError); await publish("failed", null, error.code); return; }
                 result = await upstream.json();
-                if (result?.error) { await saveError(upstreamErrorDetails(result)); await publish("failed", null, "TOKENONE_GENERATION_FAILED"); return; }
+                if (result?.error && task.capability !== "video") { await saveError(upstreamErrorDetails(result)); await publish("failed", null, "TOKENONE_GENERATION_FAILED"); return; }
                 await db.query("UPDATE generation_tasks SET upstream_result=$3 WHERE id=$1 AND execution_token=$2", [taskId, token, JSON.stringify(result)]);
             } else dispatched = true;
             if (task.capability === "text") {
@@ -165,7 +165,7 @@ export async function executeMediaTask(taskId: string) {
                 const incomplete = saved.audios.some((item) => !item.file);
                 await publish(incomplete ? "unknown" : "succeeded", saved, incomplete ? "AUDIO_SAVE_INCOMPLETE" : null);
             } else {
-                const video = result.data || result, id = video.id || video.task_id;
+                const video = result.data || result, id = video.id || (task.path !== "videos" ? video.task_id : undefined);
                 if (typeof id !== "string" || !/^[\w-]+$/.test(id)) throw new HttpError(502, "INVALID_VIDEO_TASK");
                 const failed = ["failed", "cancelled", "expired"].includes(video.status);
                 if (failed) await saveError(upstreamErrorDetails(video));
