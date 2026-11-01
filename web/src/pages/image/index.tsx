@@ -1,3 +1,6 @@
+import { GenerationHistoryPreview } from "@/components/generation-history-preview";
+import { StudioInspiration } from "./studio-inspiration";
+import styles from "@/layouts/creation-workbench.module.css";
 import WorkbenchAgentNotice from "@/components/workbench-agent-notice";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { fetchGenerationHistory, removeGenerationHistory } from "@/services/api/history";
@@ -15,7 +18,6 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { features } from "@/constant/features";
 import { StudioSettings } from "./studio-settings";
 import { needsModelAuthorization, splitErrorMessage } from "@/services/api/error-message";
-import { StudioInspiration } from "./studio-inspiration";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
@@ -24,7 +26,7 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imageSettingsForModel } from "@/lib/image-settings";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -73,8 +75,9 @@ type GenerationLog = {
     imageCount: number;
     size: string;
     quality: string;
-    status: "success" | "failed";
+    status: "pending" | "success" | "failed";
     images: GeneratedImage[];
+    error?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "background" | "count">;
@@ -115,6 +118,7 @@ export default function ImagePage() {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
+    const [historyPreview, setHistoryPreview] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
@@ -377,10 +381,42 @@ export default function ImagePage() {
     };
 
     return (
-        <div className={studio ? "studio-workbench" : "flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100"}>
+        <div className={studio ? "studio-workbench w-full min-w-0" : "flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100"}>
             <WorkbenchAgentNotice kind="image"/>
-            {studio ? <main className={`studio-stage ${results.length ? "has-results" : ""}`}>
-                <div className="studio-page-tools"><span>创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
+            {studio ? (results.length ? <main className={`studio-stage ${styles.workbench}`}>
+                <div className="studio-page-tools"><span>图片创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
+                <section className="studio-compose-area" aria-label="图片创作">
+                    <div className="studio-compose-tools">
+                        <button className="studio-chip" onClick={() => setLogsOpen(true)}><History size={14} />历史记录</button>
+                        {features.assistant && <button className="studio-chip" onClick={toggleAgent}><Bot size={14} />启动助手</button>}
+                        <button className="studio-chip" onClick={() => setPromptDialogOpen(true)}><BookOpen size={14} />提示词</button>
+                        {features.imageAdvancedSettings && <button className="studio-chip" onClick={() => setSettingsOpen(true)}><SlidersHorizontal size={14} />详细设置</button>}
+                    </div>
+                    <section className={`${styles.formSection} ${styles.modelRow}`}><h2 className={styles.sectionTitle}>模型</h2><ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} /></section>
+                    <section className={styles.formSection}>
+                        <h2 className={styles.sectionTitle}>提示词</h2>
+                        <div className="studio-composer px-3 py-2"><Input.TextArea aria-label="创作提示词" variant="borderless" autoSize={{ minRows: 3, maxRows: 10 }} value={prompt} placeholder="描述你的灵感，让想象发生…" onChange={(event) => setPrompt(event.target.value)} /></div>
+                    </section>
+                    <section className={styles.materials} aria-label="参考素材" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void addReferences(event.dataTransfer.files).catch((error) => message.error(error instanceof Error ? error.message : "参考图导入失败，请重试")); }}>
+                        <div className="flex items-center justify-between gap-3"><h2 className="text-xs font-medium">参考素材</h2><Popover trigger="click" placement="bottomLeft" content={<div className="flex flex-col gap-1"><Button type="text" icon={<Upload size={15} />} onClick={() => fileInputRef.current?.click()}>上传参考图</Button><Button type="text" icon={<FolderPlus size={15} />} onClick={() => setAssetPickerOpen(true)}>从素材选择</Button><Button type="text" icon={<ClipboardPaste size={15} />} onClick={() => void addReferencesFromClipboard()}>从剪贴板粘贴</Button></div>}><button type="button" className="studio-chip" aria-label="添加参考素材"><Plus size={14} />添加素材</button></Popover></div>
+                        {references.length ? <div className="studio-references">{references.map((item, index) => <div key={item.id}><img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} /><span>{imageReferenceLabel(index)}</span><button aria-label="移除参考图" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}><X size={12} /></button><ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} /></div>)}</div> : null}
+                        {!references.length ? <p className="mt-1 text-xs text-muted-foreground">可选，可添加或拖入参考图片。</p> : null}
+                    </section>
+                    <StudioSettings referenceImageCount={references.length} />
+                    <div className={styles.submit}><Button type="primary" size="large" block icon={running ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />} disabled={!canGenerate || running || Boolean(agentTaskIds?.length)} onClick={() => void generate()}>{running ? `正在生成 · ${formatDuration(elapsedMs)}` : `生成图片 · ${generationCount} 张`}</Button></div>
+                </section>
+                <div className={styles.output}>
+                    {!results.length ? <h2 className="mb-4 text-sm font-medium">我的图片</h2> : null}
+                {results.length ? <section className="studio-results"><header><h2>{previewLog ? "历史作品" : "生成结果"}</h2>{running ? <span>正在生成 · {formatDuration(elapsedMs)}</span> : <span>灵感，已成形</span>}</header><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{results.map((result, index) => result.status === "success" && result.image ? <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} /> : <PendingImageCard key={result.id} />)}</div></section> : <section className={styles.empty}><div className="studio-inspiration-empty"><ImagePlus size={28} strokeWidth={1.25} /><p>在左侧填写创作内容，生成的图片会显示在这里。</p></div></section>}
+                    <section className={styles.history} aria-label="最近创作">
+                        <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-medium">最近创作</h2><button className="studio-chip" onClick={() => setLogsOpen(true)}>全部记录</button></div>
+                        <div className="grid gap-2 sm:grid-cols-2">{logs.slice(0, 6).map((log) => <button key={log.id} type="button" className="min-w-0 rounded-xl border border-border p-3 text-left hover:bg-accent" onClick={() => { setHistoryPreview(log); setLogsOpen(true); }}><span className="block truncate text-sm">{log.title}</span><span className="mt-1 block truncate text-xs text-muted-foreground">{log.config.size} · {log.status === "success" ? "已完成" : log.status === "pending" ? "待完成" : "失败"}</span></button>)}</div>
+                        {!logs.length ? <p className="py-5 text-xs text-muted-foreground">暂无创作记录，完成的任务会显示在这里。</p> : null}
+                    </section>
+                </div>
+                <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
+            </main> : <main className="studio-stage">
+                <div className="studio-page-tools"><span>图片创作工作台</span><button className="studio-chip" disabled={running} onClick={createSession}><PenLine size={14} />新建创作</button></div>
                 <section className="studio-compose-area">
                     <h1><span>准备好了，</span>随时开始</h1>
                     <div className="studio-compose-tools">
@@ -398,15 +434,15 @@ export default function ImagePage() {
                         </div>
                         <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-2">
                             <ModelPicker config={effectiveConfig} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" className="max-w-[min(70vw,320px)]" onMissingConfig={() => openConfigDialog(false)} />
-                            <Popover trigger="click" placement="bottomRight" content={<StudioSettings referenceImageCount={references.length} />}><button className="studio-chip" onClick={() => window.dispatchEvent(new CustomEvent("model-picker-open", { detail: "parameters" }))}><SlidersHorizontal size={14} />参数</button></Popover>
+
                         </div>
                     </div>
+                    <StudioSettings compact referenceImageCount={references.length} />
                     <div className="studio-composer-caption"><span>{references.length ? `${references.length} 张参考图 · ` : ""}{modelOptionLabel(effectiveConfig, model)} · {generationCount} 张</span><span>点击生成 · Enter 换行</span></div>
-                    {imageSettings.error ? <p role="alert" className="text-xs text-muted-foreground">{imageSettings.error}</p> : null}
                 </section>
-                {results.length ? <section className="studio-results"><header><h2>{previewLog ? "历史作品" : "生成结果"}</h2>{running ? <span>正在生成 · {formatDuration(elapsedMs)}</span> : <span>灵感，已成形</span>}</header><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{results.map((result, index) => result.status === "success" && result.image ? <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} /> : <PendingImageCard key={result.id} />)}</div></section> : <StudioInspiration onSelect={setPrompt} onUpload={() => fileInputRef.current?.click()} />}
+                <StudioInspiration onSelect={setPrompt} onUpload={() => fileInputRef.current?.click()} />
                 <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
-            </main> : <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+            </main>) : <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
@@ -572,23 +608,25 @@ export default function ImagePage() {
                     event.target.value = "";
                 }}
             />
-            <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
+            <Drawer title={t("workbench.logs")} extra={<span className="text-xs text-muted-foreground">共 {logTotal} 条</span>} placement="right" size="min(640px, 100vw)" styles={{ body: { padding: 16 } }} open={logsOpen} onClose={() => { setLogsOpen(false); setHistoryPreview(null); }}>
+                {historyPreview ? <GenerationHistoryPreview record={{ title: historyPreview.title, model: modelOptionName(historyPreview.model), prompt: historyPreview.prompt, status: historyPreview.status, error: historyPreview.error, parameters: `${historyPreview.config.size} · ${historyPreview.config.quality}`, images: historyPreview.images.map((item) => ({ id: item.id, url: item.dataUrl, thumbnail: previewUrlFor(item.storageKey) || item.dataUrl })), references: historyPreview.references.map((item) => ({ id: item.id, url: item.dataUrl, thumbnail: previewUrlFor(item.storageKey) || item.dataUrl })) }} onBack={() => setHistoryPreview(null)} onEdit={() => { void previewGenerationLog(historyPreview); setHistoryPreview(null); }} /> : <>
                 {historyLoading ? <p role="status" className="mb-4 text-sm text-muted-foreground">正在加载创作记录…</p> : null}
-                {studio ? <Input className="mb-4" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => { setLogSearch(event.target.value); setLogPage(1); }} /> : null}
-                <LogPanel
+                {studio ? <Input className="mb-3" prefix={<Search size={16} />} placeholder="搜索创作记录" aria-label="搜索创作记录" allowClear value={logSearch} onChange={(event) => { setLogSearch(event.target.value); setLogPage(1); }} /> : null}
+                <LogPanel showTitle={false}
                     logs={logs}
                     selectedLogIds={selectedLogIds}
                     activeLogId={previewLog?.id}
                     onSelectedLogIdsChange={setSelectedLogIds}
                     onCreateSession={createSession}
                     onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                    onPreviewLog={(log) => void previewGenerationLog(log)}
+                    onPreviewLog={setHistoryPreview}
                 />
                 {logTotal > 10 ? <div className="mt-4 flex items-center justify-center gap-4">
                     <Button disabled={logPage === 1} onClick={() => setLogPage(logPage-1)}>上一页</Button>
                     <span>{logPage} / {Math.ceil(logTotal/10)}</span>
                     <Button disabled={logPage*10 >= logTotal} onClick={() => setLogPage(logPage+1)}>下一页</Button>
                 </div> : null}
+                </>}
             </Drawer>
             <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
@@ -722,6 +760,7 @@ function updateResultAt(results: GenerationResult[], index: number, next: Partia
 }
 
 function LogPanel({
+    showTitle = true,
     logs,
     selectedLogIds,
     activeLogId,
@@ -730,6 +769,7 @@ function LogPanel({
     onDeleteSelected,
     onPreviewLog,
 }: {
+    showTitle?: boolean;
     logs: GenerationLog[];
     selectedLogIds: string[];
     activeLogId?: string;
@@ -744,13 +784,13 @@ function LogPanel({
 
     return (
         <>
-            <div className="mb-3 flex items-center justify-between gap-3">
+            {showTitle ? <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                     <h2 className="text-base font-semibold">{t("workbench.logs")}</h2>
                 </div>
                 <Tag className="m-0">{logs.length}</Tag>
-            </div>
-            <div className="mb-4 flex flex-wrap gap-2">
+            </div> : null}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
                     {t("workbench.new")}
                 </Button>
@@ -761,7 +801,7 @@ function LogPanel({
                     {t("common.delete")}
                 </Button>
             </div>
-            <div className="space-y-3">
+            <div className="grid gap-2">
                 {logs.map((log) => (
                     <LogCard
                         key={log.id}
@@ -794,6 +834,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                     <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                     <div className="min-w-0">
                         <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">{modelOptionName(log.model)} · {log.config.size}</div>
                         {thumbnails.length ? (
                             <div className="mt-2 flex gap-1 overflow-hidden">
                                 {thumbnails.map((image) => (
@@ -821,7 +862,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                         </Tag>
                     </div>
                     <div className="flex justify-end">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{new Date(log.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</Tag>
                     </div>
                 </div>
             </div>
@@ -864,6 +905,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         size: log.size || config.size || "",
         quality: log.quality || config.quality || "",
         status: log.status || "success",
+        error: log.error,
         images,
     };
 }

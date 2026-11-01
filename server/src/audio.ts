@@ -14,7 +14,7 @@ export const audioDispatcher = new Agent({ headersTimeout: AUDIO_REQUEST_TIMEOUT
 const speaker = z.object({ name: z.string(), voice: z.string() }).strict();
 export const audioInputSchema = z.union([
     z.object({ mode: z.enum(["single", "duo"]), text: z.string(), voice: z.string(), speakers: z.array(speaker).length(2) }).strict(),
-    z.object({ mode: z.enum(["song", "instrumental"]), description: z.string(), lyrics: z.string() }).strict(),
+    z.object({ mode: z.enum(["song", "instrumental"]), description: z.string() }).strict(),
 ]);
 export const audioSubmissionSchema = z.object({ model: z.string(), audio_type: z.enum(audioModelTypes), audio_input: audioInputSchema, submission_id: z.uuid().optional(), title: z.string().trim().optional() }).strict();
 export function audioSnapshot(model: string, type: AudioModelType, input: AudioInput) {

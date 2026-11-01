@@ -33,7 +33,6 @@ export function taskSettings(request: Record<string, any>) {
         items.push({ key: "audio_mode", label: "创作模式", children: ({ single: "单人配音", duo: "双人配音", song: "歌曲", instrumental: "纯音乐" } as Record<string, string>)[audio.mode] || audio.mode });
         if (audio.mode === "single") items.push({ key: "voice", label: "音色", children: audio.voice });
         if (audio.mode === "duo") for (const [index, speaker] of audio.speakers.entries()) items.push({ key: `speaker_${index}`, label: speaker.name, children: speaker.voice });
-        if (audio.lyrics) items.push({ key: "lyrics", label: "歌词", children: audio.lyrics });
     }
     return items;
 }

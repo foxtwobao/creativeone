@@ -11,6 +11,7 @@ import { flushCanvasPersistence, hasPendingCanvasPersistence, useCanvasStore } f
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 import { useOneNavigation } from "@/hooks/use-one-navigation";
 import { useModelAuthorizationRecovery } from "@/hooks/use-model-authorization-recovery";
+import { ThemeModeSwitch } from "./theme-mode-switch";
 
 const AnnouncementCenter = lazyWithReload(() => import("./announcements/announcement-center"));
 
@@ -88,6 +89,7 @@ export function CloudAccountBar() {
                 {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
                 {cloudSession?.user.admin ? <Link to="/admin/agent">创作助手配置</Link> : null}
                 {cloudSession?.user.admin ? <Link to="/admin/tasks">用户任务</Link> : null}
+                <ThemeModeSwitch />
                 <button disabled={saving > 0 || retrying} onClick={() => void logout()}>退出</button>
             </div>
         </div>

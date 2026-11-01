@@ -154,8 +154,8 @@ test("video and configured speech/music modes use the existing canonical media a
     for (const spec of [
         {kind:"video",model:"video-model",prompt:"小猫回家",parameters:{videoSize:"16:9",vquality:"720",seconds:"6",videoMode:"frames"}},
         {kind:"audio",model:"audio-model",prompt:"你好",parameters:{audioInput:{mode:"single",text:"你好",voice:"Kore",speakers:[{name:"角色一",voice:"Puck"},{name:"角色二",voice:"Kore"}]}}},
-        {kind:"audio",model:"lyria-model",prompt:"安静钢琴",parameters:{audioInput:{mode:"instrumental",description:"安静钢琴",lyrics:""}}},
-        {kind:"audio",model:"suno-model",prompt:"温暖的歌曲",parameters:{audioInput:{mode:"song",description:"温暖的歌曲",lyrics:"小猫回家"}}},
+        {kind:"audio",model:"lyria-model",prompt:"安静钢琴",parameters:{audioInput:{mode:"instrumental",description:"安静钢琴"}}},
+        {kind:"audio",model:"suno-model",prompt:"温暖的歌曲\n\n小猫回家",parameters:{audioInput:{mode:"song",description:"温暖的歌曲\n\n小猫回家"}}},
     ]) {
         const ctx=await setup();
         const target:any=await transaction(async client => {const run=await lockRun(client,ctx.id,ctx.user),call={toolName:"prepare_media_nodes",toolCallId:randomUUID(),input:{nodes:[{title:"媒体",...spec,sourceNodeIds:[],referenceNodeIds:[]}]}};const result:any=await executeTool(client,run,call);await saveReceipt(client,run,call,result);return result.nodes.find((node:any) => node.type === spec.kind);});
@@ -464,9 +464,9 @@ test("speech and music reuse effective requests and edit drafts across all confi
     const cases=[
         {model:"audio-model",input:{mode:"single",text:"原文占位",voice:"Kore",speakers},equivalent:{mode:"single",text:"正文以节点提示词为准",voice:"Kore",speakers:[{name:"丙",voice:"Charon"},{name:"丁",voice:"Puck"}]}},
         {model:"audio-model",input:{mode:"duo",text:"原文占位",voice:"Kore",speakers},equivalent:{mode:"duo",text:"另一占位",voice:"Puck",speakers:[{name:" 甲 ",voice:"Puck"},{name:"乙",voice:"Kore"}]}},
-        {model:"lyria-model",input:{mode:"song",description:"原文占位",lyrics:"小猫回家"},equivalent:{mode:"song",description:"另一占位",lyrics:" 小猫回家 "}},
-        {model:"lyria-model",input:{mode:"instrumental",description:"原文占位",lyrics:""},equivalent:{mode:"instrumental",description:"另一占位",lyrics:"纯音乐不发送歌词"}},
-        {model:"suno-model",input:{mode:"instrumental",description:"原文占位",lyrics:""},equivalent:{mode:"instrumental",description:"另一占位",lyrics:"纯音乐不发送歌词"}},
+        {model:"lyria-model",input:{mode:"song",description:"原文占位"},equivalent:{mode:"song",description:"另一占位"}},
+        {model:"lyria-model",input:{mode:"instrumental",description:"原文占位"},equivalent:{mode:"instrumental",description:"另一占位"}},
+        {model:"suno-model",input:{mode:"instrumental",description:"原文占位"},equivalent:{mode:"instrumental",description:"另一占位"}},
     ];
     for(const entry of cases) {
         const ctx=await setup(),base={kind:"audio",model:entry.model,prompt:"温柔地讲述小猫回家的故事",sourceNodeIds:[ctx.source],referenceNodeIds:[]};

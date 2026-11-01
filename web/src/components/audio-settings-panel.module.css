@@ -1,0 +1,5 @@
+.modeOptions { display: inline-flex; align-items: center; gap: 4px; }
+.modeOption { display: inline-flex; height: 32px; min-width: 96px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--studio-muted); font-size: 12px; line-height: 1; white-space: nowrap; }
+.modeOption:hover { background: var(--studio-hover); }
+.modeOption[aria-pressed="true"] { border-color: var(--studio-line); background: var(--studio-hover); color: var(--studio-text); font-weight: 500; }
+.modeNote { color: var(--studio-muted); font-size: 10px; font-weight: 400; }

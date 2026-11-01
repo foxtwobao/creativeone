@@ -70,16 +70,16 @@ after(async () => { globalThis.fetch = realFetch; server?.close(); await db.end(
 
 test("documented models preserve request fields and save their actual audio formats", async () => {
     const speech = { ...structuredClone(defaultSpeechInput), text: "请用温柔自然的语气朗读：你好，世界。", voice: "Leda" };
-    const music = { ...defaultMusicInput, description: "钢琴与弦乐", lyrics: "[Verse]\n晚风" };
+    const music = { ...defaultMusicInput, description: "钢琴与弦乐\n\n[Verse]\n晚风" };
     const cases = [
         { model: "gemini-3.8-flash-tts", type: "gemini-tts", input: speech, content: speech.text, fields: { output_format: "url", audio: { voice: "Leda", format: "wav" } } },
         { model: "gemini-3.8-flash-tts", type: "gemini-tts", input: { ...speech, mode: "duo", text: "Joe：你好。\nJane: 欢迎。", speakers: [{ name: "Joe", voice: "Puck" }, { name: "Jane", voice: "Kore" }] }, content: "Joe：你好。\nJane: 欢迎。", fields: { output_format: "url", audio: { format: "wav" }, speakers: [{ name: "Joe", voice: "Puck" }, { name: "Jane", voice: "Kore" }] } },
         ...["lyria-3.5", "lyria-3-pro-preview"].flatMap((model) => [
-            { model, type: "lyria", input: music, content: "钢琴与弦乐\n\n歌词：\n[Verse]\n晚风", fields: { output_format: "url" } },
-            { model, type: "lyria", input: { ...music, mode: "instrumental" }, content: "钢琴与弦乐\n\n纯音乐，不要人声。", fields: { output_format: "url" } },
+            { model, type: "lyria", input: music, content: music.description, fields: { output_format: "url" } },
+            { model, type: "lyria", input: { ...music, mode: "instrumental" }, content: `${music.description}\n\n纯音乐，不要人声。`, fields: { output_format: "url" } },
         ]),
-        { model: "suno-v6-mini", type: "suno", input: music, content: "钢琴与弦乐\n\n歌词：\n[Verse]\n晚风", fields: {} },
-        { model: "suno-v6-mini", type: "suno", input: { ...music, mode: "instrumental" }, content: "钢琴与弦乐\n\n纯音乐，不要人声。", fields: { instrumental: true } },
+        { model: "suno-v6-mini", type: "suno", input: music, content: music.description, fields: {} },
+        { model: "suno-v6-mini", type: "suno", input: { ...music, mode: "instrumental" }, content: `${music.description}\n\n纯音乐，不要人声。`, fields: { instrumental: true } },
     ];
     for (const entry of cases) {
         const format = entry.type === "gemini-tts" ? "wav" : entry.type === "lyria" ? "mp3" : "m4a";
