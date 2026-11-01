@@ -1,0 +1,20 @@
+.page .inputRow { display: flex; align-items: flex-start; gap: 12px; padding: 4px 8px; }
+.editor { flex: 1; min-width: 0; }
+.page .inputRow textarea { padding: 7px 0; font-size: 15px; line-height: 1.8; }
+.send { position: sticky; top: 8px; align-self: flex-start; margin-top: 4px; }
+.modelRow { display: flex; min-width: 0; align-items: center; padding: 8px 8px 4px; }
+.compactSettings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 18px; }
+.nameField { display: flex; flex: 1; min-height: 32px; align-items: center; gap: 6px; min-width: 140px; max-width: 240px; }
+.nameField > span { flex-shrink: 0; color: var(--studio-muted); font-size: 11px; }
+.nameField > :global(.ant-input) { min-width: 0; }
+.settings { margin-top: 14px; padding: 12px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); }
+.settings .nameField { margin-top: 12px; }
+.sectionTitle { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+.caption { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px 0; color: var(--studio-muted); font-size: 10px; }
+.caption > span { flex-shrink: 0; }
+.price { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.price > span:last-child { text-align: left; font-size: 10px; line-height: 1.6; }
+.billing { margin-top: 12px; padding-inline: 14px; font-size: 11px; color: var(--studio-muted); }
+.billing summary { width: fit-content; cursor: pointer; }
+.billing[open] summary { margin-bottom: 8px; }
+@media (max-width: 700px) { .caption > span { display: none; } }

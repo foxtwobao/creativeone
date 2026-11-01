@@ -1,0 +1,61 @@
+.workbench {
+    display: grid;
+    grid-template-columns: minmax(340px, 460px) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px 28px;
+    max-width: 1680px;
+    margin: 0 auto;
+    padding: 18px 28px;
+}
+.workbench :global(.studio-page-tools),
+.workbench :global(.studio-local-note) { grid-column: 1 / -1; }
+.workbench :global(.studio-compose-area) { width: 100%; min-width: 0; margin: 0; }
+.workbench :global(.studio-compose-area h1) { margin: 0; text-align: left; font-size: 22px; letter-spacing: -.5px; }
+.workbench :global(.studio-compose-tools) { justify-content: flex-start; margin-bottom: 14px; flex-wrap: wrap; }
+.workbench :global(.studio-composer) { border-radius: 16px; box-shadow: none; }
+.workbench :global(.studio-input-row) { align-items: flex-start; }
+.workbench :global(.studio-results) { width: 100%; margin: 0; }
+.workbench :global(.studio-local-note) { margin-top: 0; }
+.output { min-width: 0; padding: 4px 0 0 32px; border-left: 1px solid var(--studio-line); }
+.empty { display: grid; min-height: 320px; place-items: center; padding: 24px; border: 1px dashed var(--studio-line); border-radius: 16px; background: var(--studio-panel); text-align: center; }
+.submit { position: sticky; bottom: 0; z-index: 1; margin-top: 10px; padding-block: 10px; border-top: 1px solid var(--studio-line); background: var(--studio-bg); }
+.formSection { margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid var(--studio-line); }
+.sectionTitle { margin: 0 0 10px; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.modelRow { padding: 10px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 12px; }
+.modelRow .sectionTitle { margin: 0; }
+.parameters { display: flex; flex-direction: column; gap: 8px; }
+.parameters .sectionTitle { margin-bottom: 0; }
+.parameterGroup { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; padding: 10px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); }
+.parameterGroup > div:first-child { margin-bottom: 0; line-height: 1.5; }
+.duration { padding: 10px 12px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); }
+.duration :global(.ant-slider) { margin-block: 8px; }
+.notice { padding: 10px 12px; border-radius: 14px; background: var(--studio-hover); color: var(--studio-muted); }
+.history { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--studio-line); }
+@media (max-width: 1200px) {
+    .workbench { grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); gap: 20px; padding: 20px; }
+}
+@media (max-width: 960px) {
+    .workbench { grid-template-columns: minmax(0, 1fr); padding: 18px; }
+    .output { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--studio-line); }
+    .parameterGroup { grid-template-columns: 56px minmax(0, 1fr); gap: 8px; }
+    .empty { min-height: 240px; }
+}
+
+.switchRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); font-size: 12px; }
+.parameterGroup[aria-label="画面比例"] > div:last-child { flex-wrap: nowrap; gap: 3px; }
+.parameterGroup[aria-label="画面比例"] button { flex: 1; min-width: 0; padding-inline: 2px; white-space: nowrap; font-size: 11px; }
+
+.materials { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--studio-line); border-radius: 12px; background: var(--studio-panel); }
+.materials :global(.studio-references) { padding: 10px 0 0; }
+.parameterGroup[aria-label="宽高比"] > div:last-child { flex-wrap: nowrap; min-width: 0; overflow-x: auto; gap: 3px; }
+.parameterGroup[aria-label="宽高比"] button { flex: 1; min-width: 36px; padding-inline: 2px; white-space: nowrap; font-size: 11px; }
+.quickParameters { margin-top: 14px; padding: 12px 4px; border-block: 1px solid var(--studio-line); }
+.quickFields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.quickFields > label { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.quickFields > label > span:first-child { flex-shrink: 0; color: var(--studio-muted); font-size: 11px; }
+.quickFields :global(.ant-select) { min-width: 76px; max-width: 160px; }
+.quickFields :global(.ant-input-number) { width: 90px; }
+@media (max-width: 700px) {
+    .quickFields { gap: 6px 12px; }
+    .quickFields :global(.ant-select) { max-width: 142px; }
+}

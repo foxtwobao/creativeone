@@ -15,17 +15,17 @@ test("speech sends only supported Chat fields and duo roles", () => {
     assert.deepEqual(duo.speakers, input.speakers);
     assert.ok(audioInputError("gemini-tts", { ...input, mode: "duo", speakers: [{ name: "相同", voice: "Kore" }, { name: " 相同 ", voice: "Puck" }] }));
 });
-test("music branches omit incompatible parameters and retain original lyrics", () => {
-    const input = { ...defaultMusicInput, description: "钢琴", lyrics: "春天" };
+test("music sends the complete description and lyrics as one text", () => {
+    const input = { ...defaultMusicInput, description: "钢琴\n\n[Verse]\n春天" };
     const lyria = audioRequestBody("music", "lyria", input);
-    assert.equal(lyria.messages[0].content, "钢琴\n\n歌词：\n春天");
+    assert.equal(lyria.messages[0].content, input.description);
     assert.equal(lyria.output_format, "url");
     const suno = audioRequestBody("music", "suno", { ...input, mode: "instrumental" });
     assert.equal(suno.instrumental, true);
     assert.equal(suno.output_format, undefined);
-    assert.equal(suno.messages[0].content, "钢琴\n\n纯音乐，不要人声。");
+    assert.equal(suno.messages[0].content, `${input.description}\n\n纯音乐，不要人声。`);
     assert.equal(audioRequestBody("music", "suno", input).instrumental, undefined);
-    assert.equal(input.lyrics, "春天");
+    assert.equal(audioRequestBody("music", "suno", input).messages[0].content, input.description);
 });
 test("HTML parsing decodes attributes and preserves full signed URLs", () => {
     assert.deepEqual(audioSources(chat('<audio controls src="https://media.test/a.wav?a=1&amp;b=2"></audio><audio><source src="https://media.test/a.wav?a=1&amp;b=2"></audio>'), "gemini-tts"), ["https://media.test/a.wav?a=1&b=2"]);

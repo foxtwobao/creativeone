@@ -24,7 +24,7 @@ type ImageSettingsPanelProps = {
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", referenceImageCount = 0, maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const { t } = useTranslation();
     const settings = imageSettingsForModel(config, config.model || config.imageModel, referenceImageCount);
-    const { profile, qualities, ratios, scales, quality, size: activeSize, scale: selectedScale, ratio: selectedRatio, error, ratioLocked } = settings;
+    const { profile, qualities, ratios, scales, quality, size: activeSize, resolution, resolutionLocked, scale: selectedScale, ratio: selectedRatio, error, ratioLocked } = settings;
     if (!profile) return <div className="text-sm" style={{ color: theme.node.muted }}>{error}</div>;
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const transparentBackground = config.background === "transparent";
@@ -52,9 +52,6 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.image.title")}</div> : null}
                 {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
                 {profile.pixelSize && activeSize === "auto" ? <p className="text-xs" style={{ color: theme.node.muted }}>尺寸由模型决定；选择具体比例后使用 1K，可继续调整分辨率。</p> : null}
-                {profile.family === "banana" ? <div className="text-xs" style={{ color: theme.node.muted }}>
-                    分辨率由模型决定{profile.fixedResolution ? `（${profile.fixedResolution.toUpperCase()}）` : ""}，更改分辨率请选择对应模型。
-                </div> : null}
                 {qualities.length > 0 ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.quality")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -76,11 +73,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div> : null}
-                {scales.length > 1 ? <div className="space-y-2.5">
+                {scales.length ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.resolution")}</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {scales.map(({ value, label }) => (
-                            <OptionPill key={value} selected={selectedScale === value} theme={theme} onClick={() => selectScale(value)}>
+                            <OptionPill key={value} selected={resolution === value} disabled={resolutionLocked} theme={theme} onClick={() => selectScale(value)}>
                                 {label}
                             </OptionPill>
                         ))}
@@ -161,11 +158,12 @@ export function imageSizeLabel(size: string) {
     return `${scale} · ${ratio}`;
 }
 
-function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
         <button
             type="button"
-            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
+            disabled={disabled}
+            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}

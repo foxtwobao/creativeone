@@ -3,10 +3,10 @@ export type AudioModelType = (typeof audioModelTypes)[number];
 export const audioModelTypeLabels: Record<AudioModelType, string> = { "gemini-tts": "Gemini TTS", lyria: "Lyria", suno: "Suno" };
 export const audioVoices = ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix"];
 export type SpeechInput = { mode: "single" | "duo"; text: string; voice: string; speakers: { name: string; voice: string }[] };
-export type MusicInput = { mode: "song" | "instrumental"; description: string; lyrics: string };
+export type MusicInput = { mode: "song" | "instrumental"; description: string };
 export type AudioInput = SpeechInput | MusicInput;
 export const defaultSpeechInput: SpeechInput = { mode: "single", text: "", voice: "Kore", speakers: [{ name: "角色一", voice: "Puck" }, { name: "角色二", voice: "Kore" }] };
-export const defaultMusicInput: MusicInput = { mode: "song", description: "", lyrics: "" };
+export const defaultMusicInput: MusicInput = { mode: "song", description: "" };
 export function defaultAudioInput(type?: AudioModelType): AudioInput {
     return structuredClone(type === "gemini-tts" ? defaultSpeechInput : defaultMusicInput);
 }
@@ -32,7 +32,7 @@ export function audioRequestBody(model: string, type: AudioModelType, input: Aud
     const error = audioInputError(type, input, textContext);
     if (error) throw new Error(error);
     const content = "text" in input ? [input.text.trim(), textContext].filter(Boolean).join("\n\n")
-        : [input.description.trim(), textContext, input.mode === "instrumental" ? "纯音乐，不要人声。" : "", input.mode === "song" && input.lyrics.trim() ? `歌词：\n${input.lyrics.trim()}` : ""].filter(Boolean).join("\n\n");
+        : [input.description.trim(), textContext, input.mode === "instrumental" ? "纯音乐，不要人声。" : ""].filter(Boolean).join("\n\n");
     return { model, messages: [{ role: "user", content }], stream: false,
         ...(type !== "suno" ? { output_format: "url" } : input.mode === "instrumental" ? { instrumental: true } : {}),
         ...(type === "gemini-tts" && "text" in input ? { audio: { format: "wav", ...(input.mode === "single" ? { voice: input.voice } : {}) }, ...(input.mode === "duo" ? { speakers: input.speakers.map(({ name, voice }) => ({ name: name.trim(), voice })) } : {}) } : {}),

@@ -27,9 +27,11 @@ export function imageSettingsForModel(config: AiConfig, model: string, reference
         ratio: !profile.pixelSize && !ratioLocked ? ratio : undefined,
         resolution: profile.resolutions.length > 1 ? scale : undefined,
     });
-    return { profile, size, scale, ratio, quality: config.quality, error, ratioLocked,
+    const resolutionLocked = Boolean(profile && (profile.fixedResolution || profile.resolutions.length <= 1));
+    const resolution = resolutionLocked ? profile?.fixedResolution || profile?.resolutions[0] || "auto" : scale;
+    return { profile, size, scale, resolution, resolutionLocked, ratio, quality: config.quality, error, ratioLocked,
         qualities: imageQualityOptions.filter((item) => profile?.qualities.includes(item.value)),
-        scales: imageScaleOptions.filter((item) => profile?.resolutions.includes(item.value)),
+        scales: profile?.fixedResolution ? [{ value: profile.fixedResolution, label: profile.fixedResolution.toUpperCase() }] : imageScaleOptions.filter((item) => profile?.resolutions.includes(item.value)),
         ratios: (profile?.ratios || []).map((value) => ({ value, label: value === "auto" ? i18n.t("settingsPanels.common.auto") : value, ...(parseAspectRatio(value) || { width: 0, height: 0 }) })),
     };
 }

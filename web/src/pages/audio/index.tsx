@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { Alert, App, Button, Input } from "antd";
-import { FolderOpen, ListTodo, Mic2, Music2, PenLine } from "lucide-react";
+import { Alert, App, Button, Input, Modal } from "antd";
+import { BookOpen, Check, CircleAlert, Headphones, History, LoaderCircle, Mic2, Music2, PenLine, RefreshCw, RotateCcw, Send } from "lucide-react";
 import { useAudioPlayback } from "@/hooks/use-audio-playback";
 import { useAudioTask } from "@/hooks/use-audio-task";
-import { AudioSettingsPanel } from "@/components/audio-settings-panel";
+import { AudioExampleButton, AudioPromptEditor, AudioSettingsPanel } from "@/components/audio-settings-panel";
 import { AudioButtonPrice, AudioPriceHint, useAudioPrice } from "@/components/audio-price-hint";
 import { ModelPicker } from "@/components/model-picker";
 import { useConfigStore, modelAudioTypeOf, selectableModelsByCapability } from "@/stores/use-config-store";
@@ -14,8 +14,11 @@ import { fetchTask } from "@/services/api/tasks";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { WorkCanvasModal } from "@/pages/assets/work-canvas-modal";
 import { AudioWorkCard } from "./audio-work-card";
-import { defaultSpeechInput, defaultMusicInput, type SpeechInput, type MusicInput, type AudioModelType } from "../../../../shared/audio";
+import { AudioHistoryDrawer } from "./audio-history-drawer";
+import { defaultSpeechInput, defaultMusicInput, type AudioInput, type SpeechInput, type MusicInput, type AudioModelType } from "../../../../shared/audio";
 import { mergeWorks, taskLabels, type Work } from "../../../../shared/works";
+import styles from "./audio-workbench.module.css";
+import workbenchStyles from "@/layouts/creation-workbench.module.css";
 
 export default function AudioPage() {
     const { message } = App.useApp();
@@ -36,6 +39,8 @@ export default function AudioPage() {
     const [busy, setBusy] = useState(false);
     const [pending, setPending] = useState<AudioSubmission | null>(null);
     const [error, setError] = useState("");
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [guideOpen, setGuideOpen] = useState(false);
     const submissionLocked = useRef(false);
     const onPlay = useAudioPlayback();
     const type = modelAudioTypeOf(config, model);
@@ -87,45 +92,67 @@ export default function AudioPage() {
         setSpeech(undefined); setMusic(structuredClone(defaultMusicInput)); setTitle(""); setError(""); setReusedType(undefined); setCurrentTaskId(undefined);
         setSearchParams({}, { replace: true });
     };
-    return <div className="studio-workbench">
-        <main className="mx-auto max-w-5xl px-4 py-5 sm:px-7 sm:py-6">
-            <header className="flex flex-wrap items-center justify-between gap-3 pl-11 min-[701px]:pl-0">
-                <h1 className="!mb-0 text-xl font-semibold">声音创作</h1>
-                <div className="flex flex-wrap gap-2"><Link className="studio-chip" to="/assets?kind=audio"><FolderOpen size={14} />我的作品</Link><Link className="studio-chip" to="/assets?view=tasks&kind=audio"><ListTodo size={14} />生成任务</Link><button className="studio-chip" disabled={busy || Boolean(pending)} onClick={createSession}><PenLine size={14} />新建创作</button></div>
-            </header>
-            <section aria-label="音频创作" className="mt-4 rounded-2xl border border-border bg-card p-4 sm:p-5">
-                <div inert={Boolean(pending) || submitted}>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="flex min-w-0 flex-col gap-1.5"><h2 className="!mb-0 flex items-center gap-2 text-sm font-medium">{formType === "gemini-tts" ? <Mic2 size={15} /> : <Music2 size={15} />}创作模型</h2>
-                            <ModelPicker config={config} value={model} capability="audio" fullWidth className="!h-8 !rounded-lg border border-border bg-card !px-3" onChange={(value) => { setModel(value); setReusedType(undefined); updateConfig("audioModel", value); }} />
-                            {!choices.length ? <div className="text-xs text-muted-foreground">尚未配置可用音频模型。{cloudSession?.user.admin ? <Link to="/admin/channels">前往模型配置</Link> : "请联系管理员配置。"}</div> : model && !validSelection ? <p className="!mb-0 text-xs text-muted-foreground">原模型已停用、不可用或调用类型已调整，请重新选择后生成。</p> : null}
+    const changeInput = (next: AudioInput) => {
+        if ("text" in next) { setSpeech(next); if (next.voice !== speech.voice) updateConfig("audioVoice", next.voice); } else setMusic(next);
+    };
+    return <div className="studio-workbench" onPlayCapture={onPlay}>
+        <main className={`studio-stage ${styles.page} ${submitted ? workbenchStyles.workbench : ""}`}>
+            <div className="studio-page-tools"><span>声音创作工作台</span><button className="studio-chip" disabled={busy || Boolean(pending)} onClick={createSession}><PenLine size={14} />新建创作</button></div>
+            <section aria-label="音频创作" className="studio-compose-area">
+                <h1>{submitted ? "声音创作" : <><span>让灵感发声，</span>故事有了回响</>}</h1>
+                <div className="studio-compose-tools">
+                    <button className="studio-chip" onClick={() => setHistoryOpen(true)}><History size={14} />历史记录</button>
+                    <button className="studio-chip" onClick={() => setGuideOpen(true)}><BookOpen size={14} />写作参考</button>
+                </div>
+                {error ? <Alert className="mb-3" type="warning" showIcon title={error} /> : null}
+                <div className="studio-composer">
+                    <div className={`studio-input-row ${styles.inputRow}`}>
+                        <div className={styles.editor} inert={Boolean(pending) || submitted}>
+                            {formType ? <AudioPromptEditor input={input} onChange={changeInput} compact /> : <p className="text-sm text-muted-foreground">请选择音频模型，开始声音创作。</p>}
                         </div>
-                        <label className="flex min-w-0 flex-col gap-1.5 text-sm"><span>作品名称 <span className="text-muted-foreground">（可选）</span></span><Input aria-label="作品名称" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="为这次创作取个名字" /></label>
+                        <button type="button" className={`studio-send ${styles.send}`} aria-label={actionLabel} title={actionLabel} aria-busy={busy || generating} disabled={busy || submitted || (!pending && (!validSelection || !available))} onClick={() => void generate()}>
+                            {busy || generating ? <LoaderCircle className="animate-spin" size={18} /> : pending ? <RotateCcw size={18} /> : submitted ? currentTask?.status === "succeeded" ? <Check size={18} /> : <CircleAlert size={18} /> : <Send size={18} />}
+                        </button>
+                    </div>
+                    <div className={styles.modelRow} inert={Boolean(pending) || submitted}>
+                        <ModelPicker config={config} value={model} capability="audio" className="max-w-[min(70vw,320px)]" onChange={(value) => { setModel(value); setReusedType(undefined); updateConfig("audioModel", value); }} />
                     </div>
                 </div>
-                <div aria-label="生成操作" className="sticky top-0 z-10 -mx-4 my-4 flex flex-col gap-2 border-y border-border bg-card px-4 py-3 sm:-mx-5 sm:px-5">
-                    {error ? <Alert type="warning" showIcon title={error} /> : null}
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="min-w-0 flex-1 basis-56"><AudioPriceHint model={model} type={formType} showPrice={false} /></div>
-                        <Button type="primary" className="!ml-auto !h-auto !min-h-10 !min-w-48 !max-w-full !px-4 !py-2 sm:!max-w-sm" loading={busy || generating} disabled={busy || submitted || (!pending && (!validSelection || !available))} onClick={() => void generate()}>
-                            <span className="flex w-full min-w-0 items-center justify-between gap-6"><span className="shrink-0">{actionLabel}</span><AudioButtonPrice model={model} /></span>
-                        </Button>
+                <div className={submitted ? styles.settings : workbenchStyles.quickParameters} inert={Boolean(pending) || submitted}>
+                    {!choices.length ? <p className="!mb-3 text-xs text-muted-foreground">尚未配置可用音频模型。{cloudSession?.user.admin ? <Link to="/admin/channels">前往模型配置</Link> : "请联系管理员配置。"}</p> : model && !validSelection ? <p className="!mb-3 text-xs text-muted-foreground">原模型已停用、不可用或调用类型已调整，请重新选择后生成。</p> : null}
+                    {submitted && formType ? <h2 className={styles.sectionTitle}>{formType === "gemini-tts" ? <Mic2 size={14} /> : <Music2 size={14} />}{formType === "gemini-tts" ? "配音参数" : "音乐参数"}</h2> : null}
+                    <div className={!submitted ? styles.compactSettings : undefined}>
+                        {formType ? <AudioSettingsPanel type={formType} input={input} showBody={false} compact={!submitted} onChange={changeInput} /> : null}
+                        <label className={styles.nameField}><span>名称</span><Input size="small" variant="borderless" aria-label="作品名称" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="作品名称（可选）" /></label>
                     </div>
-                    {submitted ? <p role="status" className="!mb-0 text-xs text-muted-foreground">本次任务已提交，继续创作请点「新建创作」。</p> : null}
                 </div>
-                <div inert={Boolean(pending) || submitted}>
-                    {formType ? <AudioSettingsPanel type={formType} input={input} onChange={(next) => {
-                        if ("text" in next) { setSpeech(next); if (next.voice !== speech.voice) updateConfig("audioVoice", next.voice); } else setMusic(next);
-                    }} /> : null}
-                </div>
+                <div className={styles.caption}><div className={styles.price}><span>单价</span><AudioButtonPrice model={model} /></div><span>点击生成 · Enter 换行</span></div>
+                {submitted || (pending && !busy) ? <p role="status" className="!mb-0 mt-2 text-xs text-muted-foreground">{submitted ? `${actionLabel}，继续创作请点「新建创作」。` : "提交结果待确认，请点击发送图标确认原提交。"}</p> : null}
+                <details className={styles.billing}><summary>计费与输出说明</summary><AudioPriceHint model={model} type={formType} showPrice={false} /></details>
             </section>
-            {currentTaskId ? <section aria-label="本次生成结果" className="mt-6" onPlayCapture={onPlay}>
-                <header className="mb-3 flex items-center justify-between"><h2 className="!mb-0 text-sm font-semibold">生成结果</h2><Button type="text" size="small" loading={loading} onClick={() => void load().catch((error) => message.error(error.message))}>刷新</Button></header>
+            {currentTaskId ? <section aria-label="本次生成结果" className={workbenchStyles.output}>
+                <header className="mb-3 flex items-center justify-between"><h2 className={styles.sectionTitle}><Headphones size={16} />本次生成</h2><Button type="text" size="small" icon={<RefreshCw size={13} />} loading={loading} onClick={() => void load().catch((error) => message.error(error.message))}>刷新</Button></header>
                 {taskError ? <Alert className="mb-4" type="warning" title={taskError} /> : null}
                 {work ? <AudioWorkCard key={work.id} work={work} onRefresh={load} onCanvas={setCanvasWork} /> : loading ? <p role="status" className="text-sm text-muted-foreground">正在读取生成任务…</p> : null}
             </section> : null}
             <p className="studio-local-note">画布ONE · 创作数据按账号保存到云端</p>
         </main>
+        {historyOpen ? <AudioHistoryDrawer canEdit={!busy && !pending} onClose={() => setHistoryOpen(false)} onEdit={(id) => { setSearchParams({ task: id }); setHistoryOpen(false); }} /> : null}
+        <Modal title={formType === "gemini-tts" ? "配音写作参考" : "音乐写作参考"} open={guideOpen} onCancel={() => setGuideOpen(false)} footer={null}>
+            <div className="space-y-3 text-sm leading-6">
+                {formType === "gemini-tts" ? <>
+                    <p>在同一个输入框中填写完整文案或对话剧本，也可写入语气、情绪和停顿要求。</p>
+                    <p>双人配音时，以已配置的角色名和冒号区分台词，剧本标记须与角色名一致。可先在参数栏修改角色名及音色，再填入示例。</p>
+                    <p className="text-muted-foreground">朗读指令与角色标记的实际处理由模型决定，请试听生成结果。</p>
+                    <AudioExampleButton className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-xs hover:bg-muted disabled:opacity-40" input={speech} disabled={busy || Boolean(pending) || submitted} onChange={(next) => { changeInput(next); setGuideOpen(false); }} />
+                </> : <>
+                    <p>在同一个输入框中描述曲风、乐器、情绪与节奏；歌曲模式可以直接写入歌词，纯音乐模式用于无人声作品。</p>
+                    <p>例如：温暖轻快的民谣，以木吉他和钢琴为主，节奏舒缓，表达出发时的期待。人声自然，副歌逐渐明亮。</p>
+                    <p>需要歌词时，可在描述后另起一行写出段落和歌词，例如：[主歌] 清晨的风吹过窗台…… [副歌] 带着微光向前走……</p>
+                    <p className="text-muted-foreground">完整描述会一起提交，歌词结构与演唱效果以模型实际生成为准。</p>
+                </>}
+            </div>
+        </Modal>
         <WorkCanvasModal work={canvasWork} onClose={() => setCanvasWork(null)} />
     </div>;
 }

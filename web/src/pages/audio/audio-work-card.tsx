@@ -10,7 +10,7 @@ import { taskMedia, assetMedia, taskLabels, type Work } from "../../../../shared
 import { taskSettings } from "../../../../shared/task-settings";
 import { generationPrompt } from "../../../../shared/generation-request";
 
-export function AudioWorkCard({ work, onRefresh, onCanvas }: { work: Work; onRefresh: () => Promise<void>; onCanvas: (work: Work) => void }) {
+export function AudioWorkCard({ work, onRefresh, onCanvas, readOnly = false }: { work: Work; onRefresh: () => Promise<void>; onCanvas?: (work: Work) => void; readOnly?: boolean }) {
     const task = work.task;
     const { message, modal } = App.useApp();
     const navigate = useNavigate();
@@ -52,21 +52,21 @@ export function AudioWorkCard({ work, onRefresh, onCanvas }: { work: Work; onRef
             <AudioPlayer key={file.url} url={file.url} />
             <div className="flex flex-wrap gap-1">
                 <Button size="small" type="text" icon={<Download size={14} />} onClick={() => void download(file.url, `${name}${media.length > 1 ? `-${index + 1}` : ""}.${file.format || (file.mimeType?.includes("wav") ? "wav" : file.mimeType?.includes("mpeg") ? "mp3" : file.mimeType?.includes("mp4") ? "m4a" : file.mimeType?.split("/")[1] || "audio")}`)}>下载</Button>
-                {task ? <Button size="small" type="text" disabled={busy || work.assets.some((asset) => asset.kind === "audio" && asset.data.storageKey === file.storageKey)} icon={<Heart size={14} />} onClick={() => void action(() => favorite(index))}>{work.assets.some((asset) => asset.kind === "audio" && asset.data.storageKey === file.storageKey) ? "已收藏" : "收藏"}</Button> : null}
-                <Button size="small" type="text" onClick={() => onCanvas(task ? { ...work, task: { ...task, result: { audios: [{ file: file as import("../../../../shared/audio").AudioFile }], defaultIndex: 0 } } } : work)}>添加到画布</Button>
+                {!readOnly && task ? <Button size="small" type="text" disabled={busy || work.assets.some((asset) => asset.kind === "audio" && asset.data.storageKey === file.storageKey)} icon={<Heart size={14} />} onClick={() => void action(() => favorite(index))}>{work.assets.some((asset) => asset.kind === "audio" && asset.data.storageKey === file.storageKey) ? "已收藏" : "收藏"}</Button> : null}
+                {!readOnly && onCanvas ? <Button size="small" type="text" onClick={() => onCanvas(task ? { ...work, task: { ...task, result: { audios: [{ file: file as import("../../../../shared/audio").AudioFile }], defaultIndex: 0 } } } : work)}>添加到画布</Button> : null}
             </div>
         </div>)}</div>
         {task?.result?.audios?.map((item, index) => !item.file ? <p key={index} className="mt-2 text-xs text-muted-foreground">版本 {index + 1} 尚未保存：{item.error === "MEDIA_HOST_NOT_ALLOWED" ? "下载域名尚未获准，请联系管理员" : "文件下载或验证失败，可恢复保存；临时链接失效后可能无法恢复"}</p> : null)}
         <div className="mt-3 flex flex-wrap gap-1 border-t border-border/60 pt-3">
-            <Button size="small" type="text" icon={<PencilLine size={14} />} disabled={busy} onClick={() => { setTitle(name); setEditing(true); }}>改名</Button>
-            {task?.request?.audio_input ? <Button size="small" type="text" icon={<RotateCcw size={14} />} onClick={reuse}>再次创作</Button> : null}
-            {task?.status === "unknown" && task.error === "AUDIO_SAVE_INCOMPLETE" ? <Button size="small" type="text" loading={busy} onClick={() => void action(async () => {
+            {!readOnly ? <Button size="small" type="text" icon={<PencilLine size={14} />} disabled={busy} onClick={() => { setTitle(name); setEditing(true); }}>改名</Button> : null}
+            {!readOnly && task?.request?.audio_input ? <Button size="small" type="text" icon={<RotateCcw size={14} />} onClick={reuse}>再次创作</Button> : null}
+            {!readOnly && task?.status === "unknown" && task.error === "AUDIO_SAVE_INCOMPLETE" ? <Button size="small" type="text" loading={busy} onClick={() => void action(async () => {
                 const current = await fetchTask(task.id);
                 if (!current.result_available) throw new Error("当前没有可恢复的完整响应");
                 await resumeTaskResult(task.id); message.info("已开始恢复保存，未重新调用模型");
             })}>恢复保存</Button> : null}
             {task ? <Button size="small" type="text" onClick={() => setDetails(!details)}>任务详情</Button> : null}
-            {!task || ["succeeded", "failed", "cancelled", "expired"].includes(task.status) ? <Button size="small" type="text" disabled={busy} onClick={() => modal.confirm({ title: "移除此作品？", content: "仍被任务、收藏或画布引用的文件会保留。", okText: "移除", cancelText: "取消", onOk: () => action(() => task ? removeTaskFromWorks(task.id) : useAssetStore.getState().removeAsset(work.asset!.id)) })}>移除</Button> : null}
+            {!readOnly && (!task || ["succeeded", "failed", "cancelled", "expired"].includes(task.status)) ? <Button size="small" type="text" disabled={busy} onClick={() => modal.confirm({ title: "移除此作品？", content: "仍被任务、收藏或画布引用的文件会保留。", okText: "移除", cancelText: "取消", onOk: () => action(() => task ? removeTaskFromWorks(task.id) : useAssetStore.getState().removeAsset(work.asset!.id)) })}>移除</Button> : null}
         </div>
         {details && task ? <div className="mt-3 space-y-2 text-xs text-muted-foreground"><p className="whitespace-pre-wrap break-words">{generationPrompt(task.request)}</p><Descriptions size="small" column={1} items={taskSettings({ audio_input: task.request?.audio_input })} /><p>任务 ID：{task.id}</p></div> : null}
         <Modal title="作品名称" open={editing} confirmLoading={busy} onCancel={() => setEditing(false)} okText="保存" cancelText="取消" onOk={() => void action(async () => {
