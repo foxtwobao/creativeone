@@ -1,3 +1,4 @@
+import { attachModelProfiles } from "../model-profiles.js";
 import { readAgentConfig } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -10,7 +11,7 @@ import { modelProvider } from "../tokenone.js";
 import { imageRequestCapabilityError, videoRequestCapabilityError } from "../model-capabilities.js";
 import { canvasRequestBody } from "../../../shared/canvas-request.js";
 import { videoTaskPath } from "../../../shared/video-tasks.js";
-import { imageModelProfile } from "../../../shared/image-models.js";
+import { channelImageConfig, channelImageProfile } from "../../../shared/image-models.js";
 import { channelVideoConfig, channelVideoProfile } from "../../../shared/video-models.js";
 import { searchPrompts } from "../prompts.js";
 import { digest, getNode, setState, type Client, type Run } from "./state.js";
@@ -41,7 +42,7 @@ export async function workbenchManifest(client:Client,run:Run,name:string,input:
     const kind=name === "workbench_image_generate" ? "image" : "video";
     if (!run.model_config.limits.verifiedMediaModels.includes(input.model) || !(await readAgentConfig(client)).verifiedMediaModels.includes(input.model)) throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
     if (input.count>run.model_config.limits.mediaBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
-    const channel=(await client.query("SELECT * FROM channels WHERE enabled AND capability=$1 AND models ? $2 ORDER BY id",[kind,input.model])).rows[0];
+    const channel=(await attachModelProfiles((await client.query("SELECT * FROM channels WHERE enabled AND capability=$1 AND models ? $2 ORDER BY id",[kind,input.model])).rows, client))[0];
     if(!channel)throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
     const family=kind === "image" ? channel.image_types[input.model] : channelVideoProfile(channel, input.model).family;
     if(!family)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
@@ -51,8 +52,8 @@ export async function workbenchManifest(client:Client,run:Run,name:string,input:
     for(const url of input.references){const file=await storedFileInfo(run.user_id,url,client);const target=file.mimeType.startsWith("image/")?references.images:file.mimeType.startsWith("video/")?references.videos:file.mimeType.startsWith("audio/")?references.audios:null;if(!target)throw new HttpError(400,"INVALID_FILE_REFERENCE");target.push(file.url);}
     if(kind === "image" && (references.videos.length || references.audios.length))throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
     if(kind === "video" && family !== "h3" && input.parameters.fastMode!==undefined)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
-    const request=canvasRequestBody(input.model,kind,family,{...input.parameters,prompt:input.prompt},references,"","",kind === "video" ? channelVideoConfig(channel,input.model) : undefined);
-    const error=kind === "image" ? imageRequestCapabilityError(input.model,family,request) : videoRequestCapabilityError(input.model,channelVideoConfig(channel,input.model),request);
+    const request=canvasRequestBody(input.model,kind,family,{...input.parameters,prompt:input.prompt},references,"","",kind === "video" ? channelVideoConfig(channel,input.model) : undefined,kind === "image" ? channelImageConfig(channel,input.model) : undefined);
+    const error=kind === "image" ? imageRequestCapabilityError(input.model,channelImageConfig(channel,input.model),request) : videoRequestCapabilityError(input.model,channelVideoConfig(channel,input.model),request);
     if(error)throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
     await assertReferenceImages(run.user_id,request,client);
     if(kind === "video")await assertVideoDurations(run.user_id,input.model,channelVideoConfig(channel,input.model),references,client);
@@ -87,10 +88,10 @@ export async function executeSiteTool(client:Client,run:Run,call:any,external:{g
         return queueUiAction(client,run,{type:name,path:input.path});
     }
     if(name.endsWith("_get_config")){
-        const kind=name === "workbench_image_get_config" ? "image" : "video",channels=(await client.query("SELECT * FROM channels WHERE enabled AND capability=$1",[kind])).rows;
+        const kind=name === "workbench_image_get_config" ? "image" : "video",channels=await attachModelProfiles((await client.query("SELECT * FROM channels WHERE enabled AND capability=$1",[kind])).rows, client);
         const saved=await readAccountData(run.user_id,"infinite-canvas:ai_config_store",{config:{}} as any,"preferences");
         const parameters=Object.fromEntries(["model","quality","size","count","videoModel","videoSize","videoQuality","videoSeconds","videoGenerateAudio","videoWatermark","videoFastMode"].filter(key=>key in saved.config).map(key=>[key,saved.config[key]]));
-        return {parameters,models:channels.flatMap(channel=>channel.models.map((model:string)=>{const {family,...capabilities}=kind === "image" ? imageModelProfile(model,channel.image_types[model]) : channelVideoProfile(channel, model);return {model,capabilities};}))};
+        return {parameters,models:channels.flatMap(channel=>channel.models.map((model:string)=>{const {family,...capabilities}=kind === "image" ? channelImageProfile(channel,model) : channelVideoProfile(channel, model);return {model,capabilities};}))};
     }
     const manifest=await workbenchManifest(client,run,name,input),ui={type:"workbench",submitted:false,kind:manifest.kind,model:input.model,prompt:input.prompt,parameters:input.parameters,count:input.count,references:input.references};
     if(!input.run)return queueUiAction(client,run,ui);

@@ -1,3 +1,4 @@
+import { attachModelProfiles } from "../model-profiles.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import { canvasRequestBody } from "../../../shared/canvas-request.js";
 import { parsePixelSize, parseAspectRatio } from "../../../shared/media-size.js";
 import { videoTaskPath } from "../../../shared/video-tasks.js";
 import { channelVideoConfig, channelVideoProfile } from "../../../shared/video-models.js";
-import { imageModelProfile } from "../../../shared/image-models.js";
+import { channelImageConfig, channelImageProfile } from "../../../shared/image-models.js";
 import { audioVoices, audioRequestBody } from "../../../shared/audio.js";
 import { readAgentConfig,type AgentConfig } from "./config.js";
 import { agentImageInputNotice } from "../../../shared/agent.js";
@@ -118,7 +119,7 @@ async function rememberSources(client:Client,run:Run,project:any,nodes:any[]) {
     run.sources=sources;
 }
 async function modelChannel(client:Client,kind:string,model:string):Promise<Channel> {
-    const channel = (await client.query("SELECT * FROM channels WHERE capability=$1 AND enabled AND models ? $2",[kind,model])).rows[0];
+    const channel = (await attachModelProfiles((await client.query("SELECT * FROM channels WHERE capability=$1 AND enabled AND models ? $2",[kind,model])).rows, client))[0];
     if (!channel || kind === "image" && !channel.image_types?.[model] || kind === "audio" && !channel.audio_types?.[model]) throw new HttpError(400,"MODEL_NOT_ALLOWED");
     return channel;
 }
@@ -242,11 +243,11 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
         return { nodes:nodes.map((node:any) => ({...publicNode(node,true),groupId:node.metadata?.groupId ? publicNode(getNode(project,node.metadata.groupId)).id : undefined})),images,vision:{supported,requested:Boolean(input.includeImages),provided:images.length},...input.includeImages && !supported ? {notice:agentImageInputNotice} : {} };
     }
     if (name === "get_model_capabilities") {
-        const channels=(await client.query("SELECT * FROM channels WHERE enabled")).rows;
+        const channels=await attachModelProfiles((await client.query("SELECT * FROM channels WHERE enabled")).rows, client);
         return { models:channels.flatMap(channel => channel.models.map((model:string) => {
             let capabilities:unknown,parameters:unknown;
             if (channel.capability === "text") {const target=textGenerationModel(run,model,currentConfig);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
-            if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=imageModelProfile(model,channel.image_types[model]);capabilities=profile;}
+            if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=channelImageProfile(channel,model);capabilities=profile;}
             if (channel.capability === "video") { const {family,...profile}=channelVideoProfile(channel, model); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,...profile.durationConfigurable?{seconds:{...profile.duration,integer:true,valueType:"string"}}:{},videoMode:profile.modes,...profile.fastModeOptions ? {fastMode:profile.fastModeOptions.filter(Boolean)} : {}}; }
             if (channel.capability === "audio" && channel.audio_types[model]) capabilities={modes:channel.audio_types[model] === "gemini-tts" ? ["single","duo"] : ["song","instrumental"],voices:channel.audio_types[model] === "gemini-tts" ? audioVoices : []};
             return {model,capability:channel.capability,description:channel.model_descriptions[model] || "",capabilities,parameters};
@@ -311,15 +312,15 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             if (spec.kind === "video" && family === "veo" && ["seconds","generateAudio","watermark"].some(key=>spec.parameters[key]!==undefined)) throw new ToolParameterError("当前视频模型的时长由模型决定，不提供时长、生成音频或水印参数；请省略这些字段。");
             if (spec.kind === "video" && family !== "h3" && spec.parameters.fastMode !== undefined) throw new ToolParameterError("当前参数预设不提供标准／优先模式。");
             let request:ReturnType<typeof canvasRequestBody>;
-            try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
-            const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,family as any,request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,channelVideoConfig(channel,spec.model),request) : undefined;
+            try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined,spec.kind === "image" ? channelImageConfig(channel,spec.model) : undefined);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
+            const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,channelImageConfig(channel,spec.model),request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,channelVideoConfig(channel,spec.model),request) : undefined;
             if (error) throw new ToolParameterError(error);
             const inputs=[...sources,...referenceNodes];
             const upstreamBody=(body:any) => spec.kind === "audio" ? audioRequestBody(spec.model,family as any,body.audio_input,body.audio_context) : body;
             const expected=upstreamBody(request);
             const matches=(node:any) => {
                 if (node.metadata?.model !== metadata.model || !isDeepStrictEqual(node.metadata?.references || [],metadata.references)) return false;
-                try {return isDeepStrictEqual(upstreamBody(canvasRequestBody(spec.model,spec.kind,family as any,node.metadata,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined)),expected);} catch {return false;}
+                try {return isDeepStrictEqual(upstreamBody(canvasRequestBody(spec.model,spec.kind,family as any,node.metadata,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined,spec.kind === "image" ? channelImageConfig(channel,spec.model) : undefined)),expected);} catch {return false;}
             };
             const existing=spec.nodeId ? pair(getNode(project,spec.nodeId),spec.kind) : spec.newCopy ? undefined : project.nodes.filter((node:any) => node.type === spec.kind).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id) && matches(node)) && sameSources(nodes[0],inputs));
             if (spec.nodeId && !existing) throw new ToolParameterError("未找到唯一的同类型配置与输出配对，请先读取当前画布，不会自动新建副本。","AGENT_NODE_NOT_EDITABLE");

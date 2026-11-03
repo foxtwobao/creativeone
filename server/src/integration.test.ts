@@ -120,7 +120,7 @@ test("anonymous requests and forged callback cannot access the application", asy
 test("admin role and CSRF protect channel configuration", async () => {
     assert.equal((await call("/admin/groups")).status, 403);
     assert.equal((await call("/admin/groups", admin)).status, 200);
-    const body = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, default_model: "gpt-image-2", enabled: true };
+    const body = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, image_presets: { "gpt-image-2": "gpt-image-2" }, default_model: "gpt-image-2", enabled: true };
     const missing = await realFetch(`${base}/api/admin/channels/image`, { method: "PUT", headers: { Host: "localhost:3001", Cookie: `creativeone=${admin}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     assert.equal(missing.status, 403);
     const image = await call("/admin/channels/image", admin, "PUT", body);
@@ -140,8 +140,8 @@ test("feature and model cannot bypass channel capability and model routing", asy
     assert.equal(ensures.length, count);
 });
 test("image types are explicit, persisted and validated independently of model names", async () => {
-    const original = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, default_model: "gpt-image-2", enabled: true };
-    const config = { models: ["banana-looking-alias", "custom-image"], image_types: { "banana-looking-alias": "openai", "custom-image": "banana" }, default_model: "custom-image", enabled: true };
+    const original = { models: ["gpt-image-2"], image_types: { "gpt-image-2": "openai" }, image_presets: { "gpt-image-2": "gpt-image-2" }, default_model: "gpt-image-2", enabled: true };
+    const config = { models: ["banana-looking-alias", "custom-image"], image_types: { "banana-looking-alias": "openai", "custom-image": "banana" }, image_presets: { "banana-looking-alias": "openai-default", "custom-image": "banana-default" }, default_model: "custom-image", enabled: true };
     try {
         assert.equal((await call("/admin/channels/image", admin, "PUT", { ...config, image_types: {} })).status, 400);
         assert.equal((await call("/admin/channels/image", admin, "PUT", { ...config, image_types: { ...config.image_types, ghost: "grok" } })).status, 400);
@@ -155,14 +155,14 @@ test("image types are explicit, persisted and validated independently of model n
             assert.deepEqual(channel.image_types, config.image_types);
             assert.deepEqual(channel.models, ["custom-image", "banana-looking-alias"]);
         }
-        const edited = { ...config, models: ["custom-image"], image_types: { "custom-image": "grok" } };
+        const edited = { ...config, models: ["custom-image"], image_types: { "custom-image": "grok" }, image_presets: { "custom-image": "grok-default" } };
         const response = await (await call("/admin/channels/image", admin, "PUT", edited)).json() as any;
         assert.deepEqual(response.channel.image_types, { "custom-image": "grok" });
         await db.query("UPDATE channels SET image_types='{}' WHERE id=$1", [imageChannel]);
         const before = ensures.length;
         const request = await call(`/ai/${imageChannel}/v1/images/generations`, alice, "POST", { model: "custom-image", prompt: "猫" });
         assert.equal(request.status, 400);
-        assert.equal((await request.json() as any).error, "IMAGE_MODEL_TYPE_REQUIRED");
+        assert.equal((await request.json() as any).error, "INVALID_IMAGE_MODEL_TYPES");
         assert.equal(ensures.length, before);
     } finally { await call("/admin/channels/image", admin, "PUT", original); }
 });
@@ -256,7 +256,7 @@ test("model failures return friendly messages and request IDs, retain specific t
     }
 });
 test("Banana OpenAI requests preserve parameters, image permissions, user Key and URL result storage", async () => {
-    await call("/admin/channels/image", admin, "PUT", { models: ["gpt-image-2", "banana2-2k", "grok-imagine-image"], image_types: { "gpt-image-2": "openai", "banana2-2k": "banana", "grok-imagine-image": "grok" }, default_model: "gpt-image-2", enabled: true });
+    await call("/admin/channels/image", admin, "PUT", { models: ["gpt-image-2", "banana2-2k", "grok-imagine-image"], image_types: { "gpt-image-2": "openai", "banana2-2k": "banana", "grok-imagine-image": "grok" }, image_presets: { "gpt-image-2": "gpt-image-2", "banana2-2k": "banana2-2k", "grok-imagine-image": "grok-imagine-image" }, default_model: "gpt-image-2", enabled: true });
     const before = forwardedKeys.length;
     assert.equal((await call(`/ai/${imageChannel}/v1/chat/completions`, alice, "POST", { model: "banana2-2k" })).status, 403);
     assert.equal((await call(`/ai/${textChannel}/v1/images/generations`, alice, "POST", { model: "banana2-2k" })).status, 403);
@@ -292,7 +292,7 @@ test("Grok edits preserve JSON references and model-specific parameters", async 
 
 test("video model configuration exposes types and rejects mismatched protocols before upstream calls", async () => {
     const config = { models: ["seedance-test", "wan3.0-video", "wan3.0-video-prime"], default_model: "seedance-test", enabled: true,
-        video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone", "wan3.0-video-prime": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3.0-video", "wan3.0-video-prime": "wan3.0-video-prime" } };
+        video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone", "wan3.0-video-prime": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3-standard", "wan3.0-video-prime": "wan3-standard" } };
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: {} })).status, 400);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_types: { ...config.video_types, extra: "wan" } })).status, 400);
     const response = await call("/admin/channels/video", admin, "PUT", config);
@@ -307,7 +307,7 @@ test("video model configuration exposes types and rejects mismatched protocols b
     const media = (items: unknown[]) => ({ input: { media: items } });
     for (const body of [
         { ...wan, seconds: "5" }, { ...wan, duration: 1 }, { ...wan, duration: 31 },
-        { ...wan, duration: -1 }, { ...wan, resolution: "4K" }, { ...wan, ratio: "21:9" },
+        { ...wan, duration: -1 }, { ...wan, resolution: "4K" }, { ...wan, ratio: "2:3" },
         { ...wan, reference_images: [{ url: "https://example.test/image.jpg" }] },
         { ...wan, metadata: media([{ type: "first_frame", url: "data:image/png;base64,YQ==" }]) },
         { ...wan, metadata: media(Array(11).fill({ type: "reference_image", url: "https://example.test/a.jpg" })) },
@@ -426,28 +426,32 @@ test("instant completion and temporary query/download failures retain the same W
     assert.deepEqual(await created.json(), { id: "task-instant", status: "queued" });
     assert.equal(videoDownloads, downloads);
     const taskId = created.headers.get("X-Generation-Task-Id");
+    const processNow = async () => {
+        await db.query("UPDATE generation_tasks SET upstream_error=upstream_error-'retryAt' WHERE id=$1", [taskId]);
+        await processVideoTask(taskId!);
+    };
     const task = () => db.query("SELECT status,upstream_id,error FROM generation_tasks WHERE id=$1", [taskId]).then((result) => result.rows[0]);
     const path = `/ai/${videoChannel}/v1/videos/task-instant`;
     const posts = forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length;
     try {
         modelFailure = { status: 503, code: "UNAVAILABLE" };
-        await processVideoTask(taskId!);
+        await processNow();
         assert.equal((await (await call(path)).json() as any).status, "queued");
         assert.equal((await task()).status, "pending");
         modelFailure = undefined;
         videoQueryHandler = async () => { throw new TypeError("fetch failed"); };
-        await processVideoTask(taskId!);
+        await processNow();
         assert.equal((await task()).status, "pending");
         videoQueryHandler = undefined;
         modelFailure = undefined;
         videoDownloadFails = true;
         assert.equal((await call(`${path}/resume`, bob, "POST", {})).status, 404);
-        await processVideoTask(taskId!);
+        await processNow();
         assert.equal((await (await call(path)).json() as any).status, "paused");
         assert.equal((await task()).upstream_id, "task-instant");
         videoDownloadFails = false;
         await call(`${path}/resume`, alice, "POST", {});
-        await processVideoTask(taskId!);
+        await processNow();
         assert.equal((await call(path)).status, 200);
         assert.deepEqual(await task(), { status: "succeeded", upstream_id: "task-instant", error: null });
         assert.equal(forwardedRequests.filter((request) => request.url.endsWith("/v1/videos")).length, posts);
@@ -632,7 +636,7 @@ test("WAN and Seedance content errors pause saving and resume the same task with
 test("model descriptions are admin-managed, preserved verbatim and never change upstream model IDs", async () => {
     const model = "wan3.0-video";
     const description = "团队常用型号\n请先确认参考素材";
-    const body = { models: [model], video_types: { [model]: "tokenone" }, video_presets: { [model]: model }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
+    const body = { models: [model], video_types: { [model]: "tokenone" }, video_presets: { [model]: "wan3-standard" }, model_descriptions: { [model]: description }, default_model: model, enabled: true };
     assert.equal((await call("/admin/channels/video", alice, "PUT", body)).status, 403);
     assert.equal((await call("/admin/channels/video", admin, "PUT", { ...body, model_descriptions: { unconfigured: description } })).status, 400);
     assert.equal((await call("/admin/channels/video", admin, "PUT", body)).status, 200);
@@ -922,7 +926,7 @@ test("canvas WAN signs authoritative nested frame media and downloads through pu
 
 test("canvas video results attach through the worker without a canvas result write", async () => {
     const { executeMediaTask } = await import("./generation-executor.js");
-    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["seedance-test", "wan3.0-video"], default_model: "seedance-test", enabled: true, video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3.0-video" } })).status, 200);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["seedance-test", "wan3.0-video"], default_model: "seedance-test", enabled: true, video_types: { "seedance-test": "seedance", "wan3.0-video": "tokenone" }, video_presets: { "seedance-test": "doubao-seedance-2-0-260128", "wan3.0-video": "wan3-standard" } })).status, 200);
     videoCreateResponse = { id: "task-canvas-video", status: "queued" };
     videoQueryResponse = { status: "succeeded", content: { video_url: "https://tokenone.test/video-result.mp4" } };
     const node = { id: "video-output", type: "video", title: "video", position: { x: 21, y: 35 }, width: 240, height: 135, metadata: { generationId: randomUUID(), status: "loading" } };
@@ -1167,7 +1171,7 @@ test("admin media uses the task owner for previews, multi-image results and vide
 
 
 async function enableH3() {
-    const response = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3", "wan3.0-video", "seedance-test"], default_model: "MiniMax-H3", enabled: true, video_types: { "MiniMax-H3": "tokenone", "wan3.0-video": "tokenone", "seedance-test": "seedance" }, video_presets: { "MiniMax-H3": "MiniMax-H3", "wan3.0-video": "wan3.0-video", "seedance-test": "doubao-seedance-2-0-260128" } });
+    const response = await call("/admin/channels/video", admin, "PUT", { models: ["MiniMax-H3", "wan3.0-video", "seedance-test"], default_model: "MiniMax-H3", enabled: true, video_types: { "MiniMax-H3": "tokenone", "wan3.0-video": "tokenone", "seedance-test": "seedance" }, video_presets: { "MiniMax-H3": "MiniMax-H3", "wan3.0-video": "wan3-standard", "seedance-test": "doubao-seedance-2-0-260128" } });
     assert.equal(response.status, 200);
 }
 
@@ -1470,11 +1474,102 @@ test("admin presets are explicit and public aliases preserve zero values and par
     videoQueryResponse = { status: "completed" };
     await processVideoTask(taskId);
     assert.equal((await db.query("SELECT status FROM generation_tasks WHERE id=$1", [taskId])).rows[0].status, "succeeded");
-    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_presets: { [model]: "wan3.0-video" } })).status, 200);
+    assert.equal((await call("/admin/channels/video", admin, "PUT", { ...config, video_presets: { [model]: "wan3-standard" } })).status, 200);
     const wan = { ...body, resolution: "720P", metadata: { parameters: { seed: 0, audio: false, watermark: false } } };
     videoCreateResponse = { id: "task-public-alias-failed", status: "failed" };
     const failed = await call(`/ai/${channel}/v1/videos`, alice, "POST", wan);
     assert.equal(failed.status, 200);
     assert.equal((await failed.json()).status, "failed");
     assert.deepEqual(forwardedRequests.at(-1)!.body, wan);
+});
+
+test("video presets persist edits, enforce revisions and protect references", async () => {
+    assert.equal((await call("/admin/video-presets", alice)).status, 403);
+    const presets = await (await call("/admin/video-presets", admin)).json() as any;
+    const profile = structuredClone(presets.presets.find((p: any) => p.id === "wan3-standard").profile);
+    const invalid = { ...profile, defaults: { ...profile.defaults, resolution: "4k" } };
+    assert.equal((await call("/admin/video-presets", admin, "POST", { label: "无效预设", profile: invalid })).status, 400);
+    const created = await call("/admin/video-presets", admin, "POST", { label: "自定义 WAN", profile });
+    assert.equal(created.status, 201);
+    const { preset } = await created.json() as any;
+    const channelList = await (await call("/admin/channels", admin)).json() as any;
+    const current = channelList.channels.find((c: any) => c.capability === "video");
+    const restore = Object.fromEntries(["models", "default_model", "enabled", "image_types", "image_presets", "video_types", "video_presets", "audio_types", "model_descriptions", "model_capabilities"].map(key => [key, current[key]]));
+    try {
+        assert.equal((await call("/admin/channels/video", admin, "PUT", { models: ["custom-preset-model"], default_model: "custom-preset-model", enabled: true, video_types: { "custom-preset-model": "tokenone" }, video_presets: { "custom-preset-model": preset.id } })).status, 200);
+        const videoList = await (await call("/admin/video-presets", admin)).json() as any;
+        assert.deepEqual(videoList.presets.find((p: any) => p.id === preset.id).usedBy, [{ model: "custom-preset-model", enabled: true }]);
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "DELETE")).status, 409);
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile: { ...profile, family: "h3" }, revision: preset.revision })).status, 409);
+        const disabledBinding = { models: ["custom-preset-model"], default_model: "custom-preset-model", enabled: false, video_types: { "custom-preset-model": "tokenone" }, video_presets: { "custom-preset-model": preset.id } };
+        assert.equal((await call("/admin/channels/video", admin, "PUT", disabledBinding)).status, 200);
+        const disabledList = await (await call("/admin/video-presets", admin)).json() as any;
+        assert.deepEqual(disabledList.presets.find((p: any) => p.id === preset.id).usedBy, [{ model: "custom-preset-model", enabled: false }]);
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "DELETE")).status, 409);
+        assert.equal((await call("/admin/channels/video", admin, "PUT", { ...disabledBinding, enabled: true })).status, 200);
+        const changed = { ...profile, maxVideos: 2, duration: { min: 8, max: 30, auto: false }, defaults: { ...profile.defaults, seconds: "8" } };
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "PUT", { label: "修改后的预设", profile: changed, revision: preset.revision })).status, 200);
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile, revision: preset.revision })).status, 409);
+        const catalogue = await (await call("/channels", alice)).json() as any;
+        const video = catalogue.channels.find((c: any) => c.capability === "video");
+        assert.deepEqual(video.video_profiles["custom-preset-model"], changed);
+        const { channelVideoConfig } = await import("../../shared/video-models.js");
+        const { videoRequestCapabilityError } = await import("./model-capabilities.js");
+        const config = channelVideoConfig(video, "custom-preset-model");
+        const request = { model: "custom-preset-model", prompt: "画面", duration: 6, resolution: "720P", ratio: "16:9" };
+        assert.match(videoRequestCapabilityError(request.model, config, request), /8–30/);
+        assert.equal(videoRequestCapabilityError(request.model, config, { ...request, duration: 8 }), "");
+        const { attachVideoProfiles } = await import("./video-presets.js");
+        const refreshed = (await attachVideoProfiles((await db.query("SELECT * FROM channels WHERE capability='video'")).rows))[0];
+        assert.deepEqual(refreshed.video_profiles[request.model], changed);
+    } finally {
+        assert.equal((await call("/admin/channels/video", admin, "PUT", restore)).status, 200);
+        assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "DELETE")).status, 204);
+    }
+    assert.equal((await call(`/admin/video-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile, revision: preset.revision })).status, 404);
+});
+
+test("image presets round-trip all fields and apply database edits to configured aliases", async () => {
+    assert.equal((await call("/admin/image-presets", alice)).status, 403);
+    const catalogue = await (await call("/admin/image-presets", admin)).json() as any;
+    const initial = catalogue.presets.find((p: any) => p.id === "gpt-image-2.5-flare").profile;
+    const profile = structuredClone(initial);
+    profile.qualities = ["auto", "custom-quality"];
+    profile.sizePresets["1k"]["1:1"] = "1008x1008";
+    profile.maxReferences = 1;
+    const created = await call("/admin/image-presets", admin, "POST", { label: "可维护的图片预设", profile });
+    assert.equal(created.status, 201);
+    const { preset } = await created.json() as any;
+    assert.deepEqual(preset.profile, profile);
+    const unused = await (await call("/admin/image-presets", admin)).json() as any;
+    assert.deepEqual(unused.presets.find((p: any) => p.id === preset.id).usedBy, []);
+    assert.equal((await call("/admin/image-presets", admin, "POST", { label: "错误默认值", profile: { ...profile, defaults: { ...profile.defaults, quality: "high" } } })).status, 400);
+    const channelList = await (await call("/admin/channels", admin)).json() as any;
+    const current = channelList.channels.find((c: any) => c.capability === "image");
+    const restore = Object.fromEntries(["models", "default_model", "enabled", "image_types", "image_presets", "video_types", "video_presets", "audio_types", "model_descriptions", "model_capabilities"].map(key => [key, current[key]]));
+    try {
+        assert.equal((await call("/admin/channels/image", admin, "PUT", { models: ["image-custom-alias"], default_model: "image-custom-alias", enabled: true, image_types: { "image-custom-alias": "openai" }, image_presets: { "image-custom-alias": preset.id } })).status, 200);
+        const imageList = await (await call("/admin/image-presets", admin)).json() as any;
+        assert.deepEqual(imageList.presets.find((p: any) => p.id === preset.id).usedBy, [{ model: "image-custom-alias", enabled: true }]);
+        assert.equal((await call(`/admin/image-presets/${preset.id}`, admin, "DELETE")).status, 409);
+        const banana = catalogue.presets.find((p: any) => p.id === "banana-default").profile;
+        assert.equal((await call(`/admin/image-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile: banana, revision: preset.revision })).status, 409);
+        const changed = { ...profile, transparent: false, omitResponseFormat: false };
+        assert.equal((await call(`/admin/image-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile: changed, revision: preset.revision })).status, 200);
+        assert.equal((await call(`/admin/image-presets/${preset.id}`, admin, "PUT", { label: preset.label, profile, revision: preset.revision })).status, 409);
+        const publicData = await (await call("/channels", alice)).json() as any;
+        const image = publicData.channels.find((c: any) => c.capability === "image");
+        assert.deepEqual(image.image_profiles["image-custom-alias"], changed);
+        const { channelImageConfig } = await import("../../shared/image-models.js");
+        const { imageRequestCapabilityError } = await import("./model-capabilities.js");
+        const { canvasRequestBody } = await import("../../shared/canvas-request.js");
+        const config = channelImageConfig(image, "image-custom-alias");
+        const body = canvasRequestBody("image-custom-alias", "image", "openai", { prompt: "画面", quality: "custom-quality", size: "1:1" }, { images: [], videos: [], audios: [] }, "", "", undefined, config);
+        assert.equal(body.model, "image-custom-alias"); assert.equal((body as any).size, "1008x1008"); assert.equal((body as any).response_format, "b64_json");
+        assert.equal(imageRequestCapabilityError("image-custom-alias", config, body), "");
+        assert.match(imageRequestCapabilityError("image-custom-alias", config, { ...body, background: "transparent" }), /透明/);
+    } finally {
+        assert.equal((await call("/admin/channels/image", admin, "PUT", restore)).status, 200);
+        assert.equal((await call(`/admin/image-presets/${preset.id}`, admin, "DELETE")).status, 204);
+    }
 });

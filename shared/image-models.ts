@@ -3,7 +3,7 @@ export type ImageModelType = (typeof imageModelTypes)[number];
 export const IMAGE_DIMENSION_STEP = 16;
 export const imageModelTypeLabels: Record<ImageModelType, string> = { openai: "GPT Image / OpenAI Images", banana: "Banana", grok: "Grok" };
 
-type ImageCapabilities = {
+export type ImageCapabilities = {
     pixelSize: boolean; transparent: boolean; qualities: string[]; resolutions: string[]; ratios: string[];
     fixedResolution?: string; maxReferences: number | null; omitResponseFormat: boolean;
 };
@@ -30,27 +30,32 @@ export const imageModelOverrides: Record<ImageModelType, Record<string, Partial<
 };
 export function imageModelProfile(model: string, family: ImageModelType) {
     const name = model.split("::").pop() || "";
-    return { family, ...imageTypePresets[family], ...imageModelOverrides[family][name] };
+    return { family, ...imageTypePresets[family], ...imageModelOverrides[family][name],
+        defaults: { size: "1:1", quality: "auto", background: "" }, singleReferenceRatioLocked: family === "grok",
+        pixelBounds: { step: 16, maxEdge: 3840, maxRatio: 3, minPixels: 655360, maxPixels: 8294400, ratioShortSide: 1024 },
+        sizePresets: imageSizePresets,
+    };
 }
 
-export function imageCapabilityError(profile: ReturnType<typeof imageModelProfile>, params: { quality?: string; ratio?: string; resolution?: string; references?: number; size?: string }) {
+export function imageCapabilityError(profile: ImageProfile, params: { quality?: string; ratio?: string; resolution?: string; references?: number; size?: string; background?: string }) {
+    if (params.background === "transparent" && !profile.transparent) return "当前模型不支持透明背景。";
     if (profile.maxReferences !== null && (params.references || 0) > profile.maxReferences) return `当前模型最多支持 ${profile.maxReferences} 张参考图，请移除多余图片。`;
     if (params.quality && !profile.qualities.includes(params.quality)) return "当前模型不支持所选画质，请重新选择。";
     if (params.ratio && !profile.ratios.includes(params.ratio)) return "当前模型不支持所选宽高比，请重新选择。";
     if (params.resolution && !profile.resolutions.includes(params.resolution)) return "当前模型不支持所选分辨率，请重新选择。";
-    if (profile.pixelSize && params.size && params.size !== "auto") return imagePixelSizeError(params.size);
+    if (profile.pixelSize && params.size && params.size !== "auto") return imagePixelSizeError(params.size, profile.pixelBounds);
     return "";
 }
 
 // Existing GPT size boundaries, shared by the editor and server submission guard.
-export function imagePixelSizeError(size: string) {
+export function imagePixelSizeError(size: string, bounds = { step: 16, maxEdge: 3840, maxRatio: 3, minPixels: 655360, maxPixels: 8294400 }) {
     const match = /^(\d+)x(\d+)$/.exec(size);
     if (!match) return "图片尺寸应为宽x高。";
     const width = Number(match[1]), height = Number(match[2]);
-    if (!width || !height || width % IMAGE_DIMENSION_STEP || height % IMAGE_DIMENSION_STEP) return "图片宽高必须是正数且为 16 的倍数。";
-    if (Math.max(width, height) > 3840) return "图片最长边不能超过 3840 像素。";
-    if (Math.max(width, height) / Math.min(width, height) > 3) return "图片宽高比必须在 1:3 到 3:1 之间。";
-    if (width * height < 655360 || width * height > 8294400) return "图片总像素数必须在 655360 到 8294400 之间。";
+    if (!width || !height || width % bounds.step || height % bounds.step) return `图片宽高必须是正数且为 ${bounds.step} 的倍数。`;
+    if (Math.max(width, height) > bounds.maxEdge) return `图片最长边不能超过 ${bounds.maxEdge} 像素。`;
+    if (Math.max(width, height) / Math.min(width, height) > bounds.maxRatio) return `图片宽高比必须在 1:${bounds.maxRatio} 到 ${bounds.maxRatio}:1 之间。`;
+    if (width * height < bounds.minPixels || width * height > bounds.maxPixels) return `图片总像素数必须在 ${bounds.minPixels} 到 ${bounds.maxPixels} 之间。`;
     return "";
 }
 
@@ -69,3 +74,19 @@ for (const scale of ["1k", "2k"]) for (const ratio of imageTypePresets.grok.rati
     const height = Math.round(edge * h / Math.max(w, h) / 16) * 16;
     imageSizePresets[scale][ratio] = `${width}x${height}`;
 }
+
+export type ImageProfile = ReturnType<typeof imageModelProfile>;
+export type ImageParameterPreset = { id: string; label: string; callType: ImageModelType; profile: ImageProfile; revision: number };
+export type ImageModelConfig = { callType: ImageModelType; preset: string; profile?: ImageProfile };
+export const defaultImageParameterPresets = Object.fromEntries(imageModelTypes.flatMap(family => ["", ...Object.keys(imageModelOverrides[family])].map(model => [model || `${family}-default`, { label: model || `${imageModelTypeLabels[family]} 通用`, callType: family, profile: imageModelProfile(model, family) }])));
+export function imageConfiguredProfile(config: ImageModelConfig) {
+    if (!config.profile || config.profile.family !== config.callType) throw new Error("请在管理后台配置匹配的图片调用类型和参数预设。");
+    return config.profile;
+}
+export function channelImageConfig(channel: { image_types?: Record<string, ImageModelType>; image_presets?: Record<string, string>; image_profiles?: Record<string, ImageProfile> }, model: string): ImageModelConfig {
+    const callType = channel.image_types?.[model], preset = channel.image_presets?.[model], profile = channel.image_profiles?.[model];
+    if (!callType || !preset) throw new Error("请在管理后台配置图片调用类型和参数预设。");
+    imageConfiguredProfile({ callType, preset, profile });
+    return { callType, preset, profile };
+}
+export const channelImageProfile = (channel: Parameters<typeof channelImageConfig>[0], model: string) => imageConfiguredProfile(channelImageConfig(channel, model));

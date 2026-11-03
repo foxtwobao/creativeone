@@ -1,4 +1,4 @@
-import { defaultConfig, resolveModelForCapability, modelVideoTypeOf, modelVideoProfileOf, videoModelSelectionPatch, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelImageProfileOf, imageModelSelectionPatch, resolveModelForCapability, modelVideoTypeOf, modelVideoProfileOf, videoModelSelectionPatch, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
 import { ensureImagePreview, resolveImageUrl } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -103,16 +103,17 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const model = mode === "audio" ? node?.metadata?.model || config.audioModel : resolveModelForCapability(config, node?.metadata?.model, mode);
+    const imageProfile = mode === "image" ? modelImageProfileOf(config, model) : undefined;
     const veo = mode === "video" && modelVideoTypeOf(config, model) === "veo" ? modelVideoProfileOf(config, model) : null;
     return {
         ...config,
         model,
         audioInput: node?.metadata?.audioInput || defaultAudioInput(modelAudioTypeOf(config, node?.metadata?.model || config.audioModel)),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
-        quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: mode === "image" ? node?.metadata?.size || config.size || defaultConfig.size : config.size,
+        quality: node?.metadata?.quality || imageProfile?.defaults.quality || config.quality || defaultConfig.quality,
+        size: mode === "image" ? node?.metadata?.size || imageProfile?.defaults.size || config.size || defaultConfig.size : config.size,
         videoSize: node?.metadata?.videoSize || (veo ? "16:9" : config.videoSize || defaultConfig.videoSize),
-        background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
+        background: node?.metadata?.background ?? imageProfile?.defaults.background ?? config.background ?? defaultConfig.background,
         videoSeconds: node?.metadata?.seconds ?? config.videoSeconds ?? defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || (veo ? veo.resolutions[0] : config.vquality || defaultConfig.vquality),
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
@@ -125,6 +126,10 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
         count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
+}
+
+export function canvasImageModelPatch(config: AiConfig, model: string) {
+    return { model, ...imageModelSelectionPatch(config, model) };
 }
 
 export function canvasVideoModelPatch(config: AiConfig, model: string) {

@@ -1,3 +1,5 @@
+import { channelImageConfig } from "../../shared/image-models.js";
+import { attachModelProfiles } from "./model-profiles.js";
 import { Router } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -89,9 +91,9 @@ export async function acceptCanvasGeneration(userId: string, channel: Channel, p
     for (const edge of project.connections.filter((edge: any) => edge.toNodeId === node.id)) assertReady(project.nodes.find((source: any) => source.id === edge.fromNodeId));
     const family = channel.capability === "image" ? channel.image_types![submitted.model] : channel.capability === "audio" ? channel.audio_types![submitted.model] : channel.capability === "video" ? channelVideoProfile(channel, submitted.model).family : undefined;
     if (channel.capability === "audio") audioInputSchema.parse(savedMetadata.audioInput);
-    try { requestSnapshot = canvasRequestBody(submitted.model, channel.capability as "image" | "video" | "audio" | "text", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : "", channel.capability === "video" ? channelVideoConfig(channel, submitted.model) : undefined); }
+    try { requestSnapshot = canvasRequestBody(submitted.model, channel.capability as "image" | "video" | "audio" | "text", family, savedMetadata, references, canvasSettings.systemPrompt || "", channel.capability === "audio" ? canvasAudioText(node.clientId || node.id, graph.nodes, graph.connections) : "", channel.capability === "video" ? channelVideoConfig(channel, submitted.model) : undefined, channel.capability === "image" ? channelImageConfig(channel, submitted.model) : undefined); }
     catch { throw new HttpError(400, "MODEL_CAPABILITY_INVALID"); }
-    const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(submitted.model, family as any, requestSnapshot) : ["audio", "text"].includes(channel.capability) ? undefined : videoRequestCapabilityError(submitted.model, channelVideoConfig(channel, submitted.model), requestSnapshot);
+    const capabilityError = channel.capability === "image" ? imageRequestCapabilityError(submitted.model, channelImageConfig(channel, submitted.model), requestSnapshot) : ["audio", "text"].includes(channel.capability) ? undefined : videoRequestCapabilityError(submitted.model, channelVideoConfig(channel, submitted.model), requestSnapshot);
     if (capabilityError) throw new HttpError(400, "MODEL_CAPABILITY_INVALID");
     if (channel.capability === "video") await assertVideoDurations(userId, submitted.model, channelVideoConfig(channel, submitted.model), references, client);
     const expectedPath = channel.capability === "text" ? "responses" : channel.capability === "audio" ? "chat/completions" : channel.capability === "video" ? videoTaskPath(channelVideoConfig(channel, submitted.model).callType) : references.images.length && family !== "banana" ? "images/edits" : "images/generations";
@@ -182,7 +184,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             ? { id: task.upstream_id, status: "paused", error: { message: taskErrorMessage(task) || "后台查询或保存暂时失败，任务已暂停，可手动恢复" } }
             : { id: task.upstream_id, status: "queued" });
     } else {
-        channel = (await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows[0];
+        channel = (await attachModelProfiles((await db.query("SELECT * FROM channels WHERE id=$1 AND enabled", [channelId])).rows))[0];
         if (!channel) throw new HttpError(403, "CHANNEL_UNAVAILABLE");
         if (!(req.method === "GET" && path === "models") && !(req.method === "POST" && (endpoints[path] === channel.capability || channel.capability === "audio" && path === "chat/completions"))) throw new HttpError(403, "ENDPOINT_NOT_ALLOWED");
         if (req.method === "POST" && (!req.body || typeof req.body.model !== "string" || !channel.models.includes(req.body.model))) throw new HttpError(403, "MODEL_NOT_ALLOWED");
@@ -192,7 +194,9 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
             if (channel.audio_types?.[req.body.model] !== audioSubmission.audio_type) throw new HttpError(400, "AUDIO_MODEL_TYPE_REQUIRED");
             req.body = canvasContext ? { model: req.body.model, audio_type: audioSubmission.audio_type, audio_input: audioSubmission.audio_input } : audioSnapshot(req.body.model, audioSubmission.audio_type, audioSubmission.audio_input);
         }
-        if (req.method === "POST" && channel.capability === "image" && !channel.image_types?.[req.body.model]) throw new HttpError(400, "IMAGE_MODEL_TYPE_REQUIRED");
+        if (req.method === "POST" && channel.capability === "image") {
+            try { channelImageConfig(channel, req.body.model); } catch { throw new HttpError(400, "INVALID_IMAGE_MODEL_TYPES"); }
+        }
         if (req.method === "POST" && channel.capability === "video") {
             try { channelVideoConfig(channel, req.body.model); } catch { throw new HttpError(400, "INVALID_VIDEO_MODEL_TYPES"); }
             if (path !== videoTaskPath(channelVideoConfig(channel, req.body.model).callType)) throw new HttpError(403, "VIDEO_ENDPOINT_MISMATCH");
@@ -202,7 +206,7 @@ aiRouter.all("/ai/:channel/v1/*path", async (req, res, next) => {
         await assertReferenceImages(user.id, req.body);
         for (const file of req.files as Express.Multer.File[] || []) if (channel.capability === "image" || file.mimetype.startsWith("image/")) assertReferenceImageSize(file.size);
         const error = channel.capability === "image"
-            ? imageRequestCapabilityError(req.body.model, channel.image_types![req.body.model], req.body, (req.files as Express.Multer.File[] || []).filter((file) => file.fieldname !== "mask").length)
+            ? imageRequestCapabilityError(req.body.model, channelImageConfig(channel, req.body.model), req.body, (req.files as Express.Multer.File[] || []).filter((file) => file.fieldname !== "mask").length)
             : videoRequestCapabilityError(req.body.model, channelVideoConfig(channel, req.body.model), req.body);
         if (error) return res.status(400).json({ error: "MODEL_CAPABILITY_INVALID", message: error, retryable: false, requestId: res.locals.requestId });
     }

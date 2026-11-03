@@ -13,7 +13,7 @@ export function StudioSettings({ referenceImageCount = 0, compact = false }: { r
     const dimensions = readMediaDimensions(settings.size, scale, ratio);
     const updateDimension = (key: "width" | "height", value: number | null) => {
         if (value === null) return;
-        const next = { ...dimensions, [key]: alignImageDimension(Math.max(1, Math.floor(value))) };
+        const next = { ...dimensions, [key]: alignImageDimension(Math.max(1, Math.floor(value)), profile?.pixelBounds.step) };
         update("size", `${next.width}x${next.height}`);
     };
     if (compact) return <section aria-label="图片生成参数" className={styles.quickParameters}>
@@ -24,7 +24,7 @@ export function StudioSettings({ referenceImageCount = 0, compact = false }: { r
             {qualities.length ? <label><span>画质</span><Select aria-label="画质" variant="borderless" value={settings.quality} options={qualities} onChange={(value) => update("quality", value)} /></label> : null}
             {profile?.transparent ? <label><span>透明背景</span><Switch aria-label="透明背景" size="small" checked={config.background === "transparent"} onChange={(value) => update("background", value ? "transparent" : "")} /></label> : null}
         </div>
-        {profile?.pixelSize ? <details className="mt-2 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer">自定义尺寸</summary><div className="mt-2 flex items-center gap-2"><InputNumber aria-label="图片宽度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.width} onChange={(value) => updateDimension("width", value)} /><span>×</span><InputNumber aria-label="图片高度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.height} onChange={(value) => updateDimension("height", value)} /><span>对齐至 16 倍数</span></div></details> : null}
+        {profile?.pixelSize ? <details className="mt-2 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer">自定义尺寸</summary><div className="mt-2 flex items-center gap-2"><InputNumber aria-label="图片宽度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.width} onChange={(value) => updateDimension("width", value)} /><span>×</span><InputNumber aria-label="图片高度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.height} onChange={(value) => updateDimension("height", value)} /><span>对齐至 {profile.pixelBounds.step} 倍数</span></div></details> : null}
         {ratioLocked ? <p className="mt-2 text-xs text-muted-foreground">单图编辑沿用参考图片比例。</p> : null}
         {error ? <p role="alert" className="mt-2 text-xs text-muted-foreground">{error}</p> : null}
     </section>;
@@ -36,7 +36,7 @@ export function StudioSettings({ referenceImageCount = 0, compact = false }: { r
             <ParameterOptions label="分辨率" value={resolution} options={scales.map((item) => ({ ...item, disabled: resolutionLocked }))} onChange={(value) => update("size", selectImageScale(settings, value))} />
             {ratioLocked ? <p className="text-xs text-muted-foreground">单图编辑沿用参考图片比例。</p> : <ParameterOptions label="宽高比" value={ratio} options={ratios} onChange={(value) => update("size", selectImageRatio(settings, value))} />}
             {profile.pixelSize ? <div className={styles.duration}>
-                <div className="mb-2 text-xs font-medium">自定义尺寸 · 对齐至 16 倍数</div>
+                <div className="mb-2 text-xs font-medium">自定义尺寸 · 对齐至 {profile.pixelBounds.step} 倍数</div>
                 <div className="flex items-center gap-2"><InputNumber className="!w-full" aria-label="图片宽度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.width} onChange={(value) => updateDimension("width", value)} /><span className="text-xs text-muted-foreground">×</span><InputNumber className="!w-full" aria-label="图片高度" min={1} precision={0} disabled={settings.size === "auto"} value={dimensions.height} onChange={(value) => updateDimension("height", value)} /></div>
             </div> : null}
             {profile.qualities.length ? <ParameterOptions label="画质" value={settings.quality} options={qualities} onChange={(value) => update("quality", value)} /> : null}

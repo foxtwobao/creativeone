@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { imageModelProfile } from "../../shared/image-models";
-import { bananaImageBody } from "../src/services/api/image-adapters/banana";
-import { grokImageBody } from "../src/services/api/image-adapters/grok";
+import { bananaImageBody as makeBananaImageBody } from "../src/services/api/image-adapters/banana";
+import { grokImageBody as makeGrokImageBody } from "../src/services/api/image-adapters/grok";
+
+const bananaImageBody = (model: string, prompt: string, size: string, count: number, images: string[]) => makeBananaImageBody(model, prompt, size, count, images, imageModelProfile(model, "banana"));
+const grokImageBody = (model: string, prompt: string, size: string, quality: string, count: number, images: string[]) => makeGrokImageBody(model, prompt, size, quality, count, images, imageModelProfile(model, "grok"));
 
 test("image profiles use the explicit type even when names suggest another provider", () => {
     expect(imageModelProfile("my-private-model", "banana").family).toBe("banana");
@@ -51,7 +54,8 @@ test("switching from unsupported settings asks for a new selection instead of do
 
 test("OpenAI parameter extraction preserves generation and edit fields", async () => {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => null } });
-    const { openAiImageParams } = await import("../src/services/api/image-adapters/openai");
+    const { openAiImageParams: makeOpenAiImageParams } = await import("../src/services/api/image-adapters/openai");
+    const openAiImageParams = (config: Parameters<typeof makeOpenAiImageParams>[0]) => makeOpenAiImageParams({ ...config, imageProfile: imageModelProfile(config.model, "openai") });
     const config = { model: "gpt-image-2", size: "3840x2160", quality: "high", background: "transparent" };
     const params = openAiImageParams(config as Parameters<typeof openAiImageParams>[0]);
     expect(params).toEqual({ quality: "high", size: "3840x2160", background: "transparent", output_format: "png" });
@@ -60,7 +64,8 @@ test("OpenAI parameter extraction preserves generation and edit fields", async (
 
 
 test("GPT 2.5 exposes and sends extra quality levels without applying them to GPT 2", async () => {
-    const { openAiImageParams } = await import("../src/services/api/image-adapters/openai");
+    const { openAiImageParams: makeOpenAiImageParams } = await import("../src/services/api/image-adapters/openai");
+    const openAiImageParams = (config: Parameters<typeof makeOpenAiImageParams>[0]) => makeOpenAiImageParams({ ...config, imageProfile: imageModelProfile(config.model, "openai") });
     for (const model of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst-4k"]) {
         for (const quality of ["xhigh", "max"]) {
             expect(imageModelProfile(model, "openai").qualities).toContain(quality);

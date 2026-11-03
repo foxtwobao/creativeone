@@ -1,16 +1,16 @@
 import { ChevronDown, Info } from "lucide-react";
-import { h3VideoDefaults } from "../../../shared/video-models";
+import { type VideoProfile, type h3VideoDefaults } from "../../../shared/video-models";
 
-export function H3ReferenceNotice({ onConfigChange, compact = false, referenceImageCount = 0 }: { onConfigChange?: (key: keyof typeof h3VideoDefaults, value: string) => void; compact?: boolean; referenceImageCount?: number }) {
+export function H3ReferenceNotice({ profile, onConfigChange, compact = false, referenceImageCount = 0 }: { profile: VideoProfile; onConfigChange?: (key: keyof typeof h3VideoDefaults, value: string) => void; compact?: boolean; referenceImageCount?: number }) {
     return <section aria-label="H3 参考素材要求" className="text-xs leading-5">
         <div className="flex items-center gap-1.5 font-medium"><Info className="size-3.5 shrink-0" aria-hidden="true" />H3 素材与费用说明</div>
-        <div className="mt-1">时长 4–30 秒，2K 最长 15 秒；标准／优先模式可能影响费用。</div>
-        <div className="mt-1">参考图 ≤ 9 张；视频 ≤ 3 段、合计 ≤ 15 秒；音频 ≤ 3 段、建议合计 ≤ 15 秒。</div>
+        <div className="mt-1">时长 {profile.duration?.min}–{profile.duration?.max} 秒{Object.entries(profile.durationByResolution || {}).map(([resolution, range]) => `，${resolution.toUpperCase()} 最长 ${range.max} 秒`).join("")}；标准／优先模式可能影响费用。</div>
+        <div className="mt-1">参考图 {profile.maxImages === null ? "未设上限" : `≤ ${profile.maxImages} 张`}；视频 {profile.maxVideos === null ? "未设上限" : `≤ ${profile.maxVideos} 段`}；音频 {profile.maxAudios === null ? "未设上限" : `≤ ${profile.maxAudios} 段`}{profile.referenceSeconds !== null ? `；视频、音频各自合计 ≤ ${profile.referenceSeconds} 秒` : ""}。</div>
         <div className="mt-1 opacity-80">参考视频额外计费，先预留 15 秒用量；第 6–9 张参考图按张、按任务加收费用。</div>
         {!compact ? <>
             <div className="mt-1">本次额外参考图：{Math.max(referenceImageCount - 5, 0)} 张，图片附加费不乘生成时长。</div>
             <div className="mt-1 opacity-80">金额预估暂不可用，最终扣费以 TokenONE 账单为准。</div>
-            {onConfigChange ? <button type="button" className="mt-2 cursor-pointer underline underline-offset-4 hover:opacity-75" onClick={() => { for (const key of ["videoSeconds", "vquality", "videoSize"] as const) onConfigChange(key, h3VideoDefaults[key]); }}>使用推荐参数：4 秒 · 768P · 16:9</button> : null}
+            {onConfigChange ? <button type="button" className="mt-2 cursor-pointer underline underline-offset-4 hover:opacity-75" onClick={() => { onConfigChange("videoSeconds", profile.defaults.seconds); onConfigChange("vquality", profile.defaults.resolution); onConfigChange("videoSize", profile.defaults.ratio); }}>使用推荐参数：{profile.defaults.seconds} 秒 · {profile.defaults.resolution.toUpperCase()}{profile.defaults.resolution.endsWith("k") ? "" : "P"} · {profile.defaults.ratio}</button> : null}
             <details className="group mt-2">
                 <summary className="w-fit cursor-pointer list-none rounded-md underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 [&::-webkit-details-marker]:hidden"><span className="inline-flex items-center gap-1">完整要求与计费说明<ChevronDown className="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" /></span></summary>
                 <div className="mt-2 space-y-2">

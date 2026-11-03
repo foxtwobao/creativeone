@@ -1,3 +1,5 @@
+import { imageModelProfile } from "../../shared/image-models";
+import { defaultVideoParameterPresets } from "../../shared/video-models";
 import { veoModels } from "../../shared/video-models";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -27,20 +29,21 @@ beforeAll(async () => {
     const { defaultConfig } = await import("@/stores/use-config-store");
     config = { ...defaultConfig, size: "3840x2160", videoSize: "9:16", channels: [{
         id: "models", name: "模型", baseUrl: "", apiKey: "", apiFormat: "openai", models: [
-            { name: "gpt-image", capability: "image", imageType: "openai" },
-            { name: "banana-2k", capability: "image", imageType: "banana" },
-            { name: "grok-imagine-image-2.0", capability: "image", imageType: "grok" },
-            { name: "seedance", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128" },
-            { name: "wan3.0-video", capability: "video", videoType: "tokenone", videoPreset: "wan3.0-video" },
-            { name: "wan3.0-video-prime", capability: "video", videoType: "tokenone", videoPreset: "wan3.0-video-prime" },
-            { name: "MiniMax-H3", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3" },
-            ...veoModels.map((name) => ({ name, capability: "video" as const, videoType: "tokenone" as const, videoPreset: name })),
+            { name: "gpt-image", capability: "image", imageType: "openai", imagePreset: "openai-default", imageProfile: imageModelProfile("", "openai") },
+            { name: "banana-2k", capability: "image", imageType: "banana", imagePreset: "banana-default", imageProfile: imageModelProfile("", "banana") },
+            { name: "grok-imagine-image-2.0", capability: "image", imageType: "grok", imagePreset: "grok-imagine-image-2.0", imageProfile: imageModelProfile("grok-imagine-image-2.0", "grok") },
+            { name: "seedance", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-0-260128"]?.profile },
+            { name: "wan3.0-video", capability: "video", videoType: "tokenone", videoPreset: "wan3-standard", videoProfile: defaultVideoParameterPresets["wan3-standard"]?.profile },
+            { name: "wan3.0-video-prime", capability: "video", videoType: "tokenone", videoPreset: "wan3-standard", videoProfile: defaultVideoParameterPresets["wan3-standard"]?.profile },
+            { name: "MiniMax-H3", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3", videoProfile: defaultVideoParameterPresets["MiniMax-H3"]?.profile },
+            ...veoModels.map((name) => ({ name, capability: "video" as const, videoType: "tokenone" as const, videoPreset: name, videoProfile: defaultVideoParameterPresets[name]?.profile })),
         ],
     }] };
     images = await import("@/lib/image-settings");
     videos = await import("@/lib/video-settings");
     await (await import("@/i18n")).appLocaleReady;
-    openai = await import("@/services/api/image-adapters/openai");
+    const adapter = await import("@/services/api/image-adapters/openai");
+    openai = { ...adapter, openAiImageParams: config => adapter.openAiImageParams({ ...config, imageProfile: imageModelProfile(config.model, "openai") }) };
     canvas = await import("@/lib/canvas/canvas-generation-helpers");
 });
 afterAll(() => {
@@ -88,9 +91,9 @@ test("video panels and requests derive the same mode, switches, duration and WAN
     expect(videos.videoSettingsForModel({ ...config, videoGenerateAudio: "false", videoWatermark: "true" }, "models::seedance", 3)).toMatchObject({ mode: "reference", forcedReference: true, generateAudio: false, watermark: true, seconds: "6" });
     expect(videos.videoSettingsForModel(config, "models::seedance", 2).mode).toBe("frames");
     expect(videos.videoSettingsForModel({ ...config, vquality: "1080" }, "models::wan3.0-video")).toMatchObject({ resolution: "1080", audioOptions: false });
-    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]) expect(videos.videoSettingsForModel({ ...config, videoSize }, "models::wan3.0-video").error).toBe("");
-    expect(new Set(videos.videoSettingsForModel(config, "models::wan3.0-video").ratios.map((item) => item.value))).toEqual(new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]));
-    expect(videos.videoSettingsForModel({ ...config, videoSize: "21:9" }, "models::wan3.0-video").error).toContain("宽高比");
+    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "auto"]) expect(videos.videoSettingsForModel({ ...config, videoSize }, "models::wan3.0-video").error).toBe("");
+    expect(new Set(videos.videoSettingsForModel(config, "models::wan3.0-video").ratios.map((item) => item.value))).toEqual(new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "auto"]));
+    expect(videos.videoSettingsForModel({ ...config, videoSize: "2:3" }, "models::wan3.0-video").error).toContain("宽高比");
 });
 
 test("history restores submitted image resolution, automatic size, transparency and actual WAN reference mode", () => {
@@ -118,7 +121,7 @@ test("canvas video panel exposes audio and watermark, removes W/H and shows effe
     expect(wan).toContain("1080p");
     expect(wan).toContain(">4:3<");
     expect(wan).toContain(">3:4<");
-    expect(wan).not.toContain(">21:9<");
+    expect(wan).toContain(">21:9<");
     expect(wan).toContain('min="2"');
     expect(wan).toContain('max="30"');
 });
@@ -128,7 +131,7 @@ test("switching from Seedance automatic duration to WAN preserves -1 and unlocks
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { VideoSettingsPanel } = await import("@/components/video-settings-panel");
     const { canvasThemes } = await import("@/lib/canvas-theme");
-    const selected = { ...config, model: "models::doubao-seedance-2-0-260128", videoSeconds: "-1", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const, videoPreset: "doubao-seedance-2-0-260128" }] }] };
+    const selected = { ...config, model: "models::doubao-seedance-2-0-260128", videoSeconds: "-1", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const, videoPreset: "doubao-seedance-2-0-260128", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-0-260128"]?.profile }] }] };
     const changes: string[] = [];
     const render = (value: AiConfig) => renderToStaticMarkup(createElement(VideoSettingsPanel, { config: value, theme: canvasThemes.light, onConfigChange: (_key, next) => changes.push(next) }));
     const seedance = render(selected);
@@ -155,7 +158,7 @@ test("model-aware panels show extra GPT quality and single-image Grok follows th
     const { ImageSettingsPanel } = await import("@/components/image-settings-panel");
     const { canvasThemes } = await import("@/lib/canvas-theme");
     const model = "models::gpt-image-2.5-flare";
-    const configured = { ...config, model, channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "gpt-image-2.5-flare", capability: "image" as const, imageType: "openai" as const }] }] };
+    const configured = { ...config, model, channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "gpt-image-2.5-flare", capability: "image" as const, imageType: "openai" as const, imagePreset: "gpt-image-2.5-flare", imageProfile: imageModelProfile("gpt-image-2.5-flare", "openai") }] }] };
     const markup = renderToStaticMarkup(createElement(ImageSettingsPanel, { config: configured, theme: canvasThemes.light, onConfigChange: () => {} }));
     expect(markup).toContain("极致");
     expect(markup).toContain("超高");
@@ -164,7 +167,7 @@ test("model-aware panels show extra GPT quality and single-image Grok follows th
     expect(grok).not.toContain(">16:9<");
     const restored = generationRequestSettings("image", { image: { url: "reference.png" }, resolution: "2k" });
     const { grokImageBody } = await import("@/services/api/image-adapters/grok");
-    const request = grokImageBody("grok-imagine-image-2.0", "edit", restored.size, "auto", 1, ["reference.png"]);
+    const request = grokImageBody("grok-imagine-image-2.0", "edit", restored.size, "auto", 1, ["reference.png"], imageModelProfile("grok-imagine-image-2.0", "grok"));
     expect(request.resolution).toBe("2k");
     expect(request).not.toHaveProperty("aspect_ratio");
     expect(images.imageSettingsForModel(configured, model, 17).error).toContain("16 张");
@@ -176,7 +179,7 @@ test("Seedance panel and history preserve automatic duration and 4k", async () =
     const { VideoSettingsPanel } = await import("@/components/video-settings-panel");
     const { canvasThemes } = await import("@/lib/canvas-theme");
     const model = "models::doubao-seedance-2-0-260128";
-    const configured = { ...config, model, videoSeconds: "-1", vquality: "4k", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const, videoPreset: "doubao-seedance-2-0-260128" }] }] };
+    const configured = { ...config, model, videoSeconds: "-1", vquality: "4k", channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "doubao-seedance-2-0-260128", capability: "video" as const, videoType: "seedance" as const, videoPreset: "doubao-seedance-2-0-260128", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-0-260128"]?.profile }] }] };
     const markup = renderToStaticMarkup(createElement(VideoSettingsPanel, { config: configured, theme: canvasThemes.light, onConfigChange: () => {} }));
     expect(markup).toContain("4K");
     expect(markup).toContain('aria-label="自动时长"');
@@ -240,7 +243,7 @@ test("selecting H3 repairs incompatible WAN parameters in one state update and o
         expect(states).toHaveLength(1);
         const selected = states[0]!;
         expect(videos.videoSettingsForModel(selected, model).error).toBe("");
-        expect(videoRequestBody("MiniMax-H3", { callType: "tokenone", preset: "MiniMax-H3" }, "生成短片", { images: [], videos: [], audios: [] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true })).toEqual({ model: "MiniMax-H3", prompt: "生成短片", duration: 4, resolution: "768P", ratio: "9:16" });
+        expect(videoRequestBody("MiniMax-H3", { callType: "tokenone", preset: "MiniMax-H3", profile: defaultVideoParameterPresets["MiniMax-H3"]?.profile }, "生成短片", { images: [], videos: [], audios: [] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true })).toEqual({ model: "MiniMax-H3", prompt: "生成短片", duration: 4, resolution: "768P", ratio: "9:16" });
         expect(selected.size).toBe(config.size);
     } finally {
         unsubscribe(); globalThis.fetch = fetch;
@@ -271,7 +274,7 @@ test("canvas H3 selection saves defaults to node fields and the resulting reques
     expect(config.vquality).toBe("720");
 });
 
-test("H3 to WAN repairs resolution and ratio in one saved patch while retaining duration and reference mode", async () => {
+test("H3 to WAN repairs resolution while retaining supported ratio, duration and reference mode", async () => {
     const { useConfigStore } = await import("@/stores/use-config-store");
     const { getAccountResource } = await import("@/services/api/account");
     const { videoRequestBody } = await import("../../shared/video-request");
@@ -295,13 +298,13 @@ test("H3 to WAN repairs resolution and ratio in one saved patch while retaining 
             try {
                 useConfigStore.getState().updateConfig("videoModel", model);
                 await savedRequest;
-                expect(await getAccountResource("/settings")).toMatchObject({ videoModel: model, vquality: "720", videoSize: "1:1", videoSeconds: "15", videoMode: "reference" });
-                expect(patches).toEqual([{ videoModel: model, vquality: "720", videoSize: "1:1" }]);
+                expect(await getAccountResource("/settings")).toMatchObject({ videoModel: model, vquality: "720", videoSize: "21:9", videoSeconds: "15", videoMode: "reference" });
+                expect(patches).toEqual([{ videoModel: model, vquality: "720" }]);
                 expect(states).toHaveLength(1);
                 const selected = states[0]!;
                 expect(videos.videoSettingsForModel(selected, model, 9, { videos: [{ durationMs: 6000 }], audios: [{}] }).error).toBe("");
-                const body = videoRequestBody(model.split("::")[1]!, { callType: "tokenone", preset: "wan3.0-video" }, "生成短片", { images: ["https://example.com/image.png"], videos: ["https://example.com/video.mp4"], audios: ["https://example.com/audio.mp3"] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true });
-                expect(body).toMatchObject({ duration: 15, resolution: "720P", ratio: "1:1", metadata: { input: { media: [
+                const body = videoRequestBody(model.split("::")[1]!, { callType: "tokenone", preset: "wan3-standard", profile: defaultVideoParameterPresets["wan3-standard"]?.profile }, "生成短片", { images: ["https://example.com/image.png"], videos: ["https://example.com/video.mp4"], audios: ["https://example.com/audio.mp3"] }, { seconds: selected.videoSeconds, resolution: selected.vquality, ratio: selected.videoSize, mode: selected.videoMode, generateAudio: true, watermark: true });
+                expect(body).toMatchObject({ duration: 15, resolution: "720P", ratio: "21:9", metadata: { input: { media: [
                     { type: "reference_image", url: "https://example.com/image.png" },
                     { type: "reference_video", url: "https://example.com/video.mp4" },
                     { type: "reference_audio", url: "https://example.com/audio.mp3" },
@@ -315,7 +318,7 @@ test("H3 to WAN repairs resolution and ratio in one saved patch while retaining 
 test("WAN return keeps supported values and repairs invalid duration on model selection", async () => {
     const { videoModelSelectionPatch } = await import("@/stores/use-config-store");
     const selected = { ...config, videoModel: "models::MiniMax-H3", vquality: "720", videoSeconds: "4" };
-    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "auto"]) {
+    for (const videoSize of ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "auto"]) {
         expect(videoModelSelectionPatch({ ...selected, videoSize }, "models::wan3.0-video")).toEqual({});
     }
     expect(videoModelSelectionPatch({ ...selected, videoSeconds: "-1" }, "models::wan3.0-video")).toEqual({ videoSeconds: "6" });
@@ -325,9 +328,9 @@ test("canvas WAN return uses the node's H3 model instead of the workspace model"
     const workspace = { ...config, videoModel: "models::wan3.0-video" };
     const node = { id: "node", type: "config", title: "设置", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model: "models::MiniMax-H3", seconds: "4", vquality: "2K", videoSize: "21:9", videoMode: "frames", prompt: "生成短片" } };
     const patch = canvas.canvasVideoModelPatch(canvas.buildGenerationConfig(workspace, node, "video"), "models::wan3.0-video");
-    expect(patch).toEqual({ model: "models::wan3.0-video", vquality: "720", videoSize: "1:1" });
+    expect(patch).toEqual({ model: "models::wan3.0-video", vquality: "720" });
     const selected = canvas.buildGenerationConfig(workspace, { ...node, metadata: { ...node.metadata, ...patch } }, "video");
-    expect(videos.videoSettingsForModel(selected, selected.model, 2)).toMatchObject({ error: "", seconds: "4", resolution: "720", ratio: "1:1", mode: "frames" });
+    expect(videos.videoSettingsForModel(selected, selected.model, 2)).toMatchObject({ error: "", seconds: "4", resolution: "720", ratio: "21:9", mode: "frames" });
     expect(workspace.vquality).toBe("720");
 });
 
@@ -384,7 +387,7 @@ test("Veo / Omni panels expose fixed quality, supported modes and material rules
             expect(markup).not.toContain('aria-label="生成音频"');
             expect(markup).not.toContain('aria-label="视频水印"');
             expect(markup).not.toContain(">1:1<");
-            expect(markup).toContain(name === "omni-flash-video" ? "1–3 张参考图" : name === "veo-3.1-fast-1080p" ? "仅支持文生视频" : "2 张首尾帧");
+            expect(markup).toContain(name === "omni-flash-video" ? "1–3 张图片" : name === "veo-3.1-fast-1080p" ? "最多 0 张" : "可使用首帧或首尾帧");
         }
     }
     const model = "models::veo-3.1-fast";
@@ -408,7 +411,7 @@ test("Veo canvas defaults match the authoritative request when an Agent omits no
         const settings = videos.videoSettingsForModel(current, current.model);
         expect(settings.error).toBe("");
         const refs = { images: [], videos: [], audios: [] };
-        expect(videoRequestBody(model, { callType: "tokenone", preset: model }, "画面", refs, { seconds: settings.seconds, resolution: settings.resolution, ratio: settings.ratio, mode: settings.mode, generateAudio: false, watermark: false })).toEqual(canvasRequestBody(model, "video", "veo", node.metadata, refs, "", "", { callType: "tokenone", preset: model }));
+        expect(videoRequestBody(model, { callType: "tokenone", preset: model, profile: defaultVideoParameterPresets[model]?.profile }, "画面", refs, { seconds: settings.seconds, resolution: settings.resolution, ratio: settings.ratio, mode: settings.mode, generateAudio: false, watermark: false })).toEqual(canvasRequestBody(model, "video", "veo", node.metadata, refs, "", "", { callType: "tokenone", preset: model, profile: defaultVideoParameterPresets[model]?.profile }));
     }
 });
 
@@ -418,4 +421,25 @@ test("video switches use preset defaults but preserve valid explicit choices", a
     const profile = { ...base, fastModeOptions: ["", "false", "true"], defaults: { ...base.defaults, generateAudio: false, watermark: true, fastMode: "false" } };
     expect(videoSwitchSettings(profile, { generateAudio: "invalid", watermark: "invalid", fastMode: "invalid" })).toEqual({ generateAudio: false, watermark: true, fastMode: false });
     expect(videoSwitchSettings(profile, { generateAudio: "true", watermark: "false", fastMode: "true" })).toEqual({ generateAudio: true, watermark: false, fastMode: true });
+});
+
+test("maintained image profiles drive workbench options, canvas defaults and model switching", async () => {
+    const { imageModelSelectionPatch } = await import("@/stores/use-config-store");
+    const profile = structuredClone(imageModelProfile("", "openai"));
+    profile.qualities = ["auto", "custom-quality"];
+    profile.defaults = { size: "1:1", quality: "custom-quality", background: "" };
+    profile.pixelBounds.step = 8;
+    profile.sizePresets["1k"]["1:1"] = "1000x1000";
+    const model = "models::maintained-alias";
+    const configured: AiConfig = { ...config, channels: [{ ...config.channels[0]!, models: [...config.channels[0]!.models, { name: "maintained-alias", capability: "image", imageType: "openai", imagePreset: "database-id", imageProfile: profile }] }] };
+    const settings = images.imageSettingsForModel({ ...configured, size: "auto", quality: "custom-quality" }, model);
+    expect(settings.qualities.map(item => item.value)).toEqual(["auto", "custom-quality"]);
+    expect(images.selectImageRatio(settings, "1:1")).toBe("1000x1000");
+    expect(images.alignImageDimension(1001, settings.profile!.pixelBounds.step)).toBe(1008);
+    expect(imageModelSelectionPatch(configured, model)).toEqual({});
+    const patch = imageModelSelectionPatch({ ...configured, quality: "high" }, model);
+    expect(patch).toEqual({ quality: "custom-quality" });
+    expect(imageModelSelectionPatch({ ...configured, ...patch }, "models::gpt-image")).toEqual({ quality: "auto" });
+    const node = { id: "image", type: "image", title: "画面", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { model } };
+    expect(canvas.buildGenerationConfig(configured, node, "image")).toMatchObject({ model, quality: "custom-quality", size: "1:1" });
 });

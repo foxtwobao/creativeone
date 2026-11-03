@@ -35,7 +35,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
         const width = key === "width" ? next : dimensions.width;
         const height = key === "height" ? next : dimensions.height;
-        onConfigChange("size", `${alignImageDimension(width)}x${alignImageDimension(height)}`);
+        onConfigChange("size", `${alignImageDimension(width, profile.pixelBounds.step)}x${alignImageDimension(height, profile.pixelBounds.step)}`);
     };
 
     return (
@@ -65,12 +65,12 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {profile.pixelSize ? <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.size")}</SettingTitle>
-                        <span className="text-xs" style={{ color: theme.node.muted }}>宽高自动向上对齐到 16 的倍数</span>
+                        <span className="text-xs" style={{ color: theme.node.muted }}>宽高自动向上对齐到 {profile.pixelBounds.step} 的倍数</span>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
+                        <DimensionInput step={profile.pixelBounds.step} prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput step={profile.pixelBounds.step} prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div> : null}
                 {scales.length ? <div className="space-y-2.5">
@@ -173,9 +173,9 @@ function OptionPill({ selected, disabled = false, theme, onClick, children }: { 
     );
 }
 
-function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
+function DimensionInput({ prefix, value, disabled, theme, onChange, step }: { step: number; prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     const commit = (input: HTMLInputElement) => {
-        const next = alignImageDimension(Math.max(1, Math.floor(Number(input.value) || value || 1024)));
+        const next = alignImageDimension(Math.max(1, Math.floor(Number(input.value) || value || 1024)), step);
         input.value = String(next);
         onChange(next);
     };

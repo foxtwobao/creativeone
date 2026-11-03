@@ -1,3 +1,4 @@
+import { imageModelProfile } from "../../shared/image-models";
 import { expect, test } from "bun:test";
 
 test("cloud image types reach model selection and requests without name-based inference", async () => {
@@ -11,6 +12,8 @@ test("cloud image types reach model selection and requests without name-based in
         if (path === "/api/channels") return Response.json({ channels: [{ id: "channel", name: "图片", capability: "image", is_default: true,
             models: ["banana-looking-alias", "private-alias", "gpt-image-alias", "grok-unconfigured"],
             image_types: { "banana-looking-alias": "openai", "private-alias": "banana", "gpt-image-alias": "grok" },
+            image_presets: { "banana-looking-alias": "preset-a", "private-alias": "preset-b", "gpt-image-alias": "preset-c" },
+            image_profiles: { "banana-looking-alias": imageModelProfile("gpt-image-2", "openai"), "private-alias": imageModelProfile("banana2-2k", "banana"), "gpt-image-alias": imageModelProfile("grok-imagine-image-2.0", "grok") },
         }] });
         if (path === "/api/settings") return Response.json({});
         throw new Error(`Unexpected request: ${path}`);
@@ -25,6 +28,9 @@ test("cloud image types reach model selection and requests without name-based in
         expect(resolveModelRequestConfig(config, "channel::private-alias").imageType).toBe("banana");
         expect(resolveModelRequestConfig(config, "channel::gpt-image-alias").imageType).toBe("grok");
         expect(resolveModelRequestConfig(config, "channel::grok-unconfigured").imageType).toBeUndefined();
+        expect(resolveModelRequestConfig(config, "channel::banana-looking-alias").imageProfile?.omitResponseFormat).toBe(true);
+        expect(resolveModelRequestConfig(config, "channel::private-alias").imageProfile?.fixedResolution).toBe("2k");
+        expect(resolveModelRequestConfig(config, "channel::gpt-image-alias").imageProfile?.maxReferences).toBe(5);
     } finally {
         globalThis.fetch = fetch;
         if (window) Object.defineProperty(globalThis, "window", window); else Reflect.deleteProperty(globalThis, "window");

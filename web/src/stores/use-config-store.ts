@@ -1,11 +1,12 @@
+import { imageParameterPatch } from "../../../shared/image-size";
 import { videoParameterPatch } from "../../../shared/video-models";
 import { registerCloudRetry } from "@/services/cloud-storage";
 import { create } from "zustand";
 import { cloudSession } from "@/services/api/cloud";
 import { getAccountResource, changeAccountResource } from "@/services/api/account";
 import { useCloudStore } from "@/stores/use-cloud-store";
-import type { ImageModelType } from "../../../shared/image-models";
-import { videoConfiguredProfile, videoModelProfile, type VideoCallType, type VideoModelType, videoParameterPresets, type VideoModelConfig } from "../../../shared/video-models";
+import { type ImageModelType, type ImageProfile, type ImageModelConfig, imageConfiguredProfile } from "../../../shared/image-models";
+import { videoConfiguredProfile, videoModelProfile, type VideoCallType, type VideoModelType, type VideoProfile, type VideoModelConfig } from "../../../shared/video-models";
 import { parseVideoResolution } from "../../../shared/media-size";
 
 
@@ -19,8 +20,11 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     imageType?: ImageModelType;
+    imagePreset?: string;
+    imageProfile?: ImageProfile;
     videoType?: VideoCallType;
     videoPreset?: string;
+    videoProfile?: VideoProfile;
     audioType?: AudioModelType;
     description?: string;
     script?: string;
@@ -104,7 +108,7 @@ const managedKeys = new Set(["channels", "baseUrl", "apiKey", "apiFormat", "mode
 function applyCloudConfig(config: AiConfig): AiConfig {
     const channels: ModelChannel[] = (cloudSession?.channels || []).map((channel) => ({
         id: channel.id, name: channel.name, baseUrl: `${window.location.origin}/api/ai/${channel.id}/v1`,
-        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], videoType: channel.video_types?.[name], videoPreset: channel.video_presets?.[name], audioType: channel.audio_types?.[name], description: channel.model_descriptions?.[name] })),
+        apiKey: cloudSession?.csrf || "", apiFormat: "openai", models: channel.models.map((name) => ({ name, capability: channel.capability, imageType: channel.image_types[name], imagePreset: channel.image_presets?.[name], imageProfile: channel.image_profiles?.[name], videoType: channel.video_types?.[name], videoPreset: channel.video_presets?.[name], videoProfile: channel.video_profiles?.[name], audioType: channel.audio_types?.[name], description: channel.model_descriptions?.[name] })),
     }));
     const next = { ...config, channels, models: modelOptionsFromChannels(channels), baseUrl: "", apiKey: "", apiFormat: "openai" as const };
     next.audioVoice = audioVoices.includes(config.audioVoice) ? config.audioVoice : defaultSpeechInput.voice;
@@ -152,6 +156,20 @@ export function modelAudioTypeOf(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.audioType;
 }
 
+export function modelImageConfigOf(config: AiConfig, value: string): ImageModelConfig {
+    const model = findChannelModel(config, value)?.model;
+    if (!model?.imageType || !model.imagePreset) throw new Error("请在管理后台配置图片调用类型和参数预设。");
+    return { callType: model.imageType, preset: model.imagePreset, profile: model.imageProfile };
+}
+export function imageModelSelectionPatch(config: AiConfig, value: string) {
+    const profile = modelImageProfileOf(config, value);
+    return profile ? imageParameterPatch(profile, config) : {};
+}
+export function modelImageProfileOf(config: AiConfig, value: string) {
+    const model = findChannelModel(config, value)?.model;
+    return model?.imageType && model.imagePreset && model.imageProfile?.family === model.imageType ? imageConfiguredProfile(modelImageConfigOf(config, value)) : undefined;
+}
+
 export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelType {
     return modelVideoProfileOf(config, value).family;
 }
@@ -159,11 +177,11 @@ export function modelVideoTypeOf(config: AiConfig, value: string): VideoModelTyp
 export function modelVideoConfigOf(config: AiConfig, value: string): VideoModelConfig {
     const model = findChannelModel(config, value)?.model;
     if (!model?.videoType || !model.videoPreset) throw new Error("请在管理后台配置视频调用类型和参数预设。");
-    return { callType: model.videoType, preset: model.videoPreset };
+    return { callType: model.videoType, preset: model.videoPreset, profile: model.videoProfile };
 }
 export function modelVideoProfileOf(config: AiConfig, value: string) {
     const model = findChannelModel(config, value)?.model;
-    return model?.videoType && model.videoPreset && videoParameterPresets[model.videoPreset]?.callType === model.videoType ? videoConfiguredProfile({ callType: model.videoType, preset: model.videoPreset }) : { ...videoModelProfile("", "seedance"), resolutions: [] };
+    return model?.videoType && model.videoPreset && model.videoProfile && (model.videoProfile.family === "seedance" ? "seedance" : "tokenone") === model.videoType ? videoConfiguredProfile({ callType: model.videoType, preset: model.videoPreset, profile: model.videoProfile }) : { ...videoModelProfile("", "seedance"), resolutions: [] };
 }
 
 export function videoModelSelectionPatch(config: AiConfig, model: string) {
@@ -229,7 +247,7 @@ export const useConfigStore = create<ConfigStore>()((set, get) => ({
     updateConfig: (key, value) => {
         if (managedKeys.has(key)) return;
         const config = get().config;
-        const patch = { [key]: value, ...(key === "videoModel" ? videoModelSelectionPatch(config, value as string) : {}) };
+        const patch = { [key]: value, ...(key === "videoModel" ? videoModelSelectionPatch(config, value as string) : key === "imageModel" ? imageModelSelectionPatch(config, value as string) : {}) };
         if (Object.entries(patch).every(([key, value]) => config[key as keyof AiConfig] === value)) return;
         settingsVersion++;
         set({ config: { ...config, ...patch } });
@@ -245,13 +263,15 @@ export async function loadUserSettings() {
     const saved = await getAccountResource<Partial<AiConfig>>("/settings");
     if (version !== settingsVersion) return;
     const config = applyCloudConfig({ ...defaultConfig, ...saved });
+    const imageProfile = modelImageProfileOf(config, config.imageModel);
+    if (imageProfile) for (const key of ["size", "quality", "background"] as const) if (saved[key] === undefined) config[key] = imageProfile.defaults[key];
     const profile = modelVideoProfileOf(config, config.videoModel);
     if (profile.resolutions.length) {
         const defaults = profile.defaults;
         const initial = { vquality: defaults.resolution, videoSize: defaults.ratio, videoSeconds: defaults.seconds, videoMode: defaults.mode, videoGenerateAudio: String(defaults.generateAudio), videoWatermark: String(defaults.watermark), videoFastMode: defaults.fastMode };
         for (const key of Object.keys(initial) as (keyof typeof initial)[]) if (saved[key] === undefined) config[key] = initial[key];
     }
-    const patch = videoModelSelectionPatch(config, config.videoModel);
+    const patch = { ...videoModelSelectionPatch(config, config.videoModel), ...imageModelSelectionPatch(config, config.imageModel) };
     useConfigStore.setState({ config: { ...config, ...patch } });
     if (Object.keys(patch).length) await saveSettings(patch);
 }
@@ -307,10 +327,13 @@ export function resolveModelChannel(config: AiConfig, value: string) {
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
+    const imageProfile = modelImageProfileOf(config, value || config.model);
     return {
         ...config,
         model: modelOptionName(value || config.model),
         imageType: modelImageTypeOf(config, value || config.model),
+        imageProfile,
+        ...(imageProfile ? { size: config.size || imageProfile.defaults.size, quality: config.quality || imageProfile.defaults.quality, background: config.background ?? imageProfile.defaults.background } : {}),
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
@@ -326,4 +349,11 @@ export function buildApiUrl(baseUrl: string, path: string) {
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
+}
+
+export async function refreshModelConfiguration() {
+    if (!cloudSession) return;
+    const { cloudApi } = await import("@/services/api/cloud");
+    cloudSession.channels = (await cloudApi<{ channels: import("@/services/api/cloud").CloudChannel[] }>("/channels")).channels;
+    useConfigStore.setState(state => ({ config: applyCloudConfig(state.config) }));
 }
