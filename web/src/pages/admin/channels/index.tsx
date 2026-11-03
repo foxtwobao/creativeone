@@ -1,19 +1,26 @@
+import { useImagePresetsStore } from "@/stores/use-image-presets-store";
+import { useVideoPresetsStore } from "@/stores/use-video-presets-store";
+import { refreshModelConfiguration } from "@/stores/use-config-store";
 import { useEffect, useState } from "react";
 import { Alert, App, Button, Checkbox, Form, Input, Modal, Select, Switch, Table, Tag } from "antd";
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import type { ModelCapabilities } from "../../../../../shared/agent-settings";
 import { cloudApi, cloudSession } from "@/services/api/cloud";
 import { imageModelTypes, imageModelTypeLabels, type ImageModelType } from "../../../../../shared/image-models";
-import { videoCallTypes, videoCallTypeLabels, videoParameterPresets, type VideoCallType } from "../../../../../shared/video-models";
+import { videoCallTypes, videoCallTypeLabels, type VideoCallType } from "../../../../../shared/video-models";
 
 import { audioModelTypes, audioModelTypeLabels, type AudioModelType } from "../../../../../shared/audio";
 
-type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; video_types: Record<string, VideoCallType>; video_presets: Record<string, string>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; model_capabilities:Record<string,ModelCapabilities>;default_model: string; enabled: boolean };
+type Channel = { id?: string; capability: string; models: string[]; image_types: Record<string, ImageModelType>; image_presets: Record<string, string>; video_types: Record<string, VideoCallType>; video_presets: Record<string, string>; audio_types: Record<string, AudioModelType>; model_descriptions: Record<string, string>; model_capabilities:Record<string,ModelCapabilities>;default_model: string; enabled: boolean };
 type Group = { id: string; name: string; status: string; is_default: boolean };
 const capabilities = [{ value: "image", label: "图片生成 / 编辑" }, { value: "text", label: "聊天 / 文本生成" }, { value: "video", label: "视频生成" }, { value: "audio", label: "音频生成" }];
 
 export default function ChannelsPage() {
     const { message } = App.useApp();
+    const { presets, error: presetsError, load: loadPresets } = useVideoPresetsStore();
+    const { presets: imagePresets, error: imagePresetsError, load: loadImagePresets } = useImagePresetsStore();
+    const imageParameterPresets = Object.fromEntries(imagePresets.map(preset => [preset.id, preset]));
+    const videoParameterPresets = Object.fromEntries(presets.map(preset => [preset.id, preset]));
     const [channels, setChannels] = useState<Channel[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
     const [models, setModels] = useState<string[]>([]);
@@ -25,13 +32,14 @@ export default function ChannelsPage() {
     const [loading, setLoading] = useState(true);
     const [form] = Form.useForm();
     const selectedModels: string[] = Form.useWatch("models", form) || [];
+    const imageTypes: Record<string, ImageModelType> = Form.useWatch("image_types", form) || {};
     const videoTypes: Record<string, VideoCallType> = Form.useWatch("video_types", form) || {};
     const modelCapabilities: Record<string, ModelCapabilities> | undefined = Form.useWatch("model_capabilities", form);
     const agentEnabledCount = selectedModels.filter((model) => modelCapabilities?.[model]?.agentEnabled).length;
     const load = async () => {
         setLoading(true);
         try {
-            const [c, g] = await Promise.all([cloudApi<{ channels: Channel[] }>("/admin/channels"), cloudApi<{ groups: Group[] }>("/admin/groups")]);
+            const [c, g] = await Promise.all([cloudApi<{ channels: Channel[] }>("/admin/channels"), cloudApi<{ groups: Group[] }>("/admin/groups"), loadPresets(), loadImagePresets()]);
             setChannels(c.channels); setGroups(g.groups); setError("");
         } catch (error) { setError(error instanceof Error ? error.message : "加载失败"); }
         finally { setLoading(false); }
@@ -51,7 +59,7 @@ export default function ChannelsPage() {
     const edit = (channel: Channel) => {
         setEditing(channel.capability);
         form.resetFields();
-        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, audio_types: channel.audio_types, video_types: channel.video_types, video_presets: channel.video_presets, model_descriptions: channel.model_descriptions, model_capabilities:channel.model_capabilities,default_model: channel.default_model, enabled: channel.enabled });
+        form.setFieldsValue({ models: channel.models, image_types: channel.image_types, image_presets: channel.image_presets, audio_types: channel.audio_types, video_types: channel.video_types, video_presets: channel.video_presets, model_descriptions: channel.model_descriptions, model_capabilities:channel.model_capabilities,default_model: channel.default_model, enabled: channel.enabled });
         if (!modelsLoading) void loadModels();
     };
     const save = async () => {
@@ -61,25 +69,28 @@ export default function ChannelsPage() {
         try {
             const models = [...new Set<string>(values.models.map((model: string) => model.trim()).filter(Boolean))];
             const image_types = editing === "image" ? Object.fromEntries(models.map((model) => [model, values.image_types[model]])) : {};
+            const image_presets = editing === "image" ? Object.fromEntries(models.map(model => [model, values.image_presets[model]])) : {};
             const video_types = editing === "video" ? Object.fromEntries(models.map((model) => [model, values.video_types[model]])) : {};
             const video_presets = editing === "video" ? Object.fromEntries(models.map(model => [model, values.video_presets[model]])) : {};
             const audio_types = editing === "audio" ? Object.fromEntries(models.map((model) => [model, values.audio_types[model]])) : {};
             const model_capabilities=Object.fromEntries(models.map(model=>[model,{agentEnabled:Boolean(values.model_capabilities?.[model]?.agentEnabled),imageInput:editing==="text"&&Boolean(values.model_capabilities?.[model]?.imageInput)}]));
             const model_descriptions = Object.fromEntries(models.filter((model) => values.model_descriptions?.[model]?.trim()).map((model) => [model, values.model_descriptions[model].trim()]));
-            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, video_types, video_presets, audio_types, model_descriptions,model_capabilities }) });
-            setEditing(null); await load(); void useServerAgentStore.getState().loadConfig().catch(()=>message.warning("配置已保存，请刷新页面更新助手入口。"));message.success("配置已保存，重新加载页面后生效");
+            await cloudApi(`/admin/channels/${editing}`, { method: "PUT", body: JSON.stringify({ ...values, models, image_types, image_presets, video_types, video_presets, audio_types, model_descriptions,model_capabilities }) });
+            setEditing(null); await load(); await refreshModelConfiguration(); void useServerAgentStore.getState().loadConfig().catch(()=>message.warning("配置已保存，请刷新页面更新助手入口。"));message.success("配置已保存，其他已打开页面请刷新");
         } catch (error) { message.error(error instanceof Error ? error.message : "保存失败"); }
         finally { setSaving(false); }
     };
-    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, video_types: {}, video_presets: {}, audio_types: {}, model_descriptions: {}, model_capabilities:{},default_model: "", enabled: false });
+    const rows = capabilities.map(({ value }) => channels.find((channel) => channel.capability === value) || { capability: value, models: [], image_types: {}, image_presets: {}, video_types: {}, video_presets: {}, audio_types: {}, model_descriptions: {}, model_capabilities:{},default_model: "", enabled: false });
     return <main className="h-full overflow-auto bg-background p-6"><div className="mx-auto max-w-5xl space-y-5">
         <h1 className="text-xl font-semibold">功能模型配置</h1>
+        {imagePresetsError ? <Alert type="error" title={imagePresetsError} action={<Button onClick={() => void loadImagePresets()}>重试加载图片预设</Button>} /> : null}
+        {presetsError ? <Alert type="error" title={presetsError} action={<Button onClick={() => void loadPresets()}>重试加载预设</Button>} /> : null}
         <p className="text-sm text-muted-foreground">按功能维护可用模型、默认模型和启用状态；所有功能使用 Reseller 管理的应用默认分组。</p>
         <p className="text-sm text-muted-foreground">应用当前分组：{groups.map((group) => `${group.name} (${group.id})${group.is_default ? " · 默认" : ""}${group.status !== "active" ? " · 不可用" : ""}`).join("、") || "暂无"}；分组配置请在 Reseller 管理后台调整。</p>
         {error ? <Alert type="error" title={error} action={<Button onClick={() => void load()}>重试</Button>} /> : null}
         <Table<Channel> rowKey="capability" dataSource={rows} loading={loading} pagination={false} scroll={{ x: true }} columns={[
             { title: "功能", dataIndex: "capability", render: (value) => capabilities.find((item) => item.value === value)?.label },
-            { title: "模型", dataIndex: "models", render: (models: string[], channel) => models.length ? <div className="space-y-1">{models.map((model) => <div key={model} className="flex flex-wrap items-center gap-2"><span>{model}</span>{channel.capability === "image" ? <Tag>{imageModelTypeLabels[channel.image_types[model]] || "未配置类型"}</Tag> : channel.capability === "video" ? <><Tag>{videoCallTypeLabels[channel.video_types?.[model]] || "未配置类型"}</Tag><Tag>{videoParameterPresets[channel.video_presets?.[model]]?.label || "未配置参数预设"}</Tag></> : channel.capability === "audio" ? <Tag>{audioModelTypeLabels[channel.audio_types?.[model]] || "未配置类型"}</Tag> : null}</div>)}</div> : "尚未配置" },
+            { title: "模型", dataIndex: "models", render: (models: string[], channel) => models.length ? <div className="space-y-1">{models.map((model) => <div key={model} className="flex flex-wrap items-center gap-2"><span>{model}</span>{channel.capability === "image" ? <><Tag>{imageModelTypeLabels[channel.image_types[model]] || "未配置类型"}</Tag><Tag>{imageParameterPresets[channel.image_presets?.[model]]?.label || "未配置参数预设"}</Tag></> : channel.capability === "video" ? <><Tag>{videoCallTypeLabels[channel.video_types?.[model]] || "未配置类型"}</Tag><Tag>{videoParameterPresets[channel.video_presets?.[model]]?.label || "未配置参数预设"}</Tag></> : channel.capability === "audio" ? <Tag>{audioModelTypeLabels[channel.audio_types?.[model]] || "未配置类型"}</Tag> : null}</div>)}</div> : "尚未配置" },
             { title: "默认模型", dataIndex: "default_model", render: (value) => value || "—" },
             { title: "状态", render: (_, channel) => <Tag>{channel.enabled ? "启用" : "停用"}</Tag> },
             { title: "操作", render: (_, channel) => <Button type="link" disabled={Boolean(error)} onClick={() => edit(channel)}>编辑</Button> },
@@ -107,6 +118,9 @@ export default function ChannelsPage() {
                         <p className="mb-2 break-all text-sm font-medium">{model}</p>
                         {editing === "image" || editing === "video" || editing === "audio" ? <Form.Item name={[editing === "image" ? "image_types" : editing === "audio" ? "audio_types" : "video_types", model]} label="调用类型" rules={[{ required: true, message: "请选择调用类型" }]}>
                         <Select aria-label={`${model} 的调用类型`} options={editing === "image" ? imageModelTypes.map((value) => ({ value, label: imageModelTypeLabels[value] })) : editing === "audio" ? audioModelTypes.map((value) => ({ value, label: audioModelTypeLabels[value] })) : videoCallTypes.map((value) => ({ value, label: videoCallTypeLabels[value] }))} />
+                        </Form.Item> : null}
+                        {editing === "image" ? <Form.Item name={["image_presets", model]} label="参数预设" rules={[{ required: true, message: "请选择参数预设" }, { validator: (_, value) => !value || imageParameterPresets[value]?.callType === imageTypes[model] ? Promise.resolve() : Promise.reject(new Error("参数预设与调用类型不匹配，请重新选择")) }]} extra="完整控制图片参数、尺寸映射与素材限制；不会替换模型 ID。">
+                            <Select aria-label={`${model} 的图片参数预设`} showSearch optionFilterProp="label" options={imagePresets.filter(p => p.callType === imageTypes[model]).map(p => ({ value: p.id, label: p.label }))} />
                         </Form.Item> : null}
                         {editing === "video" ? <Form.Item name={["video_presets", model]} label="参数预设" rules={[{ required: true, message: "请选择参数预设" }, { validator: (_, value) => !value || videoParameterPresets[value]?.callType === videoTypes[model] ? Promise.resolve() : Promise.reject(new Error("参数预设与调用类型不匹配，请重新选择")) }]} extra="控制允许的参数值、默认值和界面规则；不会替换模型 ID。">
                             <Select aria-label={`${model} 的参数预设`} showSearch optionFilterProp="label" options={Object.entries(videoParameterPresets).filter(([, preset]) => preset.callType === videoTypes[model]).map(([value, preset]) => ({ value, label: preset.label }))} />

@@ -636,12 +636,13 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 }
 
 async function requestModelImages(config: ReturnType<typeof resolveModelRequestConfig>, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions, userPrompt = prompt) {
-    const family = config.imageType;
+    const family = config.imageType, profile = config.imageProfile;
+    if (!profile) throw new Error("缺少图片参数预设。");
     const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const requestPrompt = withSystemPrompt(config, prompt);
     const body = family === "banana"
-        ? bananaImageBody(config.model, requestPrompt, config.size, count, images)
-        : grokImageBody(config.model, requestPrompt, config.size, config.quality, count, images);
+        ? bananaImageBody(config.model, requestPrompt, config.size, count, images, profile)
+        : grokImageBody(config.model, requestPrompt, config.size, config.quality, count, images, profile);
     const endpoint = family === "banana" || !images.length ? "/images/generations" : "/images/edits";
     const response = await axios.post<ImageApiResponse>(aiApiUrl(config, endpoint), { ...body, user_prompt: userPrompt, ...(options?.canvasContext ? { canvas_context: options.canvasContext } : {}) }, {
         headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS,
@@ -660,7 +661,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     if (options?.canvasContext && (script || requestConfig.apiFormat === "gemini")) throw new Error("画布生成仅支持后台配置的图片调用类型，暂不支持脚本与直连协议。");
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(config.size);
+        const requestSize = resolveRequestSize(config.size, requestConfig.imageProfile);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -726,7 +727,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (options?.canvasContext && (script || requestConfig.apiFormat === "gemini")) throw new Error("画布生成仅支持后台配置的图片调用类型，暂不支持脚本与直连协议。");
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(config.size);
+        const requestSize = resolveRequestSize(config.size, requestConfig.imageProfile);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {

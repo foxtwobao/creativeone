@@ -16,6 +16,8 @@ const ImagePage = lazyWithReload(() => import("@/pages/image"));
 const NotFound = lazyWithReload(() => import("@/pages/not-found"));
 const PromptsPage = lazyWithReload(() => import("@/pages/prompts"));
 const VideoPage = lazyWithReload(() => import("@/pages/video"));
+const ImagePresetsPage = lazyWithReload(() => import("@/pages/admin/image-presets"));
+const VideoPresetsPage = lazyWithReload(() => import("@/pages/admin/video-presets"));
 const ChannelsPage = lazyWithReload(() => import("@/pages/admin/channels"));
 const AdminTasksPage = lazyWithReload(() => import("@/pages/admin/tasks"));
 const AdminAgentPage = lazyWithReload(() => import("@/pages/admin/agent"));
@@ -41,7 +43,10 @@ export const router = createBrowserRouter([
             { path: "/canvas/:id", element: features.canvas ? <CanvasProjectPage /> : <Navigate to="/studio" replace /> },
             { path: "/config", element: <ConfigPage /> },
             { path: "/pricing", element: <PricingPage /> },
+            { path: "/admin", element: <Navigate to="/admin/channels" replace /> },
             { path: "/admin/channels", element: <ChannelsPage /> },
+            { path: "/admin/image-presets", element: <ImagePresetsPage /> },
+            { path: "/admin/video-presets", element: <VideoPresetsPage /> },
             { path: "/admin/tasks", element: <AdminTasksPage /> },
             { path: "/admin/agent", element: <AdminAgentPage /> },
             { path: "/tasks", element: <Navigate to="/assets?view=tasks" replace /> },

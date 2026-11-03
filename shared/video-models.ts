@@ -6,7 +6,7 @@ export const wanAspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "adaptive"]
 export const h3AspectRatios = [...wanAspectRatios, "21:9"] as const;
 export const h3VideoDefaults = { videoSeconds: "4", vquality: "768", videoSize: "16:9" } as const;
 
-type VideoCapabilities = {
+export type VideoCapabilities = {
     defaults: { resolution: string; ratio: string; seconds: string; mode: "frames" | "reference"; generateAudio: boolean; watermark: boolean; fastMode: string };
     fastModeOptions?: string[];
     durationByResolution?: Record<string, { min: number; max: number; auto: boolean }>;
@@ -22,7 +22,7 @@ type VideoCapabilities = {
 export const videoTypePresets: Record<VideoModelType, VideoCapabilities> = {
     seedance: { defaults: { resolution: "720", ratio: "16:9", seconds: "6", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, resolutions: ["480", "720", "1080"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9", "auto"], duration: null, maxImages: null, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: true, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: true, modes: ["frames", "reference"] },
     seedance_public: { defaults: { resolution: "720", ratio: "16:9", seconds: "6", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, resolutions: [], ratios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"], duration: { min: 4, max: 30, auto: false }, maxImages: null, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: true, modes: ["frames", "reference"] },
-    wan: { defaults: { resolution: "720", ratio: "1:1", seconds: "6", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, resolutions: [], ratios: wanAspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: null, maxAudios: null, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: true, modes: ["frames", "reference"] },
+    wan: { defaults: { resolution: "720", ratio: "1:1", seconds: "6", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, resolutions: [], ratios: wanAspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 2, max: 30, auto: false }, maxImages: 10, maxVideos: 5, maxAudios: 5, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: true, modes: ["frames", "reference"] },
     h3: { fastModeOptions: ["", "false", "true"], defaults: { resolution: "768", ratio: "16:9", seconds: "4", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, durationByResolution: { "2k": { min: 4, max: 15, auto: false } }, resolutions: [], ratios: h3AspectRatios.map((ratio) => ratio === "adaptive" ? "auto" : ratio), duration: { min: 4, max: 30, auto: false }, maxImages: 9, maxVideos: 3, maxAudios: 3, referenceSeconds: null, requireImage: false, audioOnly: true, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: true, modes: ["frames", "reference"] },
     veo: { defaults: { resolution: "720", ratio: "16:9", seconds: "6", mode: "frames", generateAudio: true, watermark: false, fastMode: "" }, resolutions: [], ratios: ["16:9", "9:16"], duration: null, maxImages: 2, maxVideos: 0, maxAudios: 0, referenceSeconds: null, requireImage: false, audioOnly: false, audioOptions: false, framesAdaptive: false, explicitReferenceTask: false, durationConfigurable: false, modes: ["frames"] },
 };
@@ -45,8 +45,9 @@ export const videoModelOverrides: Record<VideoModelType, Record<string, Partial<
         "sd2.5-官转-30图10音频-火山词元": { resolutions: ["720"], modes: ["reference"], maxImages: 30, maxVideos: 0, maxAudios: 10 },
     },
     wan: {
-        "wan3.0-video": { resolutions: ["480", "720", "1080"] },
-        "wan3.0-video-prime": { resolutions: ["480", "720", "1080"] },
+        "wan3-standard": { resolutions: ["480", "720", "1080"], ratios: [...wanAspectRatios.slice(0, -1), "21:9", "auto"] },
+        "wan3-p": { resolutions: ["480", "720", "1080"], ratios: ["16:9", "9:16", "1:1", "auto"], duration: { min: 5, max: 30, auto: false } },
+        "wan3-prime-fast": { resolutions: ["720", "1080"], ratios: [...wanAspectRatios.slice(0, -1), "21:9", "auto"], duration: { min: 15, max: 30, auto: false }, defaults: { ...videoTypePresets.wan.defaults, seconds: "15" } },
     },
     h3: { "MiniMax-H3": { resolutions: ["480", "768", "1080", "2k"] } },
     veo: {
@@ -105,7 +106,7 @@ export function videoReferenceError(profile: ReturnType<typeof videoModelProfile
 }
 export function videoCapabilityError(profile: ReturnType<typeof videoModelProfile>, params: { resolution: string; ratio: string; seconds: number; mode: string }, refs: VideoReferenceCounts) {
     if (profile.family === "seedance_public" && !profile.resolutions.length) return "请选择已公布的统一视频 Seedance 公共型号。";
-    if (profile.family === "wan" && !profile.resolutions.length) return "请选择 wan3.0-video 或 wan3.0-video-prime 公共模型。";
+    if (profile.family === "wan" && !profile.resolutions.length) return "请在管理后台配置 WAN 3 参数预设。";
     if (profile.family === "h3" && !profile.resolutions.length) return "请选择 MiniMax-H3 公共模型。";
     if (profile.family === "veo" && !profile.resolutions.length) return "请选择支持的 Veo / Omni 公共模型。";
     const referenceError = videoReferenceError(profile, refs);
@@ -129,15 +130,17 @@ export function videoCapabilityError(profile: ReturnType<typeof videoModelProfil
 export const videoCallTypes = ["tokenone", "seedance"] as const;
 export type VideoCallType = (typeof videoCallTypes)[number];
 export const videoCallTypeLabels: Record<VideoCallType, string> = { tokenone: "TokenONE 统一视频", seedance: "Seedance 原生" };
-export const videoParameterPresets = Object.fromEntries(videoModelTypes.flatMap(family => Object.keys(videoModelOverrides[family]).map(model => [model, { label: model, family, callType: family === "seedance" ? "seedance" as const : "tokenone" as const }])));
-export type VideoModelConfig = { callType: VideoCallType; preset: string };
+export type VideoProfile = VideoCapabilities & { family: VideoModelType };
+export type VideoParameterPreset = { id: string; label: string; callType: VideoCallType; profile: VideoProfile; revision: number };
+export const defaultVideoParameterPresets = Object.fromEntries(videoModelTypes.flatMap(family => Object.keys(videoModelOverrides[family]).map(model => [model, { label: ({ "wan3-standard": "WAN 3 标准版", "wan3-p": "WAN 3 P", "wan3-prime-fast": "WAN 3 Prime 高速版" } as Record<string, string>)[model] || model, profile: videoModelProfile(model, family), callType: family === "seedance" ? "seedance" as const : "tokenone" as const }])));
+export type VideoModelConfig = { callType: VideoCallType; preset: string; profile?: VideoProfile };
 export function videoConfiguredProfile(config: VideoModelConfig) {
-    const preset = videoParameterPresets[config.preset];
-    if (!preset || preset.callType !== config.callType) throw new Error("请在管理后台配置匹配的视频调用类型和参数预设。");
-    return videoModelProfile(config.preset, preset.family);
+    const profile = config.profile;
+    if (!profile || (profile.family === "seedance" ? "seedance" : "tokenone") !== config.callType) throw new Error("请在管理后台配置匹配的视频调用类型和参数预设。");
+    return profile;
 }
-export function channelVideoConfig(channel: { video_types?: Record<string, VideoCallType>; video_presets?: Record<string, string> }, model: string): VideoModelConfig {
-    const config = { callType: channel.video_types?.[model], preset: channel.video_presets?.[model] };
+export function channelVideoConfig(channel: { video_types?: Record<string, VideoCallType>; video_presets?: Record<string, string>; video_profiles?: Record<string, VideoProfile> }, model: string): VideoModelConfig {
+    const config = { callType: channel.video_types?.[model], preset: channel.video_presets?.[model], profile: channel.video_profiles?.[model] };
     if (!config.callType || !config.preset) throw new Error("请在管理后台配置视频调用类型和参数预设。");
     videoConfiguredProfile(config as VideoModelConfig);
     return config as VideoModelConfig;

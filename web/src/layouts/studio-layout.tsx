@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, AudioLines, Bot, Images, Maximize2, Menu, PanelLeftClose, PenLine, Settings2, Sparkles, Video, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Bot, Images, Maximize2, Menu, ListChecks, SlidersHorizontal, PanelLeftClose, PenLine, Settings2, Sparkles, Video, X } from "lucide-react";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useInterfaceStore } from "@/stores/use-interface-store";
@@ -20,12 +20,21 @@ const links = [
     { to: "/prompts", label: "灵感广场", icon: Sparkles },
 ].filter(({ to }) => (to !== "/canvas" || features.canvas) && (to !== "/video" || features.video));
 
+const adminLinks = [
+    { to: "/admin/channels", label: "功能模型配置", icon: Settings2 },
+    { to: "/admin/image-presets", label: "图片参数预设", icon: Images },
+    { to: "/admin/video-presets", label: "视频参数预设", icon: SlidersHorizontal },
+    { to: "/admin/agent", label: "创作助手配置", icon: Bot },
+    { to: "/admin/tasks", label: "用户任务", icon: ListChecks },
+];
+
 export default function StudioLayout({ children }: { children: ReactNode }) {
     useServerAgentActions();
     const serverAgentEnabled=useServerAgentStore(state=>state.enabled);
     const agentProject=useServerAgentStore(state=>state.lastProjectId);
     const { homeLink, refresh } = useOneNavigation();
     const { pathname } = useLocation();
+    const admin = pathname === "/admin" || pathname.startsWith("/admin/");
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -33,8 +42,8 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
     const togglePanel = useAgentStore((state) => state.togglePanel);
 
     useEffect(() => {
-        setStudio(true);
-    }, [setStudio]);
+        if (!admin) setStudio(true);
+    }, [admin, setStudio]);
     useEffect(() => { setMobileOpen(false); }, [pathname]);
 
     const canvasEditor = /^\/canvas\/[^/]+/.test(pathname);
@@ -45,26 +54,26 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
                 {mobileOpen ? <button className="studio-backdrop" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
                 <aside className={`studio-sidebar ${mobileOpen ? "is-open" : ""}`}>
                     <header className="studio-brand-row">
-                        <Link to="/studio" className="studio-brand"><img src="/logo.svg" alt="" /><span>画布ONE</span></Link>
+                        <Link to={admin ? "/admin/channels" : "/studio"} className="studio-brand"><img src="/logo.svg" alt="" /><span>{admin ? "管理后台" : "画布ONE"}</span></Link>
                         <button className="studio-icon studio-collapse" title="收起侧栏" aria-label="收起侧栏" onClick={() => setCollapsed(!collapsed)}><PanelLeftClose size={17} /></button>
                         <button className="studio-icon studio-mobile-close" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button>
                     </header>
-                    <nav className="studio-navigation" aria-label="主导航">
-                        <a {...homeLink} className="studio-nav-item aria-disabled:opacity-40"><span>首页</span></a>
-                        {serverAgentEnabled&&agentProject?<button className="studio-nav-item" onClick={()=>{useServerAgentStore.setState({open:true});navigate(`/canvas/${agentProject}`);}}><Bot size={18}/><span>返回创作助手</span></button>:null}
-                        {links.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
-                        {features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
+                    <nav className="studio-navigation" aria-label={admin ? "管理员导航" : "主导航"}>
+                        {!admin ? <a {...homeLink} className="studio-nav-item aria-disabled:opacity-40"><span>首页</span></a> : null}
+                        {!admin&&serverAgentEnabled&&agentProject?<button className="studio-nav-item" onClick={()=>{useServerAgentStore.setState({open:true});navigate(`/canvas/${agentProject}`);}}><Bot size={18}/><span>返回创作助手</span></button>:null}
+                        {(admin ? adminLinks : links).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
+                        {!admin && features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
                     </nav>
-                    <div className="studio-sidebar-note"><span>让灵感，自由生长。</span><p>从一个想法，到无限可能。</p></div>
+                    {!admin ? <div className="studio-sidebar-note"><span>让灵感，自由生长。</span><p>从一个想法，到无限可能。</p></div> : null}
                     <footer className="studio-sidebar-footer">
-                        <NavLink to="/config" title="设置" className="studio-nav-item"><Settings2 size={18} /><span>设置</span></NavLink>
-                        {features.originalUi && <button className="studio-nav-item" title="切换原版" onClick={() => { setStudio(false); navigate("/"); }}><ArrowLeft size={18} /><span>切换原版</span></button>}
-                        <div className="studio-account"><UserStatusActions /></div>
+                        {admin ? <Link to="/studio" title="返回用户界面" className="studio-nav-item"><ArrowLeft size={18} /><span>返回用户界面</span></Link> : <NavLink to="/config" title="设置" className="studio-nav-item"><Settings2 size={18} /><span>设置</span></NavLink>}
+                        {!admin && features.originalUi && <button className="studio-nav-item" title="切换原版" onClick={() => { setStudio(false); navigate("/"); }}><ArrowLeft size={18} /><span>切换原版</span></button>}
+                        {!admin ? <div className="studio-account"><UserStatusActions /></div> : null}
                     </footer>
                 </aside>
             </> : null}
             <div className="studio-content">{children}</div>
-            <AppConfigModal />
+            {!admin ? <AppConfigModal /> : null}
         </div>
     );
 }

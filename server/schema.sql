@@ -225,3 +225,21 @@ CREATE TABLE IF NOT EXISTS agent_settings (
     id boolean PRIMARY KEY DEFAULT true CHECK(id), value jsonb NOT NULL,
     revision bigint NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS video_parameter_presets (
+    id text PRIMARY KEY, label text NOT NULL, profile jsonb NOT NULL,
+    revision integer NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS image_presets jsonb NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS image_parameter_presets (
+    id text PRIMARY KEY, label text NOT NULL, profile jsonb NOT NULL,
+    revision integer NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS app_data_migrations (
+    id text PRIMARY KEY, backup jsonb NOT NULL,
+    completed_at timestamptz NOT NULL DEFAULT now()
+);

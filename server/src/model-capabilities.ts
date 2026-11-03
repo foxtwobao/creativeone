@@ -1,23 +1,25 @@
+import { imageScaleOf } from "../../shared/image-size.js";
 import { z } from "zod";
-import { imageModelProfile, imageCapabilityError, type ImageModelType } from "../../shared/image-models.js";
+import { imageConfiguredProfile, imageCapabilityError, type ImageModelConfig } from "../../shared/image-models.js";
 import { videoCapabilityError, veoPromptError, videoConfiguredProfile, type VideoModelConfig } from "../../shared/video-models.js";
 
 const imageParams = z.object({
-    quality: z.string().optional(), size: z.string().optional(), aspect_ratio: z.string().optional(), resolution: z.string().optional(),
+    background: z.string().optional(), quality: z.string().optional(), size: z.string().optional(), aspect_ratio: z.string().optional(), resolution: z.string().optional(),
     image_references: z.array(z.string()).optional(), image_urls: z.array(z.string()).optional(), images: z.array(z.unknown()).optional(),
     image: z.unknown().optional(), image_url: z.unknown().optional(),
 }).passthrough();
-export function imageRequestCapabilityError(model: string, family: ImageModelType, body: unknown, fileCount = 0) {
+export function imageRequestCapabilityError(model: string, config: ImageModelConfig, body: unknown, fileCount = 0) {
+    const profile = imageConfiguredProfile(config), family = config.callType;
     const parsed = imageParams.safeParse(body);
     if (!parsed.success) return "图片请求参数格式不正确。";
     const params = parsed.data;
     const references = fileCount + (params.image_references?.length || 0) + (params.image_urls?.length || 0) + (params.images?.length || 0) + (params.image ? 1 : 0) + (params.image_url ? 1 : 0);
-    if (family === "grok" && references === 1 && params.aspect_ratio !== undefined) return "Grok 单图编辑沿用参考图片比例，请省略宽高比参数。";
-    return imageCapabilityError(imageModelProfile(model, family), {
-        references, quality: params.quality,
+    if (profile.singleReferenceRatioLocked && references === 1 && params.aspect_ratio !== undefined) return "Grok 单图编辑沿用参考图片比例，请省略宽高比参数。";
+    return imageCapabilityError(profile, {
+        references, background: params.background, quality: params.quality,
         size: family === "openai" ? params.size : undefined,
         ratio: family === "banana" ? params.size || params.aspect_ratio : family === "grok" ? params.aspect_ratio : undefined,
-        resolution: family === "grok" ? params.resolution : undefined,
+        resolution: family === "grok" ? params.resolution : profile.pixelSize ? imageScaleOf(params.size || "auto", profile) : undefined,
     });
 }
 

@@ -11,7 +11,7 @@ import { videoSettingsForModel } from "@/lib/video-settings";
 import { AudioTaskDrawer } from "@/components/audio-task-drawer";
 import { canvasAudioModelPatch } from "@/lib/audio-generation";
 import { modelAudioTypeOf } from "@/stores/use-config-store";
-import { buildGenerationConfig, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
+import { buildGenerationConfig, canvasImageModelPatch, canvasVideoModelPatch } from "@/lib/canvas/canvas-generation-helpers";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { buildNodeGenerationContext } from "./canvas-node-generation";
 import { ModelPicker } from "@/components/model-picker";
@@ -115,7 +115,7 @@ export function CanvasNodePromptPanel({ node, nodes, isRunning, onPromptChange, 
                     <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
-                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
+                            <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, canvasImageModelPatch(config, model))} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasImageSettingsPopover referenceImageCount={referenceImageCount}
                                 config={config}
                                 placement="topLeft"

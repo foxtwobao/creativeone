@@ -86,9 +86,7 @@ export function CloudAccountBar() {
                 <a {...homeLink} className="aria-disabled:opacity-40">首页</a>
                 <Link to="/pricing">模型价格</Link>
                 {!needsLogin && authorizationRecoverable ? <button disabled={recovering} onClick={() => void recover()}>{recovering ? "正在检查授权…" : "检查授权结果"}</button> : null}
-                {cloudSession?.user.admin ? <Link to="/admin/channels">功能模型配置</Link> : null}
-                {cloudSession?.user.admin ? <Link to="/admin/agent">创作助手配置</Link> : null}
-                {cloudSession?.user.admin ? <Link to="/admin/tasks">用户任务</Link> : null}
+                {cloudSession?.user.admin ? <Link to="/admin">管理后台</Link> : null}
                 <ThemeModeSwitch />
                 <button disabled={saving > 0 || retrying} onClick={() => void logout()}>退出</button>
             </div>

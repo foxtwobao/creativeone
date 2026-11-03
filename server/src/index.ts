@@ -6,6 +6,8 @@ import { env } from "./config.js";
 import { db, initializeDatabase } from "./db.js";
 import { authRouter, requireUser, csrf } from "./auth.js";
 import { resellerRouter, resellerCallbackRouter } from "./reseller-auth.js";
+import { imagePresetsRouter } from "./image-presets.js";
+import { videoPresetsRouter } from "./video-presets.js";
 import { channelRouter } from "./tokenone.js";
 import { publicMediaRouter, storageRouter } from "./storage.js";
 import { promptsRouter, startPromptWorker } from "./prompts.js";
@@ -34,7 +36,7 @@ app.use("/api/auth/reseller/callback", resellerCallbackRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", requireUser, csrf);
 app.use("/api", (req, res, next) => req.method === "PUT" && req.path.startsWith("/files/") ? next() : express.json({ limit: env.MAX_JSON_BYTES })(req, res, next));
-app.use("/api", resellerRouter, channelRouter, accountPricingRouter, announcementsRouter, adminTasksRouter, promptsRouter, historyRouter, businessRouter, storageRouter, aiRouter, agentRouter);
+app.use("/api", resellerRouter, channelRouter, videoPresetsRouter, imagePresetsRouter, accountPricingRouter, announcementsRouter, adminTasksRouter, promptsRouter, historyRouter, businessRouter, storageRouter, aiRouter, agentRouter);
 app.use("/api", (_req, _res) => { throw new HttpError(404, "NOT_FOUND"); });
 const errors: ErrorRequestHandler = (error, _req, res, _next) => {
     const status = error instanceof HttpError ? error.status : error instanceof ZodError || error.type === "entity.parse.failed" ? 400 : error.type === "entity.too.large" || error.code === "LIMIT_FILE_SIZE" ? 413 : 500;

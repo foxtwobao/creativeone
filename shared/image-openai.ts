@@ -1,6 +1,6 @@
 import { imageSizePresets } from "./media-size.js";
-type AiConfig = { model: string; size: string; quality: string; background?: string };
-import { IMAGE_DIMENSION_STEP, imageModelProfile, imagePixelSizeError } from "./image-models.js";
+type AiConfig = { model: string; size: string; quality: string; background?: string; imageProfile?: ImageProfile };
+import { IMAGE_DIMENSION_STEP, imagePixelSizeError, imageCapabilityError, type ImageProfile } from "./image-models.js";
 
 const sizeErrors: Record<string, string> = { invalidImageSizeFormat: "图片尺寸格式无效", positiveImageRatio: "图片比例必须为正数", imageRatioLimit: "图片长短边比例不能超过 3" };
 const apiText = (key: string) => sizeErrors[key] || "图片参数无效";
@@ -23,21 +23,26 @@ const DEFAULT_IMAGE_SHORT_SIDE = 1024;
 const IMAGE_MAX_RATIO = 3;
 
 export function openAiImageParams(config: AiConfig) {
-    const quality = normalizeQuality(config.quality);
-    const size = resolveRequestSize(config.size);
-    const background = normalizeBackground(config.background);
+    const profile = config.imageProfile;
+    if (!profile) throw new Error("缺少图片参数预设。");
+    const error = imageCapabilityError(profile, { quality: profile.qualities.length ? config.quality : undefined, background: config.background });
+    if (error) throw new Error(error);
+    const quality = normalizeQuality(config.quality, profile);
+    const size = resolveRequestSize(config.size, profile);
+    const background = normalizeBackground(profile.transparent ? config.background : undefined);
     return {
         ...(quality ? { quality } : {}),
         ...(size ? { size } : {}),
         ...(background ? { background } : {}),
         // GPT Image always returns base64 and rejects response_format.
-        ...(imageModelProfile(config.model, "openai").omitResponseFormat ? {} : { response_format: "b64_json" }),
+        ...(profile.omitResponseFormat ? {} : { response_format: "b64_json" }),
         output_format: "png",
     };
 }
 
-export function normalizeQuality(quality: string) {
+export function normalizeQuality(quality: string, profile?: ImageProfile) {
     const value = quality.trim().toLowerCase();
+    if (profile) return profile.qualities.includes(value) ? value : profile.qualities.includes(QUALITY_ALIASES[value]) ? QUALITY_ALIASES[value] : undefined;
     const normalized = QUALITY_ALIASES[value] || value;
     return QUALITY_BASE[normalized] ? normalized : undefined;
 }
@@ -48,21 +53,22 @@ export function normalizeBackground(background: string | undefined) {
 }
 
 /** A ratio uses the 1K preset; quality never changes output dimensions. */
-function resolveSize(ratio: string): string {
-    const parsedRatio = parseImageRatio(ratio);
-    const preset = imageSizePresets["1k"][ratio];
+function resolveSize(ratio: string, profile?: ImageProfile): string {
+    const parsedRatio = parseImageRatio(ratio, profile?.pixelBounds.maxRatio);
+    const preset = (profile?.sizePresets || imageSizePresets)["1k"]?.[ratio];
     if (preset) {
         const [width, height] = preset.split("x").map(Number);
-        validateImageSize(width, height);
+        validateImageSize(width, height, profile);
         return preset;
     }
     const landscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = landscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    const shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-    const longSide = Math.round(shortSide * longRatio / IMAGE_DIMENSION_STEP) * IMAGE_DIMENSION_STEP;
+    const shortSide = profile?.pixelBounds.ratioShortSide || DEFAULT_IMAGE_SHORT_SIDE;
+    const step = profile?.pixelBounds.step || IMAGE_DIMENSION_STEP;
+    const longSide = Math.round(shortSide * longRatio / step) * step;
     const width = landscape ? longSide : shortSide;
     const height = landscape ? shortSide : longSide;
-    validateImageSize(width, height);
+    validateImageSize(width, height, profile);
     return `${width}x${height}`;
 }
 
@@ -75,9 +81,9 @@ export function parseRatioValue(value: string) {
     return { width: w, height: h };
 }
 
-export function parseImageRatio(value: string) {
+export function parseImageRatio(value: string, maxRatio = IMAGE_MAX_RATIO) {
     const ratio = parseRatioValue(value);
-    if (Math.max(ratio.width, ratio.height) / Math.min(ratio.width, ratio.height) > IMAGE_MAX_RATIO) throw new Error(apiText("imageRatioLimit"));
+    if (Math.max(ratio.width, ratio.height) / Math.min(ratio.width, ratio.height) > maxRatio) throw new Error(`图片长短边比例不能超过 ${maxRatio}`);
     return ratio;
 }
 
@@ -87,19 +93,19 @@ export function parseImageDimensions(value: string) {
     return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-function validateImageSize(width: number, height: number) {
-    const error = imagePixelSizeError(`${width}x${height}`);
+function validateImageSize(width: number, height: number, profile?: ImageProfile) {
+    const error = imagePixelSizeError(`${width}x${height}`, profile?.pixelBounds);
     if (error) throw new Error(error);
 }
 
-export function resolveRequestSize(size: string) {
+export function resolveRequestSize(size: string, profile?: ImageProfile) {
     const value = size.trim();
     if (!value || value.toLowerCase() === "auto") return undefined;
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
-        validateImageSize(dimensions.width, dimensions.height);
+        validateImageSize(dimensions.width, dimensions.height, profile);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(value);
+    if (value.includes(":")) return resolveSize(value, profile);
     throw new Error(apiText("invalidImageSizeFormat"));
 }

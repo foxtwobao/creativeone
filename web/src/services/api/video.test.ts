@@ -1,3 +1,4 @@
+import { defaultVideoParameterPresets } from "../../../../shared/video-models";
 import { veoModels } from "../../../../shared/video-models";
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
 import axios from "axios";
@@ -35,13 +36,13 @@ beforeAll(async () => {
     config = { ...defaultConfig, model: "video::wan3.0-video", size: "4:3", videoSize: "auto", channels: [{
         id: "video", name: "Video", baseUrl: "https://creative.test/api/ai/video/v1", apiKey: "csrf", apiFormat: "openai",
         models: [
-            { name: "wan3.0-video", capability: "video", videoType: "tokenone", videoPreset: "wan3.0-video" },
-            { name: "wan3.0-image-1080p", capability: "video", videoType: "tokenone", videoPreset: "missing-preset" },
-            { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128" },
-            { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-5-260628" },
-            { name: "seedance", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128" },
-            { name: "MiniMax-H3", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3" },
-            ...veoModels.map((name) => ({ name, capability: "video" as const, videoType: "tokenone" as const, videoPreset: name })),
+            { name: "wan3.0-video", capability: "video", videoType: "tokenone", videoPreset: "wan3-standard", videoProfile: defaultVideoParameterPresets["wan3-standard"]?.profile },
+            { name: "wan3.0-image-1080p", capability: "video", videoType: "tokenone", videoPreset: "missing-preset", videoProfile: defaultVideoParameterPresets["missing-preset"]?.profile },
+            { name: "doubao-seedance-2-0-260128", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-0-260128"]?.profile },
+            { name: "doubao-seedance-2-5-260628", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-5-260628", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-5-260628"]?.profile },
+            { name: "seedance", capability: "video", videoType: "seedance", videoPreset: "doubao-seedance-2-0-260128", videoProfile: defaultVideoParameterPresets["doubao-seedance-2-0-260128"]?.profile },
+            { name: "MiniMax-H3", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3", videoProfile: defaultVideoParameterPresets["MiniMax-H3"]?.profile },
+            ...veoModels.map((name) => ({ name, capability: "video" as const, videoType: "tokenone" as const, videoPreset: name, videoProfile: defaultVideoParameterPresets[name]?.profile })),
         ],
     }] };
     api = await import("./video");
@@ -132,13 +133,13 @@ test("Seedance submits three images as references with the displayed audio switc
 
 test("WAN rejects a preserved unsupported ratio before submitting or uploading references", async () => {
     const post = spyOn(axios, "post"); mocks.push(post);
-    await expect(api.createVideoGenerationTask({ ...config, videoSize: "21:9" }, "prompt")).rejects.toThrow("宽高比");
+    await expect(api.createVideoGenerationTask({ ...config, videoSize: "2:3" }, "prompt")).rejects.toThrow("宽高比");
     expect(post).not.toHaveBeenCalled();
 });
 
-test("WAN preserves 4:3 and 3:4 and maps the automatic ratio to adaptive", async () => {
+test("WAN preserves supported ratios including 21:9 and maps the automatic ratio to adaptive", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "wan-ratio" } }); mocks.push(post);
-    for (const videoSize of ["4:3", "3:4", "auto"]) {
+    for (const videoSize of ["4:3", "3:4", "21:9", "auto"]) {
         await api.createVideoGenerationTask({ ...config, videoSize }, "prompt");
         expect(post.mock.calls.at(-1)![1]).toMatchObject({ ratio: videoSize === "auto" ? "adaptive" : videoSize });
     }
@@ -298,11 +299,11 @@ test("H3 creation timeout is never reposted and saved tasks retain their protoco
 
 test("configured protocol and preset independently determine endpoint and parameters for aliases", async () => {
     const post = spyOn(axios, "post").mockResolvedValue({ data: { id: "public-alias-task", status: "queued" } }); mocks.push(post);
-    const selected: AiConfig = { ...config, model: "video::custom-alias", videoSize: "16:9", vquality: "1080", videoSeconds: "30", videoFastMode: "false", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3" }] }] };
+    const selected: AiConfig = { ...config, model: "video::custom-alias", videoSize: "16:9", vquality: "1080", videoSeconds: "30", videoFastMode: "false", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "MiniMax-H3", videoProfile: defaultVideoParameterPresets["MiniMax-H3"]?.profile }] }] };
     await api.createVideoGenerationTask(selected, "画面");
     expect(post.mock.calls[0]![0]).toEndWith("/v1/videos");
     expect(post.mock.calls[0]![1]).toEqual({ model: "custom-alias", prompt: "画面", duration: 30, resolution: "1080P", ratio: "16:9", metadata: { parameters: { fast_mode: false } } });
-    const sd: AiConfig = { ...selected, vquality: "720", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "sd-2.5-ch1" }] }] };
+    const sd: AiConfig = { ...selected, vquality: "720", channels: [{ ...config.channels[0]!, models: [{ name: "custom-alias", capability: "video", videoType: "tokenone", videoPreset: "sd-2.5-ch1", videoProfile: defaultVideoParameterPresets["sd-2.5-ch1"]?.profile }] }] };
     await expect(api.createVideoGenerationTask({ ...sd, videoSeconds: "-1" }, "画面")).rejects.toThrow("4–30");
     expect(post).toHaveBeenCalledTimes(1);
     await api.createVideoGenerationTask(sd, "画面");

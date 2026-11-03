@@ -34,8 +34,8 @@ export function VideoSettingsPanel({ config, referenceImageCount = 0, referenceM
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
                 {error ? <p role="alert" className="text-xs" style={{ color: theme.node.muted }}>{error}</p> : null}
-                {wan ? <WanReferenceNotice /> : null}
-                {h3 ? <H3ReferenceNotice onConfigChange={onConfigChange} referenceImageCount={videoMode === "reference" ? referenceImageCount : 0} /> : null}
+                {wan ? <WanReferenceNotice profile={profile} /> : null}
+                {h3 ? <H3ReferenceNotice profile={profile} onConfigChange={onConfigChange} referenceImageCount={videoMode === "reference" ? referenceImageCount : 0} /> : null}
                 {profile.family === "seedance_public" ? <SeedanceReferenceNotice profile={profile} /> : null}
                 {veo ? <VeoReferenceNotice profile={profile} /> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
