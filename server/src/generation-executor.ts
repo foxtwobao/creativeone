@@ -85,7 +85,12 @@ export async function executeMediaTask(taskId: string) {
         if (!locked) return;
         const task = (await owner.query("SELECT * FROM generation_tasks WHERE id=$1", [taskId])).rows[0];
         if (!task || task.upstream_id || !["pending", "running"].includes(task.status)) return;
-        if (task.status === "running" && task.execution_token && !(["audio", "text"].includes(task.capability) && task.upstream_result)) {
+        if (task.integration_operation && !task.integration_sent && !task.upstream_result && task.execution_token) {
+            await owner.query("UPDATE generation_tasks SET status='pending',execution_token=NULL WHERE id=$1 AND execution_token=$2", [taskId, task.execution_token]);
+            task.status = "pending";
+            task.execution_token = null;
+        }
+        if (task.status === "running" && task.execution_token && !((task.integration_operation || ["audio", "text"].includes(task.capability)) && task.upstream_result)) {
             const video = task.capability === "video" ? task.upstream_result?.data || task.upstream_result : undefined;
             const upstreamId = video?.id || (task.path !== "videos" ? video?.task_id : undefined);
             const knownVideo = typeof upstreamId === "string" && /^[\w-]+$/.test(upstreamId);
@@ -93,7 +98,7 @@ export async function executeMediaTask(taskId: string) {
             await finishCanvasTask(taskId);
             return;
         }
-        if (["audio", "text"].includes(task.capability) && task.upstream_result && task.execution_token) await owner.query("UPDATE generation_tasks SET execution_token=NULL WHERE id=$1", [taskId]);
+        if ((task.integration_operation || ["audio", "text"].includes(task.capability)) && task.upstream_result && task.execution_token) await owner.query("UPDATE generation_tasks SET execution_token=NULL WHERE id=$1", [taskId]);
         const claimed = await owner.query("UPDATE generation_tasks SET status='running',execution_token=$2,updated_at=now() WHERE id=$1 AND execution_token IS NULL AND status IN ('pending','running') RETURNING *", [taskId, token]);
         if (!claimed.rowCount) return;
         const publish = async (status: string, result: any, error: string | null, upstreamId: string | null = null) => {
@@ -120,9 +125,14 @@ export async function executeMediaTask(taskId: string) {
                 const user = (await db.query("SELECT * FROM users WHERE id=$1", [task.user_id])).rows[0];
                 const key = await ensureKey(user, taskId);
                 if (key.group_id !== task.group_id) throw new HttpError(409, "TASK_PROVIDER_CHANGED");
-                const request = await mediaBody(task.user_id, task.path, channel, task.request);
+                const request = await mediaBody(task.user_id, task.path, task.integration_config?.image ? { ...channel, image_types: { ...channel.image_types, [task.model]: task.integration_config.image.callType } } : channel, task.request);
                 if (disconnected) return;
                 await owner.query("SELECT 1");
+                if (task.integration_operation) {
+                    // This committed marker is never cleared, including when the response is lost.
+                    const sent = await owner.query("UPDATE generation_tasks SET integration_sent=true WHERE id=$1 AND execution_token=$2 AND NOT integration_sent RETURNING id", [taskId, token]);
+                    if (!sent.rowCount) { await publish("unknown", null, "UPSTREAM_RESULT_UNKNOWN"); return; }
+                }
                 dispatched = true;
                 const upstream = await fetch(upstreamUrl(task.path), { method: "POST", headers: { ...request.headers, Authorization: `Bearer ${key.key}` }, body: request.body, redirect: "error", signal, ...(task.capability === "audio" ? { dispatcher: audioDispatcher } : {}) });
                 if (!upstream.ok) { const error = await tokenoneError(upstream); await saveError(error.upstreamError); await publish("failed", null, error.code); return; }
@@ -172,6 +182,10 @@ export async function executeMediaTask(taskId: string) {
                 await publish(failed ? "failed" : "pending", failed ? { id, status: video.status, error: { message: modelErrorMessage(undefined, upstreamErrorDetails(video)) || "视频生成失败" } } : { id, status: "queued" }, failed ? "TOKENONE_GENERATION_FAILED" : null, id);
             }
         } catch (error) {
+            if (task.integration_operation && !dispatched && error instanceof HttpError && error.status >= 500) {
+                await owner.query("UPDATE generation_tasks SET status='pending',execution_token=NULL,error=NULL,updated_at=now() WHERE id=$1 AND execution_token=$2 AND NOT integration_sent", [taskId, token]);
+                return;
+            }
             if (error instanceof HttpError && error.upstreamError) await saveError(error.upstreamError);
             else if (task.capability === "audio" && error instanceof Error) await saveError(upstreamErrorDetails({ message: error.message, code: (error.cause as { code?: string })?.code }));
             await publish(error instanceof HttpError && error.code === "TOKENONE_GENERATION_FAILED" ? "failed" : dispatched ? "unknown" : "failed", task.capability === "audio" ? (await owner.query("SELECT result FROM generation_tasks WHERE id=$1", [taskId])).rows[0]?.result : null, task.capability === "audio" && signal.aborted ? "AUDIO_REQUEST_TIMEOUT" : error instanceof HttpError ? error.code : "UPSTREAM_RESULT_UNKNOWN");

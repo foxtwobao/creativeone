@@ -38,7 +38,7 @@ function returnPath(value: string, origin: string) {
     return url.pathname + url.search + url.hash;
 }
 let provider: Promise<oidc.Configuration> | undefined;
-function getProvider() {
+export function getProvider() {
     return provider ??= oidc.discovery(new URL(env.IDONE_DISCOVERY_URL || env.IDONE_ISSUER), env.IDONE_CLIENT_ID, env.IDONE_CLIENT_SECRET, oidc.ClientSecretPost(env.IDONE_CLIENT_SECRET), { execute: localOidc ? [oidc.allowInsecureRequests] : [] })
         .then((config) => {
             const metadata = config.serverMetadata();

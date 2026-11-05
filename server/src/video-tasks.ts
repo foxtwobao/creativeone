@@ -23,7 +23,7 @@ async function poll(taskId: string) {
     const requestId = randomUUID();
     const owner = new pg.Client({ connectionString: env.DATABASE_URL });
     let locked = false, disconnected = false;
-    let querying = false, retryAt: number | undefined, queryFailures = 0;
+    let querying = false, savingOutput = false, retryAt: number | undefined, queryFailures = 0;
     owner.on("error", () => { disconnected = true; });
     owner.on("end", () => { disconnected = true; });
     try {
@@ -57,6 +57,7 @@ async function poll(taskId: string) {
         const status = ["failed", "cancelled", "expired"].includes(video.status) ? "failed" : ["succeeded", "completed"].includes(video.status) ? "succeeded" : "pending";
         let media: Parameters<typeof saveDownloadedMedia>[1] | undefined;
         if (status === "succeeded") {
+            savingOutput = true;
             // Only the session lock is held during transfers; no project/user row locks are held.
             // Use TokenONE's public task ID for every protocol; never authenticate a provider URL.
             const content = await fetch(upstreamUrl(`videos/${encodeURIComponent(task.upstream_id)}/content`), {
@@ -96,7 +97,7 @@ async function poll(taskId: string) {
             if (delay === undefined) await finishCanvasTask(taskId);
             return;
         }
-        await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,upstream_error=$3,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code, error instanceof HttpError ? JSON.stringify(error.upstreamError || null) : null]);
+        await owner.query("UPDATE generation_tasks SET status='unknown',error=$2,upstream_error=$3,updated_at=now() WHERE id=$1 AND status='pending'", [taskId, code, JSON.stringify(savingOutput ? { ...((error instanceof HttpError && error.upstreamError) || {}), stage: "output" } : error instanceof HttpError ? error.upstreamError || null : null)]);
         console.warn(JSON.stringify({ taskId, requestId, code }));
         await finishCanvasTask(taskId);
     } finally {
