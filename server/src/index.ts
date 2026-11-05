@@ -21,6 +21,7 @@ import { startVideoWorker } from "./video-tasks.js";
 import { adminTasksRouter } from "./admin-tasks.js";
 import { accountPricingRouter } from "./account-pricing.js";
 import { announcementsRouter } from "./announcements.js";
+import { integrationsRouter } from "./integrations.js";
 import { agentRouter } from "./agent/routes.js";
 import { startAgentWorker } from "./agent/worker.js";
 
@@ -34,6 +35,7 @@ app.use("/api", noCache);
 app.use("/api", publicMediaRouter);
 app.use("/api/auth/reseller/callback", resellerCallbackRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/integrations/v1", integrationsRouter);
 app.use("/api", requireUser, csrf);
 app.use("/api", (req, res, next) => req.method === "PUT" && req.path.startsWith("/files/") ? next() : express.json({ limit: env.MAX_JSON_BYTES })(req, res, next));
 app.use("/api", resellerRouter, channelRouter, videoPresetsRouter, imagePresetsRouter, accountPricingRouter, announcementsRouter, adminTasksRouter, promptsRouter, historyRouter, businessRouter, storageRouter, aiRouter, agentRouter);

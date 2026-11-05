@@ -41,6 +41,7 @@
 - [音频工作台与画布接入方案](/docs/progress/audio-integration-plan)
 - [Reseller 登录会话恢复交接说明](handoffs/reseller-session-recovery.md)
 - [CreativeONE 标准统一登录交接](handoffs/creativeone-one-auth.md)
+- [BotONE 对接公共创作接口](handoffs/bot-creative-service-integration.md)
 - [Reseller 应用模型价格接口方案](handoffs/reseller-app-pricing.md)
 - [Changelog](/docs/progress/changelog)
 - [Pending Tests](/docs/progress/pending-test)

@@ -243,3 +243,14 @@ CREATE TABLE IF NOT EXISTS app_data_migrations (
     id text PRIMARY KEY, backup jsonb NOT NULL,
     completed_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Public user operations retain their identity even when the work is hidden.
+DROP INDEX IF EXISTS generation_tasks_integration_operation;
+ALTER TABLE generation_tasks DROP COLUMN IF EXISTS integration_caller;
+ALTER TABLE generation_tasks DROP COLUMN IF EXISTS integration_grant;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS integration_operation uuid;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS integration_request jsonb;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS integration_sent boolean NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_user_operation ON generation_tasks(user_id,integration_operation) WHERE integration_operation IS NOT NULL;
+
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS integration_config jsonb;
