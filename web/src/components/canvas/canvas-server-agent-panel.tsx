@@ -16,7 +16,7 @@ import { actions, nodeLabels } from "./canvas-server-agent-format";
 import { CloudError } from "@/services/api/cloud";
 import { answerAgentRun, cancelAgentRun, confirmAgentRun, createAgentThread, getAgentThread, listenAgentThread, listAgentThreads, submitAgentRun, type AgentThread } from "@/services/api/server-agent";
 
-const statuses:Record<string,string>={queued:"已受理 · 排队中",running:"正在处理",waiting_input:"等待补充",waiting_confirmation:"等待确认",waiting_tasks:"后台生成中",completed:"已完成",failed:"执行失败",cancelled:"已停止",unknown:"模型结果待确认"};
+const statuses:Record<string,string>={queued:"已受理 · 排队中",running:"正在处理",waiting_input:"等待补充",waiting_confirmation:"等待确认",waiting_tasks:"后台生成中",completed:"本轮结束",failed:"执行失败",cancelled:"已停止",unknown:"模型结果待确认"};
 const taskLabels:Record<string,string>={pending:"后台处理中",running:"正在生成",succeeded:"成功",failed:"失败",unknown:"结果待确认",cancelled:"已取消",expired:"已过期"};
 const parameterLabels:Record<string,string>={size:"尺寸",quality:"质量",background:"背景",videoSize:"画幅",seconds:"时长",vquality:"分辨率",videoMode:"素材模式",generateAudio:"生成声音",watermark:"水印",audioInput:"音频文案与角色",reasoningEffort:"推理强度"};
 

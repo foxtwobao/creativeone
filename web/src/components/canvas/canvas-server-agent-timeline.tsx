@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
 import { App } from "antd";
-import { Ban, Check, ChevronRight, CircleAlert, LocateFixed } from "lucide-react";
+import { Ban, Check, ChevronRight, CircleAlert, LocateFixed, Send } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link } from "react-router-dom";
@@ -24,7 +24,8 @@ export default function CanvasServerAgentTimeline({items,onFocusNode,onRetry}:{i
         return <div className="space-y-1.5 text-xs" style={{color:theme.node.muted}}><details className="group/tools">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 [&::-webkit-details-marker]:hidden"><ChevronRight className="size-3.5 shrink-0 transition-transform group-open/tools:rotate-90"/><span className="min-w-0 flex-1 truncate">{[...new Set(entries.map(toolAction))].join(" · ")}</span><span className="shrink-0 text-[11px]">{entries.length} 项记录{errors.length?` · ${errors.length} 项未完成`:""}{declined.length?` · ${declined.length} 项已拒绝`:""}</span></summary>
             <div className="ml-1.5 space-y-3 border-l py-2 pl-3" style={{borderColor:theme.node.stroke}}>{entries.map(item=><div key={`${item.threadId}:${item.turnId}:${item.itemId}`} className="space-y-1">
-                <p className="flex items-center gap-1.5">{item.detail?.result?.error?<CircleAlert className="size-3"/>:item.detail?.result?.declined?<Ban className="size-3"/>:<Check className="size-3"/>}{toolAction(item)}{item.detail?.result?.error?" · 未完成":""}</p>
+                <p className="flex items-center gap-1.5">{item.detail?.result?.error||item.detail?.result?.browserStatus==="unavailable"?<CircleAlert className="size-3"/>:item.detail?.result?.declined?<Ban className="size-3"/>:item.detail?.result?.browserStatus==="queued"?<Send className="size-3"/>:<Check className="size-3"/>}{toolAction(item)}{item.detail?.result?.error?" · 未完成":""}</p>
+                {item.detail?.result?.browserStatus==="unavailable"?<p>{item.detail.result.message}</p>:null}
                 {item.detail?.result?.nodes?.length?<div className="flex flex-wrap gap-1">{item.detail.result.nodes.map((node:any)=><button key={node.id} type="button" className={button} onClick={()=>focus(node.id)}><LocateFixed className="size-3 shrink-0"/><span className="break-words">{item.detail.result.updatedNodeIds?.includes(node.id)?"更新 · ":item.detail.result.reusedNodeIds?.includes(node.id)?"复用 · ":item.detail.result.createdNodeIds?.includes(node.id)?"新建 · ":""}{nodeLabels[node.type]||"节点"} · {node.title||"未命名"}</span></button>)}</div>:null}
                 {item.detail?.result?.deletedNodeIds?.length?<p>已移除 {item.detail.result.deletedNodeIds.length} 个节点，后台任务与作品保留。</p>:null}
                 {item.detail?.result?.taskIds?.length?<Link className="inline-block underline underline-offset-2" to="/assets">查看关联任务与作品（{item.detail.result.taskIds.length}）</Link>:null}

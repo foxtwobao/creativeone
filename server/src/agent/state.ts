@@ -43,7 +43,7 @@ export async function saveReceipt(client: Client, run: Run, call: { toolCallId: 
     await client.query("INSERT INTO agent_tool_receipts(run_id,call_id,name,input,result) VALUES($1,$2,$3,$4,$5)", [run.id,call.toolCallId,call.toolName,JSON.stringify(call.input),JSON.stringify(result)]);
     await item(client,run,"tool",call.toolName,{ callId:call.toolCallId,result });
     const pending=await client.query("UPDATE agent_pi_pending SET result=$3 WHERE run_id=$1 AND call_id=$2 AND result IS NULL RETURNING call_id",[run.id,call.toolCallId,JSON.stringify(result)]);
-    if(pending.rowCount)await queuePiInput(client,run,{type:"operation_result",callId:call.toolCallId,name:call.toolName,result});
+    if(pending.rowCount&&call.toolName!=="request_user_input")await queuePiInput(client,run,{type:"operation_result",callId:call.toolCallId,name:call.toolName,result});
 }
 export async function finishStep(client: Client, run: Run, step: any) {
     const receipts = (await client.query("SELECT call_id,result FROM agent_tool_receipts WHERE run_id=$1", [run.id])).rows;

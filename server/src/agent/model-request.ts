@@ -24,12 +24,20 @@ export function agentRetryDelay(error:unknown,fallback:number){
 }
 
 // Every actual provider attempt is journalled. Pi's nested retries remain disabled.
-export async function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:AbortSignal,model:Model<"openai-responses">,context:TranscriptContext,kind:"decision"|"compaction"="decision",options?:SimpleStreamOptions) {
+export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:AbortSignal,model:Model<"openai-responses">,context:TranscriptContext,kind:"decision"|"compaction"="decision",options?:SimpleStreamOptions) {
+    const output=createAssistantMessageEventStream(),iterate=output[Symbol.asyncIterator].bind(output);
+    let started=false;
+    const finished=request();
+    output.result=()=>finished;
+    output[Symbol.asyncIterator]=async function*(){yield* {[Symbol.asyncIterator]:iterate};await finished;};
+    void finished.catch(()=>output.end());
+    return output;
+    async function request():Promise<AssistantMessage>{
     let run=initial;
     const contextHash=digest({...context,messages:context.messages.map(({timestamp,...message})=>message)});
     if(kind==="compaction"){
         const saved=(await owner.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND kind='compaction' AND status='decided' AND request->>'contextHash'=$2 ORDER BY step LIMIT 1",[run.id,contextHash])).rows[0];
-        if(saved?.decision.valid){const output=createAssistantMessageEventStream();output.push({type:"done",reason:"stop",message:saved.decision.native});return output;}
+        if(saved?.decision.valid){output.push({type:"done",reason:"stop",message:saved.decision.native});return saved.decision.native;}
     }
     const prior=(await owner.query("SELECT request FROM agent_steps WHERE run_id=$1 AND status='finished' AND request#>>'{retry,pending}'='true' ORDER BY step DESC LIMIT 1",[run.id])).rows[0]?.request.retry;
     const deadline=prior?.deadline??Date.now()+run.model_config.limits.requestTimeoutMs;
@@ -92,18 +100,24 @@ export async function requestPiModel(owner:pg.Client,initial:Run,token:string,ca
                     await options?.onProviderStreamEvent?.(event,model);
                     if(event.type?.startsWith("response."))receivedEvent=true;
                     if(["response.completed","response.incomplete","response.failed"].includes(event.type))raw=event.response;
-                    if(kind==="decision"&&event.type==="response.output_text.delta"){
+                },
+            });
+            let terminal;
+            for await(const event of response){
+                if(event.type==="done"||event.type==="error"){terminal=event;break;}
+                if(event.type==="start"){if(started)continue;started=true;}
+                if(kind==="decision"&&event.type==="text_delta"){
                         text+=event.delta;
                         const detail={step,streaming:true};
                         const updated=await owner.query("INSERT INTO agent_items(thread_id,turn_id,item_id,role,text,detail) SELECT thread_id,id,$2,'assistant',$3,$4 FROM agent_runs WHERE id=$1 AND execution_token=$5 AND status='running' ON CONFLICT(item_id) DO UPDATE SET text=EXCLUDED.text WHERE agent_items.thread_id=EXCLUDED.thread_id AND agent_items.turn_id=EXCLUDED.turn_id AND agent_items.detail->>'streaming'='true' RETURNING item_id",[run.id,itemId,text,JSON.stringify(detail),token]);
                         if(updated.rowCount){agentEvents.emit(run.thread_id,{threadId:run.thread_id,turnId:run.id,itemId,role:"assistant",text,detail});await owner.query("SELECT pg_notify('creativeone_agent_items',$1)",[JSON.stringify({threadId:run.thread_id,turnId:run.id,itemId})]);}
-                    }
-                },
-            });
+                }
+                output.push(event);
+            }
             const message=await response.result();
             responseMessage=message;
             if(transportError)throw transportError;
-            if(!raw)throw receivedEvent?new Error("AGENT_STREAM_INCOMPLETE"):new HttpError(409,"AGENT_INVALID_MODEL_RESPONSE");
+            if(!raw||!terminal)throw receivedEvent?new Error("AGENT_STREAM_INCOMPLETE"):new HttpError(409,"AGENT_INVALID_MODEL_RESPONSE");
             text=message.content.filter(part=>part.type==="text").map(part=>part.text).join("");
             const rawCalls=raw.output?.filter((part:any)=>part.type==="function_call")||[];
             const calls=message.content.filter(part=>part.type==="toolCall").map((part,index)=>({nativeId:part.id,toolCallId:rawCalls[index]?.call_id,toolName:part.name,input:part.arguments,argumentsError:part.argumentsError}));
@@ -117,7 +131,7 @@ export async function requestPiModel(owner:pg.Client,initial:Run,token:string,ca
                 if(!valid)await setState(client,run,kind==="compaction"?"waiting_input":"failed",kind==="compaction"?{type:"compaction_failed",question:"摘要未完成，原始历史保留，可明确重试压缩。"}:null,kind==="compaction"?"AGENT_COMPACTION_FAILED":code);
             },owner);
             if(!valid)throw new HttpError(409,code);
-            const output=createAssistantMessageEventStream();output.push({type:"done",reason:message.stopReason as "stop"|"toolUse",message});return output;
+            output.push(terminal);return message;
         }catch(error){
             const current=(await owner.query("SELECT status FROM agent_runs WHERE id=$1",[run.id])).rows[0];if(current?.status!=="running")throw error;
             const known=APICallError.isInstance(error)&&error.statusCode!==undefined;
@@ -141,4 +155,5 @@ export async function requestPiModel(owner:pg.Client,initial:Run,token:string,ca
             if(!retry)throw error;
         }
     }
+}
 }
