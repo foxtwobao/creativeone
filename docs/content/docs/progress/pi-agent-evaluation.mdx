@@ -1,0 +1,82 @@
+---
+title: Pi Agent 替换评估
+description: 独立分支内评估 Pi 的模型与循环层，核对业务事务和恢复契约
+---
+
+## 状态与结论
+
+评估分支为 `codex/evaluate-pi-agent`，基线为 `main` 的 `987c2b0`。本轮只增加评估文档与离线探针，没有替换运行中的助手、修改业务依赖或配置，也没有部署或发起收费模型调用。
+
+建议继续验证 **`pi-agent-core + pi-ai` 替换 AI SDK 决策与进程内工具循环**。它能接管模型流、工具错误反馈和继续推理，也提供可等待的事件钩子。PostgreSQL 仍是运行、授权、决定和回执的唯一持久权威源；Pi 的内存状态由已保存上下文重建，不再增加另一份业务状态机。
+
+当前还不具备完整替换的验收依据。换框架不能保证真实模型不再生成数组参数；已有框架默认值与本项目约束存在差异，必须经过显式适配与同案例对照。
+
+## 候选与版本
+
+原 `badlogic/pi-mono` 仓库已重定向至 [earendil-works/pi](https://github.com/earendil-works/pi)。本次按已发布的 `v1.5.0` 评估，提交为 `f9a26365568127461c47a07a37dcb42c140a3ac5`，相关包使用 MIT 许可、要求 Node.js ≥22.19.0。源码与 npm 发布包分别核对；`stable` 分支本次仍指向 1.4.0，因此复现锁定版本号，不依赖分支名。
+
+| 组件 | 本项目用途 | 判断 |
+| --- | --- | --- |
+| `@earendil-works/pi-ai@1.5.0` | 模型协议、流式事件、工具输入解析和用量 | 可作为候选；先保留当前明确配置的 Responses 协议和后端鉴权路径 |
+| `@earendil-works/pi-agent-core@1.5.0` | 多轮工具循环、错误反馈、工具执行前后钩子 | 优先验证，业务工具继续调用现有领域函数 |
+| `pi-coding-agent` | 终端编码助手与本地会话 | 当前创作助手无需引入 CLI、文件系统或终端工具 |
+| `pi-durable` | 自带持久会话和任务调度 | 暂不作为整体替换目标：仍标注实验性，内置存储未提供 PostgreSQL，崩溃中断的模型请求默认按失败尝试重试，与本站未知结果不自动重发的契约不同 |
+
+来源：[Agent Core](https://github.com/earendil-works/pi/blob/v1.5.0/packages/agent/README.md)、[Durable](https://github.com/earendil-works/pi/blob/v1.5.0/packages/durable/README.md)、[包版本与运行要求](https://github.com/earendil-works/pi/blob/v1.5.0/packages/agent/package.json)。
+
+## 已核对的行为差异
+
+| 检查项 | Pi 1.5.0 行为 | 接入要求 |
+| --- | --- | --- |
+| 数组误填布尔值 | 返回一份错误工具结果并自动请求下一轮；离线模型随后改正时只执行有效调用 | 保留具体字段反馈和唯一回执，真实模型纠错仍需实测 |
+| 参数类型 | 默认校验开启强制转换，字符串 `"true"` 和数字 `1` 可转成布尔值 `true` | 对原始 `toolCall.arguments` 使用现有 Zod 校验；不能把 Pi 转换后的参数当成原始意图，尤其是 `newCopy` |
+| 整轮原子校验 | 逐工具校验；一个调用出错不自动阻止有效的兄弟调用 | 在完整 assistant `message_end` 阶段先校验整轮，再由执行前钩子统一阻止无效决定中的所有调用 |
+| 保存决定后再执行 | `Agent.subscribe()` 的异步监听会被等待，assistant `message_end` 早于工具预检 | 可在此等待完整决定落库；保存失败必须阻止工具和后续模型请求。原始响应、用量与执行归属也须一起保存 |
+| 并行 | 默认允许并行工具执行 | 显式采用 `toolExecution: "sequential"`，保持现有顺序和事务语义 |
+| 确认暂停 | 阻止结果支持 `terminate`，`finishTurn` 可结束本轮 | 等待授权仍保存到服务端，不能把临时 blocked 结果当成已完成的业务回执；恢复时执行原待确认决定 |
+| 截断 | 完整外观的工具调用仍不执行，但默认可反馈错误并继续请求 | 保留现有截断停止策略，显式结束本轮；不能静默增加收费重试 |
+| 严格工具 schema | Responses 普通工具默认不发送与现有 `strict: true` 等价的配置 | 显式声明 `constrainedSampling: { type: "json_schema", strict: "require" }` 并核对提供方能力；无法满足时明确失败，不降级协议 |
+| 输出 token | `streamSimple` 默认把模型的 `maxTokens` 加入请求，并按估算上下文压缩 | 当前用户选择上游默认额度；必须保留“不传输出上限”的语义。低层 Responses `stream` 可省略该字段，正式接入需连同 thinking 参数验证，不能只换一个函数名 |
+| 重启恢复 | Core 没有持久存储；`continue()` 拒绝以 assistant 决定作为末尾的未完成上下文 | 先用数据库中的决定与工具回执恢复未完成执行，再把真实结果接回 Pi；不能通过补一句“继续”重新请求模型来替代恢复 |
+
+源码：[校验与转换](https://github.com/earendil-works/pi/blob/v1.5.0/packages/ai/src/utils/validation.ts)、[循环与执行](https://github.com/earendil-works/pi/blob/v1.5.0/packages/agent/src/agent-loop.ts)、[事件屏障与恢复](https://github.com/earendil-works/pi/blob/v1.5.0/packages/agent/src/agent.ts)、[Responses 工具转换](https://github.com/earendil-works/pi/blob/v1.5.0/packages/ai/src/api/openai-responses-shared.ts)、[默认输出额度](https://github.com/earendil-works/pi/blob/v1.5.0/packages/ai/src/api/simple-options.ts)。
+
+## 替换边界
+
+| 当前模块 | 候选改动 | 保留的契约 |
+| --- | --- | --- |
+| `server/src/agent/model.ts` | 用 Pi 的 Responses 实现接入模型和原始事件 | 经已验证身份取得上游 Key；Key 不进浏览器；不按名称换协议；保存原始响应、用量和错误 |
+| `server/src/agent/worker.ts` | 用 Pi Core 接管进程内模型与工具循环 | PostgreSQL 领取、跨实例互斥、执行 token、取消、授权等待、任务唤醒和未知请求保护 |
+| `tools.ts` / `schema.ts` | 从同一份 Zod schema 和描述生成 Pi 工具，执行委托现有领域函数 | 原始参数严格校验、整轮无效零执行、去重、来源与能力校验，不维护两套工具定义 |
+| `state.ts` | 在 Pi 事件屏障保存决定，业务事务内保存唯一回执 | 决定先于副作用；节点写入、媒体受理与回执原子提交；已有回执优先复用 |
+| `memory.ts` | 通过 `prepareRequest` / `transformContext` 接入权威上下文与已有压缩策略 | 完整历史保留、完整工具轮次、来源冲突重新规划，不引入框架默认裁剪 |
+| 对话事件与前端 | 将 Pi 事件映射到现有接口 | `threadId`、`turnId`、`itemId` 归属不变，页面只展示真实持久记录 |
+| Skill 与媒体任务 | 沿用服务端 Skill 快照和独立媒体执行器 | 不引入本地目录配置、工具插件自动发现或新的媒体生成通道 |
+
+不能仅在现有 `model.ts` 外包一层 Pi、同时保留两套自动模型循环；那只增加状态衔接点。替换应在本分支直接收敛到一套执行路径。其他模块仍在使用 AI SDK 时，只移除助手对它的依赖，不顺手替换独立文本或媒体业务。
+
+内部消息格式如需调整，应先确定新格式与独立存储版本，按现有 Agent 约束备份并迁移；未知版本拒绝覆盖，不增加旧字段或双格式猜测分支。
+
+## 验证记录与复现
+
+`server/scripts/probe-agent-pi.mjs` 使用已发布的两个 1.5.0 包，在独立临时目录安装，没有加入 `server/package.json` 或 lockfile。11 项探针通过，执行环境为 Node.js 26.13.0；目标 Node 22 环境仍待验证。
+
+探针使用 Pi 自带 faux provider，且禁用网络。额外调用实际 Responses 适配器，在 `onPayload` 阶段截获请求后停止，核对 strict、可空布尔值和默认输出上限，没有发送模型请求。验证范围是库的行为与时序，保存屏障使用受控 Promise，不代表 PostgreSQL 集成或真实进程崩溃恢复已经通过。
+
+```bash
+pi_eval_dir=$(mktemp -d /tmp/creativeone-pi-eval.XXXXXX)
+npm --prefix "$pi_eval_dir" install --ignore-scripts --no-audit --no-fund --save-exact \
+  @earendil-works/pi-agent-core@1.5.0 @earendil-works/pi-ai@1.5.0
+cd /home/hulei/projects/creativeone/server
+PI_EVAL_MODULE_ROOT="$pi_eval_dir/node_modules" node --test scripts/probe-agent-pi.mjs
+```
+
+未运行构建、类型／语法检查，也未重复运行与本次评估无关的业务测试。现有 main 的 136 项助手回归不能自动算作 Pi 的通过记录。
+
+## 后续实施与验收
+
+1. 实现 Pi 运行适配：单一 schema 来源、原始参数整轮预检、异步保存屏障、唯一回执、确认暂停、流式事件和原始响应用量保存。沿用当前默认值及预算，任何需要改变的超时、次数或大小边界先单独说明并确认。
+2. 接回 PostgreSQL 领取与恢复：分别验证模型响应未保存、决定已保存但工具未执行、事务已提交但轮次未结束、等待具体确认、等待媒体及取消后的进程重启。未知请求不得重发；成功工具、生成任务与媒体费用不得重复。
+3. 将现有助手回归指向 Pi 路径，覆盖全部工具、跨账号、来源冲突、重复节点、已有会话、摘要和不同媒体。明确验证真实目标 Node 22 与容器依赖；不以本轮 faux provider 探针替代这些测试。
+4. 用相同用户目标和受控模型比较修正后的 AI SDK 基线与 Pi：记录首轮参数错误率、纠正成功率、请求次数、输入用量、首字时间及重复结果／副作用。真实收费调用按授权执行，不根据模拟模型已改正就宣称 Pi 能解决模型输出问题。
+5. 通过上述验收后再准备替换 PR。当前分支不启用生产开关，不自动唤醒线上会话；工具按阶段加载与纠错上下文聚焦需另行验证，Pi 默认也不会自动完成这些业务设计。

@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+- Pi Agent 替换验证：初步评估及 11 项离线探针已移入[待测清单](/docs/progress/pending-test)，详见 [Pi Agent 替换评估](/docs/progress/pi-agent-evaluation)。后续在独立分支接入原始参数整轮校验、决定保存屏障、唯一业务回执和确认／媒体等待，验证 PostgreSQL 事务、真实跨进程恢复与未知请求不重发，并让全部现有助手回归和 Node 22 环境通过；真实模型同案例对照按授权执行。完成前不切换生产实现、不采用 Pi 默认类型转换或输出上限，也不增加另一套持久业务状态机。
+
 - TokenONE 视频失败原因透传：lab 的 `/v1/videos/:id` 对已失败 H3 任务未返回错误字段，CreativeOne 无法展示上游已记录的具体原因；需在 TokenONE 项目授权修复并部署后联调，本项目仅明确提示未返回原因。
 
 
