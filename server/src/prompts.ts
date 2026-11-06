@@ -71,8 +71,9 @@ promptsRouter.post("/prompt-sources/refresh", async (req, res) => {
     const results = await Promise.all(sources.map((source: PromptSource) => refresh(res.locals.user.id, source)));
     res.json({ results, total: results.reduce((n: number,r: any) => n+r.count,0), successCount: results.filter((r: any) => r.success).length, failureCount: results.filter((r: any) => !r.success).length });
 });
+export const promptSearchPageSize=z.number().int().min(1).max(100);
 export async function searchPrompts(userId:string,value:unknown) {
-    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20), keyword: z.string().default(""), category: z.string().default("all"), sourceId: z.string().optional(), tag: z.union([z.string(), z.array(z.string())]).optional() }).parse(value);
+    const query = z.object({ page: z.coerce.number().int().positive().default(1), pageSize: z.coerce.number().pipe(promptSearchPageSize).default(20), keyword: z.string().default(""), category: z.string().default("all"), sourceId: z.string().optional(), tag: z.union([z.string(), z.array(z.string())]).optional() }).parse(value);
     const state = await settings(userId);
     const sources = state.sources.filter((source: PromptSource) => query.sourceId ? source.id === query.sourceId : source.enabled);
     const { rows } = await db.query("SELECT * FROM prompt_caches WHERE user_id=$1", [userId]);

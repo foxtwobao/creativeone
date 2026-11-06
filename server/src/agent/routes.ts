@@ -13,8 +13,8 @@ import { coreRules } from "./skills.js";
 import { storedFileInfo } from "../storage.js";
 import { subscribeAgentThread } from "./events.js";
 import { workbenchManifest } from "./site-tools.js";
-import { publicNode, mediaManifest, taskResults, toolArgumentErrors, refreshSources } from "./tools.js";
-import { authorizationPause, item, getNode, lockRun, publicRun, readThread, setState, saveReceipt, sourceHash, finishStep, type Client, type Run } from "./state.js";
+import { publicNode, mediaManifest, taskResults, toolArgumentErrors, recordToolArgumentFailure, refreshSources } from "./tools.js";
+import { authorizationPause, item, getNode, lockRun, publicRun, readThread, setState, saveReceipt, sourceHash, type Client, type Run } from "./state.js";
 import { cancelActiveRun, resolveTaskWait } from "./worker.js";
 import { listSkills, readSkill, loadSkill, saveSkill, deleteSkill } from "./skill-store.js";
 import { assertCanvasManifest } from "./canvas-edit.js";
@@ -103,11 +103,8 @@ export async function inputRun(userId:string,id:string,value:unknown) {
             const calls=step?.decision.calls;
             if (step?.decision.valid || step?.decision.raw?.status !== "completed" || !["stop","tool-calls"].includes(step?.decision.finishReason) || step.decision.raw.output?.some((item:any) => item.type === "message" && item.content?.some((part:any) => part.type === "refusal")) || !calls?.length || new Set(calls.map((call:any) => call.toolCallId)).size !== calls.length || calls.slice(0,-1).some((call:any) => ["request_user_input","wait_for_tasks"].includes(call.toolName))) throw new HttpError(409,"AGENT_WAIT_CHANGED");
             const errors=toolArgumentErrors(calls);
-            if (!errors.length) throw new HttpError(409,"AGENT_WAIT_CHANGED");
-            for (const call of calls) {
-                if (!(await client.query("SELECT 1 FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[id,call.toolCallId])).rowCount) await saveReceipt(client,run,{...call,input:call.input ?? null},{error:"AGENT_INVALID_TOOL_ARGUMENTS",message:"本次决定未执行，请依据工具 schema 修正；不要重复之前已成功的节点。",details:errors.find(error => error.callId === call.toolCallId) || {message:"同一决定含无效参数，当前调用也未执行，请重新规划。"}});
-            }
-            await finishStep(client,run,step);
+            if (!errors.length && step.decision.errorCode !== "AGENT_INVALID_TOOL_ARGUMENTS") throw new HttpError(409,"AGENT_WAIT_CHANGED");
+            await recordToolArgumentFailure(client,run,step,errors);
             await client.query("UPDATE agent_runs SET context=context || $2::jsonb WHERE id=$1",[id,JSON.stringify([{role:"user",content:`请按刚才工具回执中的字段问题与结构示例修正未执行的参数，只继续未完成部分。不得创建试探或探测节点猜参数，不重复已成功结果，不擅自改变原需求；如需求与工具能力冲突，请先询问。${input.text || ""}`}])]);
             await client.query("UPDATE agent_threads SET active_run_id=$2 WHERE id=$1",[run.thread_id,id]);
         } else if (input.action === "reply" && type === "question" && (input.text?.trim() || input.answers)) {
