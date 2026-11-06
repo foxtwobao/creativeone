@@ -186,10 +186,31 @@ CREATE TABLE IF NOT EXISTS agent_items (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS agent_items_history ON agent_items(thread_id,created_at,item_id);
+-- Pi's original JSON text preserves argument ordering in provider request prefixes.
+CREATE TABLE IF NOT EXISTS agent_pi_sessions (
+    thread_id uuid PRIMARY KEY REFERENCES agent_threads(id) ON DELETE CASCADE,
+    storage_version integer NOT NULL, signature text NOT NULL, system_prompt text NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS agent_pi_entries (
+    thread_id uuid NOT NULL REFERENCES agent_pi_sessions(thread_id) ON DELETE CASCADE,
+    position integer NOT NULL, entry_id text NOT NULL,
+    turn_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    body text NOT NULL, PRIMARY KEY(thread_id,position), UNIQUE(thread_id,entry_id)
+);
 CREATE TABLE IF NOT EXISTS agent_tool_receipts (
     run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE, call_id text NOT NULL,
     name text NOT NULL, input jsonb NOT NULL, result jsonb NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(run_id,call_id)
+);
+CREATE TABLE IF NOT EXISTS agent_pi_inputs (
+    id uuid PRIMARY KEY, thread_id uuid NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+    turn_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE, content text NOT NULL,
+    sequence bigint GENERATED ALWAYS AS IDENTITY, delivered boolean NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS agent_pi_pending (
+    run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    call_id text NOT NULL, name text NOT NULL, input text NOT NULL, result text,
+    PRIMARY KEY(run_id,call_id)
 );
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS excluded_tasks jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE agent_items ADD COLUMN IF NOT EXISTS sequence bigint GENERATED ALWAYS AS IDENTITY;
@@ -198,6 +219,8 @@ ALTER TABLE agent_items ADD COLUMN IF NOT EXISTS sequence bigint GENERATED ALWAY
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS context_checkpoint jsonb NOT NULL DEFAULT '{"version":1,"offset":0,"summary":"","recovery":null}';
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS context_anchor integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS input_token_ratio double precision NOT NULL DEFAULT 1;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS pi_needs_compaction boolean NOT NULL DEFAULT false;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS pi_context_recovered boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_steps ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'decision' CHECK(kind IN ('decision','compaction'));
 
 -- Creative progress and personal rules are independent of immutable run/message snapshots.

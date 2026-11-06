@@ -1,0 +1,31 @@
+# docker compose -f docker-compose.yml -f docker-compose.cloud.yml -f deploy/agent-worker.yml up -d --build
+services:
+  app:
+    environment: &worker-environment
+      AGENT_WORKER_MODE: external
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+      APP_ORIGINS: ${APP_ORIGINS:-}
+      APP_DOMAIN_SUFFIXES: ${APP_DOMAIN_SUFFIXES:-}
+      RESELLER_APP_ID: ${RESELLER_APP_ID:-creativeone}
+      IDONE_ISSUER: ${IDONE_ISSUER:?Set IDONE_ISSUER}
+      IDONE_CLIENT_ID: ${IDONE_CLIENT_ID:?Set IDONE_CLIENT_ID}
+      IDONE_CLIENT_SECRET: ${IDONE_CLIENT_SECRET:?Set IDONE_CLIENT_SECRET}
+      ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:?Set ADMIN_SUBJECTS}
+      ENHANCER_BASE_URL: ${ENHANCER_BASE_URL:?Set ENHANCER_BASE_URL}
+      ENHANCER_APP_CREDENTIAL: ${ENHANCER_APP_CREDENTIAL:-}
+      TOKENONE_BASE_URL: ${TOKENONE_BASE_URL:-}
+      DATABASE_URL: postgresql://creativeone:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/creativeone
+      MAX_REFERENCE_IMAGE_BYTES: ${MAX_REFERENCE_IMAGE_BYTES:-10485760}
+      MEDIA_DOWNLOAD_HOSTS: ${MEDIA_DOWNLOAD_HOSTS:-}
+  agent-worker:
+    image: creativeone-agent:local
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment: *worker-environment
+    volumes:
+      - media:/app/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped

@@ -27,9 +27,10 @@ export const videoToolParameterError=(profile:VideoProfile,parameters:Record<str
     !profile.audioOptions && (parameters.generateAudio!==undefined || parameters.watermark!==undefined) ? "当前视频模型不提供生成音频或水印参数，请省略 generateAudio、watermark 或传 null。" :
     !profile.fastModeOptions && parameters.fastMode!==undefined ? "当前参数预设不提供标准／优先模式，请省略 fastMode 或传 null。" : "";
 
-export const strictToolInput=(input:z.ZodType)=>jsonSchema(z.toJSONSchema(input,{target:"draft-7",io:"input",reused:"inline",override:({jsonSchema:schema})=>{
-    if(schema.properties)schema.required=Object.keys(schema.properties);
+export const toolJsonSchema=(input:z.ZodType,strict=true)=>z.toJSONSchema(input,{target:"draft-7",io:"input",reused:"inline",override:({jsonSchema:schema})=>{
+    if(strict&&schema.properties)schema.required=Object.keys(schema.properties);
     // Tagged union branches remain disjoint; strict function calling uses anyOf.
     if(schema.oneOf){schema.anyOf=schema.oneOf;delete schema.oneOf;}
     delete schema.default;
-}}) as JSONSchema7,{validate:zodSchema(input).validate});
+}}) as JSONSchema7;
+export const strictToolInput=(input:z.ZodType)=>jsonSchema(toolJsonSchema(input),{validate:zodSchema(input).validate});

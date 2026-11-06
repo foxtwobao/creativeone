@@ -10,7 +10,8 @@ const url=new URL(process.env.DATABASE_URL);url.pathname=`/${name}`;
 try {
     await admin.query(`CREATE DATABASE "${name}"`);
     const code=await new Promise((resolve,reject) => {
-        const child=spawn(process.execPath,['--import','tsx','--test',...process.argv.slice(2),'src/server-agent.test.ts'],{stdio:'inherit',env:{...process.env,TEST_DATABASE_URL:url.href}});
+        const migration=process.argv.includes('--pi-migration');
+        const child=spawn(process.execPath,['--import','tsx','--test',...process.argv.slice(2).filter(arg=>arg!=='--pi-migration'),migration?'src/pi-migration.test.ts':'src/server-agent.test.ts'],{stdio:'inherit',env:{...process.env,TEST_DATABASE_URL:url.href}});
         child.on('error',reject);child.on('exit',resolve);
     });
     process.exitCode=code || 0;

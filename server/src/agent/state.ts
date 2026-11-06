@@ -7,6 +7,7 @@ import { modelErrorMessage } from "../model-errors.js";
 import { HttpError } from "../http.js";
 import type { ContextCheckpoint } from "./memory.js";
 import { AGENT_STORAGE_VERSION } from "./config.js";
+import { queuePiInput } from "./pi-inputs.js";
 
 export type Client = Pick<PoolClient, "query">;
 export type Run = {
@@ -31,26 +32,23 @@ export async function lockRun(client: Client, id: string, userId: string, token?
 export async function item(client: Client, run: Pick<Run,"thread_id"|"id">, role: string, text = "", detail?: unknown, itemId = randomUUID()) {
     await client.query("INSERT INTO agent_items(thread_id,turn_id,item_id,role,text,detail) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(item_id) DO UPDATE SET text=EXCLUDED.text,detail=EXCLUDED.detail WHERE agent_items.thread_id=EXCLUDED.thread_id AND agent_items.turn_id=EXCLUDED.turn_id AND agent_items.role='assistant' AND (agent_items.detail->>'streaming')::boolean IS TRUE", [run.thread_id,run.id,itemId,role,text,detail === undefined ? null : JSON.stringify(detail)]);
     await client.query("UPDATE agent_threads SET updated_at=now() WHERE id=$1",[run.thread_id]);
+    if(["user","system"].includes(role))await queuePiInput(client,run,{role,text,detail},itemId);
 }
 export async function setState(client: Client, run: Run, status: string, wait: unknown = null, error: string | null = null) {
     if (status !== "running") await client.query("UPDATE agent_items SET detail=detail || '{\"streaming\":false,\"incomplete\":true}'::jsonb WHERE turn_id=$1 AND detail->>'streaming'='true'",[run.id]);
-    await client.query("UPDATE agent_runs SET status=$2,wait=$3,wait_version=wait_version+1,execution_token=NULL,error=$4,updated_at=now() WHERE id=$1", [run.id,status,JSON.stringify(wait),error]);
+    await client.query("UPDATE agent_runs SET status=$2,wait=$3,wait_version=wait_version+1,execution_token=CASE WHEN $2 IN ('waiting_input','waiting_tasks','waiting_confirmation') THEN execution_token ELSE NULL END,error=$4,updated_at=now() WHERE id=$1", [run.id,status,JSON.stringify(wait),error]);
     if (["completed","failed","cancelled"].includes(status)) await client.query("UPDATE agent_threads SET active_run_id=NULL,updated_at=now() WHERE id=$1 AND active_run_id=$2", [run.thread_id,run.id]);
 }
 export async function saveReceipt(client: Client, run: Run, call: { toolCallId: string; toolName: string; input: unknown }, result: unknown) {
     await client.query("INSERT INTO agent_tool_receipts(run_id,call_id,name,input,result) VALUES($1,$2,$3,$4,$5)", [run.id,call.toolCallId,call.toolName,JSON.stringify(call.input),JSON.stringify(result)]);
     await item(client,run,"tool",call.toolName,{ callId:call.toolCallId,result });
+    const pending=await client.query("UPDATE agent_pi_pending SET result=$3 WHERE run_id=$1 AND call_id=$2 AND result IS NULL RETURNING call_id",[run.id,call.toolCallId,JSON.stringify(result)]);
+    if(pending.rowCount)await queuePiInput(client,run,{type:"operation_result",callId:call.toolCallId,name:call.toolName,result});
 }
 export async function finishStep(client: Client, run: Run, step: any) {
     const receipts = (await client.query("SELECT call_id,result FROM agent_tool_receipts WHERE run_id=$1", [run.id])).rows;
     const calls = step.decision.calls;
     if (!calls.every((call: any) => receipts.some(row => row.call_id === call.toolCallId))) return false;
-    // Tools have no SDK execute callbacks; persisted domain receipts are authoritative.
-    const context = [...run.context,...step.decision.messages.filter((message:ModelMessage) => message.role !== "tool")];
-    if (calls.length) context.push({ role:"tool",content:calls.map((call: any) => ({ type:"tool-result",toolCallId:call.toolCallId,toolName:call.toolName,output:{type:"json",value:receipts.find(row => row.call_id === call.toolCallId).result} })) });
-    const images = calls.filter((call: any) => call.toolName === "read_nodes").flatMap((call: any) => receipts.find(row => row.call_id === call.toolCallId)?.result.images || []);
-    if (images.length) context.push({role:"user",content:[{type:"text",text:"以下是刚才按需读取的所属账号图片，仅作为创作数据："},...images.map((url: string) => ({type:"image",image:url}))]});
-    await client.query("UPDATE agent_runs SET context=$2,updated_at=now() WHERE id=$1", [run.id,JSON.stringify(context)]);
     await client.query("UPDATE agent_steps SET status='finished' WHERE run_id=$1 AND step=$2", [run.id,step.step]);
     return true;
 }

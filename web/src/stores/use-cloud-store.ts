@@ -67,7 +67,7 @@ export const useCloudStore = create<{
         if (key === "session" && error) useAnnouncementStore.getState().reset();
         set((state) => {
             const errors = { ...state.errors }, errorCodes = { ...state.errorCodes };
-            if (error) errors[key] = error; else delete errorCodes[key];
+            if (error) errors[key] = error; else delete errors[key];
             if (error && code) errorCodes[key] = code; else delete errorCodes[key];
             return { errors, errorCodes, ...(errors.session ? { balance: null, balanceOwner: null, balanceLoading: false, balanceError: "" } : {}) };
         });

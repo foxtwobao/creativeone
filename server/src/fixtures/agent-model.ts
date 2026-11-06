@@ -18,14 +18,16 @@ export function modelStream(body:any) {
 export function mockAgentModel(responses:any[]) {
     const original=globalThis.fetch,requests:any[]=[],ensureRequests:string[]=[];let denied=false,unavailable=false;
     globalThis.fetch=async (input,init) => {
-        const url=String(input);
+        const url=input instanceof Request?input.url:String(input);
         if (url === "https://enhancer.test/api/apps/keys/ensure") ensureRequests.push(url);
         if (url === "https://enhancer.test/api/apps/keys/ensure" && unavailable) return Response.json({error:"APP_SERVICE_UNAVAILABLE"},{status:503});
         if (url === "https://enhancer.test/api/apps/keys/ensure" && denied) return Response.json({error:"APP_USER_AUTHORIZATION_REQUIRED"},{status:403});
         if (url === "https://enhancer.test/api/apps/keys/ensure") return Response.json({status:"ready",tokenone_user_id:"42",api_key:{id:"701",key:"sk-test-only",group_id:"8",status:"active"}});
         if (url === "https://enhancer.test/api/apps/pricing") return Response.json({app_id:"creativeone",currency:"USD",queried_at:new Date().toISOString(),models:[]});
         if (url === "https://tokenone.test/v1/responses") {
-            requests.push(JSON.parse(String(init?.body)));
+            requests.push(JSON.parse(String(init?.body??(input instanceof Request?await input.clone().text():""))));
+            const ids=requests.at(-1).input?.filter((part:any)=>part.type==="function_call").map((part:any)=>part.call_id)||[];
+            if(new Set(ids).size!==ids.length)return Response.json({error:{message:"duplicate function call_id",code:"responses_compatibility_unsupported"}},{status:400});
             const next=responses.shift();
             if (typeof next === "function") {
                 const response=await next();

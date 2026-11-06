@@ -54,5 +54,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     startGenerationWorker();
     startVideoWorker();
     startPromptWorker();
-    startAgentWorker();
+    if(env.AGENT_WORKER_MODE==="embedded")startAgentWorker();
 }

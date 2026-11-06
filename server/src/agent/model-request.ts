@@ -1,19 +1,19 @@
 import type pg from "pg";
 import { randomUUID } from "node:crypto";
 import { APICallError } from "ai";
-import { delay,retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
+import { delay } from "@ai-sdk/provider-utils";
+import { createAssistantMessageEventStream, isContextOverflow, type AssistantMessage, type Model, type TranscriptContext, type SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { stream } from "@earendil-works/pi-ai/api/openai-responses";
 import { transaction } from "../db.js";
-import { HttpError } from "../http.js";
 import { ensureKey,modelProvider } from "../tokenone.js";
 import { findCanvasProject } from "../business.js";
+import { HttpError } from "../http.js";
 import { readAgentConfig } from "./config.js";
+import { assertSources,toolSchemas } from "./tools.js";
+import { toolJsonSchema } from "./schema.js";
 import { agentEvents } from "./events.js";
-import { agentDecision,expandAgentImages } from "./model.js";
-import { assertSources, recordToolArgumentFailure } from "./tools.js";
-import { contextCheckpoint,deduplicateToolResults,estimatedInputTokens,isContextRejection } from "./memory.js";
-import { lockRun,setState,item,type Run } from "./state.js";
+import { lockRun,setState,item,digest,type Run } from "./state.js";
 
-class PausedRequest extends Error {}
 export const retryableAgentError=(error:unknown)=>APICallError.isInstance(error)
     ? error.isRetryable && (error.statusCode===undefined || [408,409,429].includes(error.statusCode) || error.statusCode>=500)
     : error instanceof TypeError || error instanceof Error && error.message==="AGENT_STREAM_INCOMPLETE";
@@ -23,104 +23,122 @@ export function agentRetryDelay(error:unknown,fallback:number){
     return Number.isFinite(parsed)&&parsed>=0?parsed:fallback;
 }
 
-// Each transport attempt gets its own durable step. SDK retries stay disabled.
-export async function requestAgentModel(owner:pg.Client,run:Run,request:any,token:string,cancel:AbortSignal):Promise<boolean>{
-    request={...request,messages:deduplicateToolResults(request.messages)};
-    const id=run.id,maxRetries=run.model_config.limits.modelRetries??0,previous=request.retry;
-    const deadline=previous?.deadline??Date.now()+run.model_config.limits.requestTimeoutMs;
-    let attempts=previous?.attempt??0,retryAt=previous?.retryAt??0,step:{step:number;itemId:string}|undefined,lastError:unknown;
-    const expire=async()=>{
-        await transaction(async client=>{run=await lockRun(client,id,run.user_id,token);await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[id]);await setState(client,run,previous?.known===false?"unknown":"failed",previous?.known===false?{type:"unknown_model",question:"重试等待已结束，模型结果不明；已有记录保留，请结束本轮后明确发起新尝试。"}:null,"AGENT_MODEL_RETRY_TIMEOUT");},owner);return false;
-    };
-    if(deadline<=Date.now())return expire();
-    const signal=AbortSignal.any([cancel,AbortSignal.timeout(deadline-Date.now())]);
-    const retry=retryWithExponentialBackoff({maxRetries:Math.max(0,maxRetries-attempts),initialDelayInMs:2000*2**attempts,abortSignal:signal,
-        createRetryError:({errors})=>errors.at(-1),getDelayInMs:()=>Math.max(0,Math.min(retryAt,deadline)-Date.now()),
-        shouldRetry:async error=>{
-            if(error!==lastError||signal.aborted||!retryableAgentError(error))return false;
-            const wait=agentRetryDelay(error,2000*2**(attempts-1));retryAt=Date.now()+wait;
-            const proceed=await transaction(async client=>{
-                run=await lockRun(client,id,run.user_id,token);
-                const withinBudget=run.decision_count-run.budget_start.decisions<run.model_config.limits.decisionBudget;
-                await client.query("UPDATE agent_steps SET status='finished',request=jsonb_set(request,'{retry}',$3) WHERE run_id=$1 AND step=$2",[id,step!.step,JSON.stringify({attempt:attempts,deadline,retryAt,pending:withinBudget,known:APICallError.isInstance(error)&&error.statusCode!==undefined})]);
-                if(!withinBudget){await setState(client,run,"waiting_input",{type:"budget",question:`本轮已达到 ${run.model_config.limits.decisionBudget} 次模型调用，自动重试也计入次数；已有成果保留，请确认后继续。`});return false;}
-                await item(client,run,"system",`文本推理暂时失败，等待后自动重试 ${attempts}/${maxRetries}；每次请求计入调用预算，失败尝试也可能计费。`,{kind:"model_retry",attempt:attempts,maxRetries,delayMs:wait});
-                return true;
-            },owner);if(!proceed)throw new PausedRequest();return true;
-        }});
-    try{
-        if(retryAt>Date.now())await delay(Math.max(0,Math.min(retryAt,deadline)-Date.now()),{abortSignal:signal});
-        const result=await retry(async()=>{
-            signal.throwIfAborted();
-            if(Date.now()>=deadline)throw new DOMException("Agent request deadline exceeded","TimeoutError");
-            const config=await readAgentConfig(owner);if(!config.enabled)throw new PausedRequest();
-            if(run.model_config.provider!==modelProvider||!config.verifiedModels.some(entry=>entry.model===run.model_config.model))throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-            if(!(await owner.query("SELECT id FROM channels WHERE id=$1 AND enabled AND capability='text' AND models ? $2",[run.model_config.channelId,run.model_config.model])).rowCount)throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-            const user=(await owner.query("SELECT * FROM users WHERE id=$1",[run.user_id])).rows[0],key=await ensureKey(user,id,{signal});
-            const messages=request.kind==="compaction"?request.messages:await expandAgentImages(run.user_id,request.messages,run.model_config.imageInput);
-            step=await transaction(async client=>{
-                run=await lockRun(client,id,run.user_id,token);const latest=await readAgentConfig(client);if(!latest.enabled)throw new PausedRequest();
-                if(!latest.verifiedModels.some(entry=>entry.model===run.model_config.model))throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
-                if(run.decision_count-run.budget_start.decisions>=run.model_config.limits.decisionBudget){
-                    await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[id]);
-                    await setState(client,run,"waiting_input",{type:"budget",question:`本轮已达到 ${run.model_config.limits.decisionBudget} 次模型调用，自动重试也计入次数。已有成果保留，请确认后继续。`});return;
-                }
-                await assertSources(run,await findCanvasProject(run.user_id,run.project_id,client));
-                const step=run.decision_count+1,itemId=randomUUID();attempts++;
-                await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[id]);
-                await client.query("INSERT INTO agent_steps(run_id,step,item_id,status,request,kind) VALUES($1,$2,$3,'requesting',$4,$5)",[id,step,itemId,JSON.stringify({...request,retry:{attempt:attempts,deadline}}),request.kind]);
-                await client.query("UPDATE agent_runs SET decision_count=$2 WHERE id=$1",[id,step]);
-                if(request.kind==="compaction"){await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','\"required\"') WHERE id=$1",[id]);await item(client,run,"system","正在压缩历史上下文，完整历史保留；摘要推理计入本轮预算。",{kind:"compaction"},itemId);}
-                return {step,itemId};
-            },owner);
-            if(!step)throw new PausedRequest();
-            try{return await agentDecision(run.model_config.model,key.key,request.system,messages,run.model_config.limits,signal,request.kind==="compaction"?"summary":"decision",request.kind!=="decision"?undefined:async text=>{
-                const detail={step:step!.step,streaming:true};
-                const updated=await owner.query("INSERT INTO agent_items(thread_id,turn_id,item_id,role,text,detail) SELECT thread_id,id,$2,'assistant',$3,$4 FROM agent_runs WHERE id=$1 AND execution_token=$5 AND status='running' ON CONFLICT(item_id) DO UPDATE SET text=EXCLUDED.text WHERE agent_items.thread_id=EXCLUDED.thread_id AND agent_items.turn_id=EXCLUDED.turn_id AND agent_items.detail->>'streaming'='true' RETURNING item_id",[id,step!.itemId,text,JSON.stringify(detail),token]);
-                if(updated.rowCount){agentEvents.emit(run.thread_id,{threadId:run.thread_id,turnId:id,itemId:step!.itemId,role:"assistant",text,detail});await owner.query("SELECT pg_notify('creativeone_agent_items',$1)",[JSON.stringify({threadId:run.thread_id,turnId:id,itemId:step!.itemId})]);}
-            });}catch(error){
-                lastError=error;
-                await transaction(async client=>{await lockRun(client,id,run.user_id,token);await client.query("UPDATE agent_steps SET decision=$3 WHERE run_id=$1 AND step=$2",[id,step!.step,JSON.stringify({invalid:true,status:APICallError.isInstance(error)?error.statusCode:undefined,body:APICallError.isInstance(error)?error.responseBody:undefined,error:error instanceof Error?error.name:"Error"})]);await client.query("UPDATE agent_items SET detail=detail || '{\"streaming\":false,\"incomplete\":true}'::jsonb WHERE turn_id=$1 AND item_id=$2 AND detail->>'streaming'='true'",[id,step!.itemId]);},owner);
-                throw error;
-            }
-        });
-        await transaction(async client=>{
-            run=await lockRun(client,id,run.user_id,token);
-            await client.query("UPDATE agent_steps SET status='decided',decision=$3,usage=$4 WHERE run_id=$1 AND step=$2",[id,step!.step,JSON.stringify(result.decision),JSON.stringify(result.usage)]);
-            await client.query("UPDATE agent_runs SET token_count=token_count+$2 WHERE id=$1",[id,result.usage.totalTokens||0]);
-            if(request.kind==="decision"){
-                const estimated=estimatedInputTokens(request.system,request.messages,1);
-                if(estimated&&result.usage.inputTokens)await client.query("UPDATE agent_runs SET input_token_ratio=GREATEST(input_token_ratio,$2) WHERE id=$1",[id,result.usage.inputTokens/estimated]);
-                await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','null') WHERE id=$1",[id]);
-                await item(client,run,"assistant",result.decision.text,{step:step!.step,tools:result.decision.calls.map(call=>({name:call.toolName,callId:call.toolCallId})),usage:result.usage,argumentErrors:result.decision.argumentErrors},step!.itemId);
-                if(!result.decision.valid){
-                    if(result.decision.errorCode==="AGENT_INVALID_TOOL_ARGUMENTS"){
-                        await recordToolArgumentFailure(client,run,{step:step!.step,decision:result.decision},result.decision.argumentErrors);
-                        await item(client,run,"system","工具参数未通过校验，本次决定未执行；正在自动修正并继续，已有成果保留，修正推理计入现有调用预算。",{kind:"tool_argument_correction",errors:result.decision.argumentErrors});
-                    }else await setState(client,run,"failed",null,result.decision.errorCode);
-                }
-            }
-        },owner);
-        return result.decision.valid||request.kind==="compaction"||result.decision.errorCode==="AGENT_INVALID_TOOL_ARGUMENTS";
-    }catch(error){
-        if(error instanceof PausedRequest)return false;
-        if((signal.aborted||Date.now()>=deadline)&&previous&&!step)return expire();
-        if(error!==lastError&&!(signal.aborted&&lastError)){
-            await owner.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[id]).catch(()=>undefined);throw error;
+// Every actual provider attempt is journalled. Pi's nested retries remain disabled.
+export async function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:AbortSignal,model:Model<"openai-responses">,context:TranscriptContext,kind:"decision"|"compaction"="decision",options?:SimpleStreamOptions) {
+    let run=initial;
+    const contextHash=digest({...context,messages:context.messages.map(({timestamp,...message})=>message)});
+    if(kind==="compaction"){
+        const saved=(await owner.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND kind='compaction' AND status='decided' AND request->>'contextHash'=$2 ORDER BY step LIMIT 1",[run.id,contextHash])).rows[0];
+        if(saved?.decision.valid){const output=createAssistantMessageEventStream();output.push({type:"done",reason:"stop",message:saved.decision.native});return output;}
+    }
+    const prior=(await owner.query("SELECT request FROM agent_steps WHERE run_id=$1 AND status='finished' AND request#>>'{retry,pending}'='true' ORDER BY step DESC LIMIT 1",[run.id])).rows[0]?.request.retry;
+    const deadline=prior?.deadline??Date.now()+run.model_config.limits.requestTimeoutMs;
+    let attempt=prior?.attempt??0,retryAt=prior?.retryAt??0;
+    if(deadline<=Date.now()){
+        await transaction(async client=>{run=await lockRun(client,run.id,run.user_id,token);await setState(client,run,prior?.known===false?"unknown":"failed",null,"AGENT_MODEL_RETRY_TIMEOUT");},owner);
+        throw new HttpError(409,"AGENT_MODEL_RETRY_TIMEOUT");
+    }
+    const signal=AbortSignal.any([cancel,...(options?.signal?[options.signal]:[]),AbortSignal.timeout(deadline-Date.now())]);
+    for(;;){
+        try{if(retryAt>Date.now())await delay(Math.min(retryAt,deadline)-Date.now(),{abortSignal:signal});signal.throwIfAborted();if(Date.now()>=deadline)throw new HttpError(409,"AGENT_MODEL_RETRY_TIMEOUT");}
+        catch(error){
+            if(cancel.aborted)throw error;
+            await transaction(async client=>{
+                run=await lockRun(client,run.id,run.user_id,token);
+                const last=(await client.query("SELECT request FROM agent_steps WHERE run_id=$1 ORDER BY step DESC LIMIT 1",[run.id])).rows[0];
+                await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[run.id]);
+                await setState(client,run,last?.request.retry?.known===false?"unknown":"failed",null,"AGENT_MODEL_RETRY_TIMEOUT");
+            },owner);throw error;
         }
-        if(signal.aborted&&lastError)error=lastError;
-        return transaction(async client=>{
-            run=await lockRun(client,id,run.user_id,token);const known=APICallError.isInstance(error)&&error.statusCode!==undefined;
-            await client.query("UPDATE agent_steps SET status=$3,request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND step=$2",[id,step!.step,known?"finished":"unknown"]);
-            if(known&&request.kind==="compaction"){await setState(client,run,"waiting_input",{type:"compaction_failed",question:"历史摘要请求失败，自动恢复已结束；原始历史与上下文保留，可以明确重试压缩或结束本轮。"},"AGENT_COMPACTION_FAILED");return false;}
-            if(isContextRejection(error)){
-                if(contextCheckpoint(run).recovery==="applied"){await setState(client,run,"waiting_input",{type:"context_limit",question:"历史压缩后，上游仍拒绝当前上下文。原历史保留，请缩小当前输入或新建会话；不会再次自动请求。"},"AGENT_CONTEXT_LIMIT");return false;}
-                await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','\"required\"') WHERE id=$1",[id]);await item(client,run,"system","上游明确拒绝上下文过长，将压缩完整旧轮次后继续一次；原始历史保留。");return true;
-            }
-            const code=signal.aborted||Date.now()>=deadline?"AGENT_MODEL_RETRY_TIMEOUT":attempts>1&&retryableAgentError(error)?"AGENT_MODEL_RETRIES_EXHAUSTED":known?"AGENT_MODEL_REJECTED":"AGENT_MODEL_UNKNOWN";
-            await setState(client,run,known?"failed":"unknown",known?null:{type:"unknown_model",question:"文本推理恢复已停止，模型结果不明，可能已计费；请结束原运行后明确发起新尝试。"},code);
-            await item(client,run,"system",`文本推理未完成，本次共请求 ${attempts} 次，已停止自动执行。${known?"上游返回失败，请检查服务与模型配置。":"结果未知，失败尝试可能已计费。"}`);
-            return false;
+        const allowed=await transaction(async client=>{
+            run=await lockRun(client,run.id,run.user_id,token);
+            if(run.decision_count-run.budget_start.decisions<run.model_config.limits.decisionBudget)return true;
+            await setState(client,run,"waiting_input",{type:"budget",question:`本轮已达到 ${run.model_config.limits.decisionBudget} 次模型调用，已有成果已保存。继续可能产生额外推理费用。`});return false;
         },owner);
+        if(!allowed)throw new HttpError(409,"AGENT_BUDGET_PAUSED");
+        const config=await readAgentConfig(owner);
+        if(!config.enabled)throw new HttpError(503,"AGENT_DISABLED");
+        if(run.model_config.provider!==modelProvider||!config.verifiedModels.some(entry=>entry.model===run.model_config.model)||!(await owner.query("SELECT id FROM channels WHERE id=$1 AND enabled AND capability='text' AND models ? $2",[run.model_config.channelId,run.model_config.model])).rowCount)throw new HttpError(403,"AGENT_MODEL_UNAVAILABLE");
+        const user=(await owner.query("SELECT * FROM users WHERE id=$1",[run.user_id])).rows[0],key=await ensureKey(user,run.id,{signal});
+        const itemId=randomUUID();
+        const step=await transaction(async client=>{
+            run=await lockRun(client,run.id,run.user_id,token);
+            if(run.decision_count-run.budget_start.decisions>=run.model_config.limits.decisionBudget){await setState(client,run,"waiting_input",{type:"budget",question:`本轮已达到 ${run.model_config.limits.decisionBudget} 次模型调用，已有成果已保存。继续可能产生额外推理费用。`});return;}
+            await assertSources(run,await findCanvasProject(run.user_id,run.project_id,client));
+            attempt++;const number=run.decision_count+1;
+            await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[run.id]);
+            await client.query("INSERT INTO agent_steps(run_id,step,item_id,status,request,kind) VALUES($1,$2,$3,'requesting',$4,$5)",[run.id,number,itemId,JSON.stringify({kind,contextHash,retry:{attempt,deadline}}),kind]);
+            await client.query("UPDATE agent_runs SET decision_count=$2 WHERE id=$1",[run.id,number]);return number;
+        },owner);
+        if(!step)throw new HttpError(409,"AGENT_BUDGET_PAUSED");
+        let raw:any,transportError:unknown,responseMessage:AssistantMessage|undefined,text="",receivedEvent=false;
+        try{
+            const response=stream(model,context,{...options,apiKey:key.key,signal,maxRetries:0,identity:{attribution:null},
+                maxTokens:kind==="compaction"?run.model_config.limits.summaryTokens:run.model_config.limits.outputTokens,
+                fetch:async(url,options)=>{
+                    try{
+                        const value=await fetch(url,{...options,redirect:"error"});
+                        if(!value.ok){
+                            transportError=new APICallError({message:"Agent provider rejected request",url:String(url),requestBodyValues:{},statusCode:value.status,responseHeaders:Object.fromEntries(value.headers),responseBody:await value.clone().text(),isRetryable:[408,409,429].includes(value.status)||value.status>=500});
+                        }return value;
+                    }catch(error){transportError=error;throw error;}
+                },
+                onPayload:async payload=>{
+                    const native=await options?.onPayload?.(payload,model)??payload;
+                    const body={...native as any,parallel_tool_calls:false,tools:(native as any).tools?.map((tool:any)=>({...tool,parameters:toolJsonSchema(toolSchemas[tool.name as keyof typeof toolSchemas]),strict:true}))};
+                    await owner.query("UPDATE agent_steps SET request=request || $3::jsonb WHERE run_id=$1 AND step=$2",[run.id,step,JSON.stringify({payload:body})]);return body;
+                },
+                onProviderStreamEvent:async(event:any)=>{
+                    await options?.onProviderStreamEvent?.(event,model);
+                    if(event.type?.startsWith("response."))receivedEvent=true;
+                    if(["response.completed","response.incomplete","response.failed"].includes(event.type))raw=event.response;
+                    if(kind==="decision"&&event.type==="response.output_text.delta"){
+                        text+=event.delta;
+                        const detail={step,streaming:true};
+                        const updated=await owner.query("INSERT INTO agent_items(thread_id,turn_id,item_id,role,text,detail) SELECT thread_id,id,$2,'assistant',$3,$4 FROM agent_runs WHERE id=$1 AND execution_token=$5 AND status='running' ON CONFLICT(item_id) DO UPDATE SET text=EXCLUDED.text WHERE agent_items.thread_id=EXCLUDED.thread_id AND agent_items.turn_id=EXCLUDED.turn_id AND agent_items.detail->>'streaming'='true' RETURNING item_id",[run.id,itemId,text,JSON.stringify(detail),token]);
+                        if(updated.rowCount){agentEvents.emit(run.thread_id,{threadId:run.thread_id,turnId:run.id,itemId,role:"assistant",text,detail});await owner.query("SELECT pg_notify('creativeone_agent_items',$1)",[JSON.stringify({threadId:run.thread_id,turnId:run.id,itemId})]);}
+                    }
+                },
+            });
+            const message=await response.result();
+            responseMessage=message;
+            if(transportError)throw transportError;
+            if(!raw)throw receivedEvent?new Error("AGENT_STREAM_INCOMPLETE"):new HttpError(409,"AGENT_INVALID_MODEL_RESPONSE");
+            text=message.content.filter(part=>part.type==="text").map(part=>part.text).join("");
+            const rawCalls=raw.output?.filter((part:any)=>part.type==="function_call")||[];
+            const calls=message.content.filter(part=>part.type==="toolCall").map((part,index)=>({nativeId:part.id,toolCallId:rawCalls[index]?.call_id,toolName:part.name,input:part.arguments,argumentsError:part.argumentsError}));
+            const valid=raw.status==="completed"&&["stop","toolUse"].includes(message.stopReason)&&calls.every(call=>typeof call.toolCallId==="string"&&call.toolCallId)&&new Set(calls.map(call=>call.toolCallId)).size===calls.length&&!raw.output?.some((entry:any)=>entry.content?.some((part:any)=>part.type==="refusal"))&&(calls.length>0||message.content.some(part=>part.type==="text"&&part.text.trim()))&&(kind==="decision"||calls.length===0&&message.usage.output<=run.model_config.limits.summaryTokens);
+            const code=message.stopReason==="length"?"AGENT_MODEL_OUTPUT_LIMIT":"AGENT_INVALID_MODEL_RESPONSE";
+            await transaction(async client=>{
+                run=await lockRun(client,run.id,run.user_id,token);
+                await client.query("UPDATE agent_steps SET status='decided',decision=$3,usage=$4 WHERE run_id=$1 AND step=$2",[run.id,step,JSON.stringify({native:message,calls,text,valid,raw,finishReason:message.stopReason==="toolUse"?"tool-calls":message.stopReason,errorCode:valid?undefined:code}),JSON.stringify(message.usage)]);
+                await client.query("UPDATE agent_runs SET token_count=token_count+$2,pi_context_recovered=CASE WHEN $3='decision' THEN false ELSE pi_context_recovered END WHERE id=$1",[run.id,message.usage.totalTokens||0,kind]);
+                if(kind==="decision")await item(client,run,"assistant",text,{step,tools:calls.map(call=>({name:call.toolName,callId:call.toolCallId})),usage:message.usage},itemId);
+                if(!valid)await setState(client,run,kind==="compaction"?"waiting_input":"failed",kind==="compaction"?{type:"compaction_failed",question:"摘要未完成，原始历史保留，可明确重试压缩。"}:null,kind==="compaction"?"AGENT_COMPACTION_FAILED":code);
+            },owner);
+            if(!valid)throw new HttpError(409,code);
+            const output=createAssistantMessageEventStream();output.push({type:"done",reason:message.stopReason as "stop"|"toolUse",message});return output;
+        }catch(error){
+            const current=(await owner.query("SELECT status FROM agent_runs WHERE id=$1",[run.id])).rows[0];if(current?.status!=="running")throw error;
+            const known=APICallError.isInstance(error)&&error.statusCode!==undefined;
+            if(kind==="decision"&&known&&responseMessage&&isContextOverflow(responseMessage)){
+                await transaction(async client=>{
+                    run=await lockRun(client,run.id,run.user_id,token);
+                    await client.query("UPDATE agent_steps SET status='finished',decision=$3 WHERE run_id=$1 AND step=$2",[run.id,step,JSON.stringify({status:(error as APICallError).statusCode,body:(error as APICallError).responseBody})]);
+                    const recovered=(await client.query("SELECT pi_context_recovered FROM agent_runs WHERE id=$1",[run.id])).rows[0].pi_context_recovered;
+                    if(recovered)await setState(client,run,"waiting_input",{type:"context_limit",question:"历史压缩后上游仍拒绝上下文，完整历史保留，请缩小输入。"},"AGENT_CONTEXT_LIMIT");
+                    else{await client.query("UPDATE agent_runs SET pi_needs_compaction=true WHERE id=$1",[run.id]);await setState(client,run,"queued");}
+                },owner);throw error;
+            }
+            const retry=!signal.aborted&&retryableAgentError(error)&&attempt<=(run.model_config.limits.modelRetries??0);
+            const wait=agentRetryDelay(error,2000*2**(attempt-1));retryAt=Date.now()+wait;
+            await transaction(async client=>{
+                run=await lockRun(client,run.id,run.user_id,token);
+                await client.query("UPDATE agent_steps SET status=$3,decision=$4,request=jsonb_set(request,'{retry}',$5) WHERE run_id=$1 AND step=$2",[run.id,step,retry||known?"finished":"unknown",JSON.stringify({raw,error:error instanceof Error?error.name:"Error",message:error instanceof Error?error.message:"Unknown",status:known?(error as APICallError).statusCode:undefined,body:known?(error as APICallError).responseBody:undefined}),JSON.stringify({attempt,deadline,retryAt,pending:retry,known})]);
+                if(retry){await item(client,run,"system",`文本推理暂时失败，等待后自动重试 ${attempt}/${run.model_config.limits.modelRetries}；计入调用预算，失败尝试也可能计费。`,{kind:"model_retry"});}
+                else await setState(client,run,known?"failed":"unknown",known?null:{type:"unknown_model",question:"模型结果未知，可能已计费；不会自动重发，请结束后明确发起新尝试。"},signal.aborted?"AGENT_MODEL_RETRY_TIMEOUT":attempt>1&&retryableAgentError(error)?"AGENT_MODEL_RETRIES_EXHAUSTED":known?"AGENT_MODEL_REJECTED":"AGENT_MODEL_UNKNOWN");
+            },owner);
+            if(!retry)throw error;
+        }
     }
 }

@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import { canvasEditableNode, isCanvasMediaReplacement, preserveCanvasGeneration } from "../../../../shared/canvas-generations";
+import { canvasPresentationOnly } from "../../../../shared/canvas-commands";
 
 export type CanvasProject = {
     id: string;
@@ -65,7 +66,7 @@ type CanvasGraphEdit =
     | { type: "delete_node"; id: string }
     | { type: "put_connection"; connection: CanvasConnection }
     | { type: "delete_connection"; id: string };
-type PendingMutation = { patch: ProjectPatch; operationId: string; beforeNodes?: CanvasNodeData[]; beforeConnections?: CanvasConnection[] };
+type PendingMutation = { patch: ProjectPatch; operationId: string; before: CanvasProject };
 const pending = new Map<string, PendingMutation>();
 type SubmittedCommand = { operationId: string; baseRevision: number; baseGenerationRevision: number; command: { type: "edit_project"; patch: ProjectPatch; graphEdits: CanvasGraphEdit[] } | { type: "restore_edit"; sourceOperationId: string; direction: "undo" | "redo" } };
 const failedCommands = new Map<string, SubmittedCommand>();
@@ -86,19 +87,43 @@ function acceptRestoredProject(project: CanvasProject) {
         const current = useCanvasStore.getState().openProject(project.id)!;
         const nodes = new Map(project.nodes.map((node) => [node.id, node]));
         const connections = new Map(project.connections.map((edge) => [edge.id, edge]));
-        for (const edit of buildGraphEdits(mutation.beforeNodes || [], mutation.beforeConnections || [], current.nodes, current.connections)) {
+        for (const edit of buildGraphEdits(mutation.before.nodes, mutation.before.connections, current.nodes, current.connections)) {
             if (edit.type === "put_node") nodes.set(edit.node.id, edit.replaceResult ? edit.node : preserveCanvasGeneration(edit.node, nodes.get(edit.node.id)));
             if (edit.type === "delete_node") nodes.delete(edit.id);
             if (edit.type === "put_connection") connections.set(edit.connection.id, edit.connection);
             if (edit.type === "delete_connection") connections.delete(edit.id);
         }
-        mutation.beforeNodes = project.nodes;
-        mutation.beforeConnections = project.connections;
+        mutation.before = project;
         mutation.patch = { ...mutation.patch, nodes: [...nodes.values()], connections: [...connections.values()].filter((edge) => nodes.has(edge.fromNodeId) && nodes.has(edge.toNodeId)) };
     }
     const next = applyCanvasPatch(project, mutation?.patch);
     useCanvasStore.getState().acceptProject(next);
     useCanvasStore.setState((state) => ({ externalSnapshot: state.externalSnapshot + 1 }));
+    return next;
+}
+function acceptExternalProject(project: CanvasProject) {
+    const mutation = pending.get(project.id), current = useCanvasStore.getState().openProject(project.id);
+    if (mutation && current) {
+        const unchanged = (before: unknown, remote: unknown, local: unknown) => {
+            if (JSON.stringify(before) !== JSON.stringify(remote) && JSON.stringify(local) !== JSON.stringify(remote)) throw new CloudError(409, "PROJECT_REVISION_CONFLICT");
+        };
+        const edits = buildGraphEdits(mutation.before.nodes, mutation.before.connections, current.nodes, current.connections);
+        const nodeIds = new Set(project.nodes.map(node => node.id));
+        for (const edit of edits) {
+            if (edit.type === "put_node" || edit.type === "delete_node") {
+                const id = edit.type === "put_node" ? edit.node.id : edit.id;
+                unchanged(canvasEditableNode(mutation.before.nodes.find(node => node.id === id)), canvasEditableNode(project.nodes.find(node => node.id === id)), edit.type === "put_node" ? canvasEditableNode(edit.node) : null);
+                if (edit.type === "put_node") nodeIds.add(id); else nodeIds.delete(id);
+            } else {
+                const id = edit.type === "put_connection" ? edit.connection.id : edit.id;
+                unchanged(mutation.before.connections.find(edge => edge.id === id), project.connections.find(edge => edge.id === id), edit.type === "put_connection" ? edit.connection : undefined);
+            }
+        }
+        for (const edit of edits) if (edit.type === "put_connection" && (!nodeIds.has(edit.connection.fromNodeId) || !nodeIds.has(edit.connection.toNodeId))) throw new CloudError(409, "PROJECT_REVISION_CONFLICT");
+        for (const key of Object.keys(mutation.patch) as Array<keyof ProjectPatch>) if (!["nodes", "connections", "viewport", "backgroundMode", "showImageInfo"].includes(key)) unchanged(mutation.before[key], project[key], mutation.patch[key]);
+    }
+    const next = acceptRestoredProject(project);
+    useCanvasStore.setState({ history: { past: [], future: [] } });
     return next;
 }
 function confirmHistory(submitted: SubmittedCommand) {
@@ -140,7 +165,7 @@ export async function flushCanvasPersistence() {
                     const patch = { ...mutation.patch };
                     delete patch.nodes;
                     delete patch.connections;
-                    const graphEdits = mutation.beforeNodes && mutation.beforeConnections ? buildGraphEdits(mutation.beforeNodes, mutation.beforeConnections, current.nodes, current.connections) : [];
+                    const graphEdits = buildGraphEdits(mutation.before.nodes, mutation.before.connections, current.nodes, current.connections);
                     submitted = { operationId: mutation.operationId, baseRevision: current.contentRevision, baseGenerationRevision: current.generationRevision, command: { type: "edit_project", patch, graphEdits } };
                     pending.delete(id);
                     if (!graphEdits.length && !Object.keys(patch).length) { useCanvasStore.setState({ pendingCount: pending.size + failedCommands.size + inFlight }); continue; }
@@ -149,7 +174,8 @@ export async function flushCanvasPersistence() {
                 try {
                     const { project } = await changeAccountResource<{ project: CanvasProject }>(`/projects/${id}/commands`, submitted, "POST");
                     failedCommands.delete(id);
-                    if (submitted.command.type === "restore_edit") acceptRestoredProject(project);
+                    if (canvasPresentationOnly(submitted.command) && project.contentRevision - project.generationRevision !== submitted.baseRevision - submitted.baseGenerationRevision) acceptExternalProject(project);
+                    else if (submitted.command.type === "restore_edit") acceptRestoredProject(project);
                     else useCanvasStore.getState().acceptProject(applyCanvasPatch(project, pending.get(id)?.patch));
                     confirmHistory(submitted);
                     cloud.setError(`projects/${id}`);
@@ -204,15 +230,19 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => ({
             const current = get().openProject(id);
             if (current && (project.contentRevision < current.contentRevision || project.generationRevision < current.generationRevision)) return current;
             const changed = current && current.contentRevision - current.generationRevision !== project.contentRevision - project.generationRevision;
-            if (changed && pending.has(id)) {
-                const error = new CloudError(409, "PROJECT_REVISION_CONFLICT");
-                useCloudStore.getState().setError(`projects/${id}`, error.message, error.code);
-                throw error;
+            if (changed) {
+                try {
+                    const next = acceptExternalProject(project);
+                    useCloudStore.getState().setError(`projects/${id}`);
+                    return next;
+                } catch (error) {
+                    useCloudStore.getState().setError(`projects/${id}`, (error as Error).message, error instanceof CloudError ? error.code : undefined);
+                    throw error;
+                }
             }
             const next = applyCanvasPatch(project, pending.get(id)?.patch);
             get().acceptProject(next);
             if (!current) set({ history: { past: [], future: [] } });
-            if (changed) set((state) => ({ externalSnapshot: state.externalSnapshot + 1, history: { past: [], future: [] } }));
             return next;
         });
     },
@@ -262,7 +292,7 @@ export const useCanvasStore = create<CanvasStore>()((set, get) => ({
         if (!Object.keys(patch).length) return;
         const previous = pending.get(id);
         get().acceptProject({ ...current, ...patch });
-        pending.set(id, { patch: { ...previous?.patch, ...patch }, operationId: previous?.operationId || nanoid(), beforeNodes: previous?.beforeNodes || current?.nodes, beforeConnections: previous?.beforeConnections || current?.connections });
+        pending.set(id, { patch: { ...previous?.patch, ...patch }, operationId: previous?.operationId || nanoid(), before: previous?.before || current });
         set({ pendingCount: pending.size + failedCommands.size + inFlight });
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => { timer = null; void flushCanvasPersistence().catch(() => undefined); }, 400);
