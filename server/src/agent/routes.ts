@@ -108,7 +108,7 @@ export async function inputRun(userId:string,id:string,value:unknown) {
                 if (!(await client.query("SELECT 1 FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[id,call.toolCallId])).rowCount) await saveReceipt(client,run,{...call,input:call.input ?? null},{error:"AGENT_INVALID_TOOL_ARGUMENTS",message:"本次决定未执行，请依据工具 schema 修正；不要重复之前已成功的节点。",details:errors.find(error => error.callId === call.toolCallId) || {message:"同一决定含无效参数，当前调用也未执行，请重新规划。"}});
             }
             await finishStep(client,run,step);
-            await client.query("UPDATE agent_runs SET context=context || $2::jsonb WHERE id=$1",[id,JSON.stringify([{role:"user",content:`请修正刚才未执行的工具参数，只继续未完成部分。不得创建试探或探测节点猜参数，不重复已成功结果；视频使用 videoSize、vquality、seconds（整数字符串）。如原定总时长与模型整数秒要求冲突，请先询问安排，不擅自改变原需求。${input.text || ""}`}])]);
+            await client.query("UPDATE agent_runs SET context=context || $2::jsonb WHERE id=$1",[id,JSON.stringify([{role:"user",content:`请按刚才工具回执中的字段问题与结构示例修正未执行的参数，只继续未完成部分。不得创建试探或探测节点猜参数，不重复已成功结果，不擅自改变原需求；如需求与工具能力冲突，请先询问。${input.text || ""}`}])]);
             await client.query("UPDATE agent_threads SET active_run_id=$2 WHERE id=$1",[run.thread_id,id]);
         } else if (input.action === "reply" && type === "question" && (input.text?.trim() || input.answers)) {
             if(run.wait.questions?.length && (!input.answers || run.wait.questions.some((question:any)=>!input.answers?.[question.id]) || Object.keys(input.answers).some(id=>!run.wait.questions.some((question:any)=>question.id===id))))throw new HttpError(400,"AGENT_ANSWERS_REQUIRED");

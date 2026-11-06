@@ -36,7 +36,13 @@ const mediaParams = z.object({
     videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional(),fastMode:z.enum(["true","false"]).optional(),audioInput:audioInputSchema.optional(),
 }).strict();
 const nodeId=z.string().min(1).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。省略时只创建或复用相同内容，不表示修改。").optional();
-const newCopy=z.boolean().describe("仅用户明确要求额外副本或多个版本时设为 true；改参数或重试不得借此重建已有节点。").optional();
+const newCopy=z.boolean().nullable().default(false).transform(value=>value ?? false).describe("仅用户明确要求额外副本或多个版本时传布尔值 true；省略、false 或 null 均不新增副本，不接受字符串。");
+const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
+const textNodes=z.array(z.union([
+    z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
+    z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
+])).min(1);
+const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。newCopy 只接受布尔值或 null；省略、false、null 均不新增副本。正文示例：{"nodes":[{"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
 const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
@@ -60,7 +66,7 @@ export const toolSchemas = {
     find_nodes:z.object({ query:z.string().optional(), type:z.enum(["text","config","image","video","audio","group"]).optional() }).strict(),
     read_nodes:z.object({ nodeIds:ids, includeImages:z.boolean().optional() }).strict(),
     get_model_capabilities:z.object({}).strict(),
-    create_text_nodes:z.object({ nodes:z.array(z.object({ nodeId,newCopy,title:z.string(), text:z.string().min(1).optional(), shots:z.array(z.object({ number:z.number().int().positive(), seconds:z.number().positive(), scene:z.string().min(1), camera:z.string(), sound:z.string(), materials:z.string() }).strict()).min(1).optional(), sourceNodeIds:z.array(z.string()) }).strict().refine(node => Boolean(node.text) !== Boolean(node.shots))).min(1) }).strict(),
+    create_text_nodes:z.object({nodes:textNodes}).strict(),
     prepare_media_nodes:z.object({ nodes:z.array(preparedMediaNode).min(1) }).strict(),
     prepare_text_generation:z.object({nodes:z.array(z.object({...mediaNodeFields,parameters:mediaParams.pick({reasoningEffort:true})}).strict()).min(1)}).strict(),
     connect_nodes:z.object({ connections:z.array(z.object({ fromNodeId:z.string(), toNodeId:z.string() }).strict()).min(1) }).strict(),
@@ -79,13 +85,20 @@ const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...canvasToolDescriptions,set_agent_state:"保存创作阶段、已确认方案和真实节点引用；该备忘不代表生成授权或完成。",read_agent_state:"读取本会话已保存的创作阶段与备忘，不推断任务状态。",read_skill_file:"读取已加载 Skill 快照中的相对文本附属文件；不能读取服务器文件系统或执行内容。",
     load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；newCopy 只用于用户明确要额外副本。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用；newCopy 仅用于用户明确要额外版本。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
 };
+descriptions.create_text_nodes+=` ${textNodeHint}`;
+const unknownFields=(issues:z.ZodIssue[])=>issues.reduce((count,issue)=>count+(issue.code === "unrecognized_keys" ? issue.keys.length : 0),0);
+function toolIssues(issues:z.ZodIssue[],path:PropertyKey[]=[]):z.ZodIssue[] {
+    return issues.flatMap(issue=>issue.code === "invalid_union" && issue.errors.length
+        ? toolIssues([...issue.errors].sort((a,b)=>unknownFields(a)-unknownFields(b)||a.length-b.length)[0],[...path,...issue.path])
+        : [{...issue,path:[...path,...issue.path]}]);
+}
 export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:string;input:unknown}>) {
     return calls.flatMap(call => {
         const schema=Object.hasOwn(toolSchemas,call.toolName) ? toolSchemas[call.toolName as keyof typeof toolSchemas] : undefined;
         const parsed=schema?.safeParse(call.input);
         if (parsed?.success) return [];
-        const problems=parsed && !parsed.success ? parsed.error.issues.flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys.map(key => ({field:[...issue.path,key].join("."),message:`工具不支持字段 ${key}`})) : [{field:issue.path.join("."),message:issue.code === "invalid_type" ? "参数类型不正确或缺少必填项" : issue.message}]) : [{field:"tool",message:"工具未登记"}];
-        return [{callId:call.toolCallId,toolName:call.toolName,problems,...(call.toolName === "prepare_media_nodes" ? {hint:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。合法取值以模型能力为准。"} : {})}];
+        const problems=parsed && !parsed.success ? toolIssues(parsed.error.issues).flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys.map(key => ({field:[...issue.path,key].join("."),message:`工具不支持字段 ${key}`})) : [{field:issue.path.join("."),message:issue.code === "invalid_type" ? `应为${({boolean:"布尔值（true 或 false）",string:"字符串",number:"数字",array:"数组",object:"对象"} as Record<string,string>)[issue.expected] || issue.expected}，请按工具定义填写` : issue.message}]) : [{field:"tool",message:"工具未登记"}];
+        return [{callId:call.toolCallId,toolName:call.toolName,problems,...(call.toolName === "create_text_nodes" ? {hint:textNodeHint} : call.toolName === "prepare_media_nodes" ? {hint:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。合法取值以模型能力为准。"} : {})}];
     });
 }
 export const agentTools = Object.fromEntries(Object.entries(toolSchemas).map(([name,inputSchema]) => [name,tool({ description:descriptions[name as keyof typeof descriptions],inputSchema })]));

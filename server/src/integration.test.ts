@@ -732,6 +732,35 @@ test("image previews are small, cached, owner-scoped and cleaned up with the ori
     await assert.rejects(stat(join(media, `${disk}.preview.webp`)), { code: "ENOENT" });
 });
 
+test("animated image previews retain timing and replace cached still previews", async () => {
+    const { writeFile, stat } = await import("node:fs/promises");
+    const width = 1024, height = 512;
+    const bytes = await sharp(Buffer.concat([Buffer.alloc(width * height * 3, 255), Buffer.alloc(width * height * 3)]), { raw: { width, height: height * 2, channels: 3, pageHeight: height } }).gif({ delay: [100, 250], loop: 3 }).toBuffer();
+    const path = "/files/image_files/image:animated-preview-test";
+    assert.equal((await realFetch(`${base}/api${path}`, { method: "PUT", headers: { ...headers(alice), "Content-Type": "image/gif" }, body: bytes })).status, 200);
+    const disk = (await db.query("SELECT disk_id FROM files WHERE user_id=$1 AND key='image:animated-preview-test'", [alice])).rows[0].disk_id;
+    const cachedPath = join(media, `${disk}.preview.webp`);
+    await writeFile(cachedPath, await sharp(bytes).webp().toBuffer());
+    const preview = await call(`${path}?preview=1`, alice);
+    assert.equal(preview.status, 200);
+    assert.match(preview.headers.get("content-type")!, /image\/webp/);
+    const info = await sharp(Buffer.from(await preview.arrayBuffer()), { animated: true }).metadata();
+    assert.equal(info.pages, 2);
+    assert.equal(info.width, 768);
+    assert.equal(info.pageHeight, 384);
+    assert.deepEqual(info.delay, [100, 250]);
+    assert.equal(info.loop, 3);
+    const previewStat = await stat(cachedPath);
+    const cached = await realFetch(`${base}/api${path}?preview=1`, { headers: { ...headers(alice), "If-None-Match": preview.headers.get("etag")!, "Cache-Control": "max-age=0" } });
+    assert.equal((await stat(cachedPath)).mtimeMs, previewStat.mtimeMs);
+    assert.equal(cached.headers.get("etag"), preview.headers.get("etag"));
+    assert.equal(cached.status, 304);
+    assert.equal((await call(`${path}?preview=1`, bob)).status, 404);
+    assert.deepEqual(Buffer.from(await (await call(path, alice)).arrayBuffer()), bytes);
+    assert.equal((await call(path, alice, "DELETE")).status, 200);
+    await assert.rejects(stat(cachedPath), { code: "ENOENT" });
+});
+
 test("status polling returns only owned visible task IDs and statuses", async () => {
     const id = randomUUID();
     const provider = (await import("./tokenone.js")).modelProvider;

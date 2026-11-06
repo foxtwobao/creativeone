@@ -309,6 +309,43 @@ test("video tools expose canonical fields and integer seconds instead of mixed i
     assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
     responses.push(modelText("已读能力"));await executeAgentRun(ctx.id);const definition=fixture.requests.at(-1).tools.find((tool:any) => tool.name === "prepare_media_nodes");const variants=definition.parameters.properties.nodes.items.oneOf;const video=variants.find((node:any) => node.properties.kind.const === "video");assert.ok(video.properties.parameters.properties.videoSize);assert.equal(video.properties.parameters.properties.size,undefined);assert.equal(video.properties.parameters.properties.ratio,undefined);
 });
+test("text tool schemas expose the two node shapes and identify misplaced storyboard fields",async () => {
+    responses.push(modelText("已读取工具定义"));await agentDecision("agent-model","test","工具定义测试",[{role:"user",content:"读取定义"}],{},new AbortController().signal);
+    const definition=fixture.requests.at(-1).tools.find((tool:any)=>tool.name==="create_text_nodes"),variants=definition.parameters.properties.nodes.items.anyOf;
+    assert.equal(variants.length,2);assert.ok(variants.some((variant:any)=>variant.required.includes("text")&&!variant.properties.shots));assert.ok(variants.some((variant:any)=>variant.required.includes("shots")&&!variant.properties.text));assert.match(definition.description,/nodes\[\]\.shots\[\]/);
+    const shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
+    const input={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[],newCopy:"false",...shot})),shots:[shot],text:"错误的顶层正文"};
+    const errors=toolArgumentErrors([{toolCallId:"misnested",toolName:"create_text_nodes",input}]);assert.equal(errors.length,1);assert.match(errors[0].hint!,/顶层只传 nodes/);
+    for(let index=0;index<4;index++)for(const field of ["newCopy","camera","materials","number","scene","seconds","sound"])assert.ok(errors[0].problems.some(problem=>problem.field===`nodes.${index}.${field}`),`${index}.${field}`);
+    assert.match(errors[0].problems.find(problem=>problem.field==="nodes.0.newCopy")!.message,/布尔值/);assert.ok(errors[0].problems.some(problem=>problem.field==="shots"));assert.ok(errors[0].problems.some(problem=>problem.field==="text"));
+    const nested=toolArgumentErrors([{toolCallId:"nested",toolName:"create_text_nodes",input:{nodes:[{title:"镜头",shots:[{...shot,seconds:"3"}],sourceNodeIds:[]}]}}]);assert.equal(nested[0].problems[0].field,"nodes.0.shots.0.seconds");assert.match(nested[0].problems[0].message,/数字/);
+    for(const node of [{title:"空节点",sourceNodeIds:[]},{title:"双正文",text:"正文",shots:[shot],sourceNodeIds:[]}])assert.equal(toolArgumentErrors([{toolCallId:"exclusive",toolName:"create_text_nodes",input:{nodes:[node]}}]).length,1);
+});
+test("empty copy flags reuse text and media nodes while strings never request copies",async () => {
+    const ctx=await setup(),spec={title:"正文",text:"保留相同正文",sourceNodeIds:[ctx.source]};
+    const first=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:null}]});
+    for(const flag of [null,false,undefined]){const reused=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,...flag===undefined?{}:{newCopy:flag}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);assert.deepEqual(reused.createdNodeIds,[]);}
+    for(const flag of ["false","true","",0,1])await assert.rejects(()=>recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:flag}]}));
+    const copy=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:true}]});assert.equal(copy.createdNodeIds.length,1);assert.notEqual(copy.createdNodeIds[0],first.createdNodeIds[0]);
+    const media={title:"图片",kind:"image",model:"image-model",prompt:"小猫回家",parameters:{},sourceNodeIds:[ctx.source],referenceNodeIds:[]};
+    const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[media]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:null}]});assert.deepEqual(reused.reusedNodeIds.sort(),prepared.createdNodeIds.sort());assert.deepEqual(reused.createdNodeIds,[]);
+    assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
+});
+test("misnested storyboard decisions pause without writes and explicit correction keeps successful nodes",async () => {
+    const ctx=await setup(),shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
+    const invalid=modelTool("create_text_nodes",{nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:null,...shot})),shots:[shot],text:null});
+    invalid.output.unshift(modelTool("set_agent_state",{phase:"breakdown"}).output[0]);
+    responses.push(modelTool("create_text_nodes",{nodes:[{title:"已成功正文",text:"已有成果",sourceNodeIds:[ctx.source]}]}),invalid);await executeAgentRun(ctx.id);
+    let run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.type,"tool_arguments");assert.equal(run.wait.errors[0].toolName,"create_text_nodes");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);assert.equal((await readCreativeState(db,ctx.thread)),null);
+    const before=fixture.requests.length;await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before);
+    await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"correct_tool_arguments"});assert.equal(fixture.requests.length,before);run=await record(ctx.id);assert.match(run.context.at(-1).content,/工具回执/);assert.doesNotMatch(run.context.at(-1).content,/videoSize/);
+    const corrected={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:null,shots:[{...shot,number:index+1}]}))};
+    responses.push(modelTool("create_text_nodes",corrected),modelTool("create_text_nodes",corrected),modelText("仅保存未完成分镜"));await executeAgentRun(ctx.id);
+    run=await record(ctx.id);assert.equal(run.status,"completed");const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,6);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"已有成果");assert.ok(project.nodes.find((node:any)=>node.title==="镜头1").metadata.content.includes("镜头 1 · 3 秒"));
+    const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,invalid.output[1].call_id])).rows[0].result;assert.match(receipt.details.hint,/nodes\[\]\.shots\[\]/);
+    const original=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND step=2",[ctx.id])).rows[0].decision.raw;assert.equal(original.output[1].arguments,invalid.output[1].arguments);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+});
+
 test("invalid video arguments pause with details, then explicit correction continues the same run",async () => {
     const ctx=await setup(),before=fixture.requests.length;const invalid=modelTool("prepare_media_nodes",{nodes:[videoSpec({ratio:"16:9",seconds:"2.5"})]});responses.push(invalid);await executeAgentRun(ctx.id);let run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.error,"AGENT_INVALID_TOOL_ARGUMENTS");assert.equal(run.wait.type,"tool_arguments");assert.ok(run.wait.errors[0].problems.some((problem:any)=>problem.field.endsWith("ratio")));assert.ok(run.wait.errors[0].problems.some((problem:any)=>problem.field.endsWith("seconds")));assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);assert.equal(fixture.requests.length,before+1);await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+1);
     const stored=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1",[ctx.id])).rows[0].decision;assert.equal(stored.raw.output[0].arguments,invalid.output[0].arguments);
