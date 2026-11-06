@@ -22,7 +22,7 @@ const {agentDecision}=await import("./agent/model.js");
 const {readAgentConfig,readAgentSettings,saveAgentSettings}=await import("./agent/config.js");
 const {agentSettingsDefaults}=await import("../../shared/agent-settings.js");
 let agentConfig:Awaited<ReturnType<typeof readAgentConfig>>;
-const {planCompaction,modelContext,emptyCheckpoint,estimatedTokens}=await import("./agent/memory.js");
+const {planCompaction,modelContext,deduplicateToolResults,emptyCheckpoint,estimatedTokens}=await import("./agent/memory.js");
 let imageChannel:string;
 const responses:any[]=[];
 const fixture=mockAgentModel(responses);
@@ -418,6 +418,50 @@ test("same-run correction automatically rejects lingering top-level text and kee
     const feedback=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND result->>'error'='AGENT_INVALID_TOOL_ARGUMENTS'",[ctx.id])).rows;assert.equal(feedback.length,2);for(const row of feedback)assert.deepEqual(row.result.details.problems.map((problem:any)=>problem.field),["text"]);
     for(const request of fixture.requests.slice(start)){const tool=request.tools.find((tool:any)=>tool.name==="create_text_nodes");assert.equal(tool.strict,true);assert.deepEqual(Object.keys(tool.parameters.properties),["nodes"]);}
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+});
+test("production-shaped boolean arrays receive exactly one authoritative result per call during correction",async () => {
+    for(const [name,field,input,values] of [
+        ["read_nodes","includeImages",(ctx:any,value:unknown)=>({nodeIds:[ctx.source],includeImages:value}),[[null,null,null,0],[null,null,null,1]]],
+        ["prepare_media_nodes","nodes.0.newCopy",(ctx:any,value:unknown)=>({nodes:[{title:"角色图",kind:"image",model:"image-model",prompt:"小猫",parameters:{size:"1024x1024",quality:"auto"},sourceNodeIds:[ctx.source],referenceNodeIds:[],newCopy:value}]}),[[null,null,null,0]]],
+    ] as const){
+        const ctx=await setup(),before=fixture.requests.length,invalid=values.map(value=>modelTool(name,input(ctx,value)));
+        responses.push(...invalid,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);return Response.json(modelTool(name,input(ctx,false)));},modelText("已修正参数并完成"));await executeAgentRun(ctx.id);
+        assert.equal((await record(ctx.id)).status,"completed");
+        for(const [index,body] of invalid.entries()){
+            const callId=body.output[0].call_id,step=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND step=$2",[ctx.id,index+1])).rows[0].decision;
+            assert.equal(step.raw.output[0].arguments,body.output[0].arguments);assert.deepEqual(step.calls[0].input,input(ctx,values[index]));
+            for(const request of fixture.requests.slice(before+index+1)){
+                const outputs=request.input.filter((part:any)=>part.type==="function_call_output"&&part.call_id===callId);assert.equal(outputs.length,1);
+                const feedback=JSON.parse(outputs[0].output);assert.equal(feedback.error,"AGENT_INVALID_TOOL_ARGUMENTS");assert.ok(feedback.details.problems.some((problem:any)=>problem.field===field));
+            }
+        }
+        const run=await record(ctx.id);assert.equal(run.decision_count,invalid.length+2);assert.equal(run.context.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content).length,invalid.length+1);
+        assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+    }
+});
+test("existing duplicate error results are projected once without rewriting history or splitting compaction units",async () => {
+    const ctx=await setup(),run=await record(ctx.id),callId=randomUUID(),call={type:"tool-call",toolCallId:callId,toolName:"read_nodes",input:{nodeIds:[ctx.source],includeImages:[null,null,null,0]}},feedback={error:"AGENT_INVALID_TOOL_ARGUMENTS",details:{problems:[{field:"includeImages"}]}};
+    const group=[{role:"assistant",content:[call]},{role:"tool",content:[{type:"tool-result",toolCallId:callId,toolName:"read_nodes",output:{type:"error-text",value:"SDK validation error"}}]},{role:"tool",content:[{type:"tool-result",toolCallId:callId,toolName:"read_nodes",output:{type:"json",value:feedback}}]}];
+    const original=[...run.context,...group],snapshot=JSON.stringify(original);run.context=original;run.model_config.limits.recentContextTokens=1;
+    const projected=modelContext(run),results=projected.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content);assert.equal(results.length,1);assert.deepEqual(results[0].output,{type:"json",value:feedback});
+    assert.equal(planCompaction(run),undefined); // The final call and both recorded results stay together.
+    run.context=[...original,{role:"user",content:"只继续未完成内容"}];const plan=planCompaction(run)!;assert.equal(run.context[plan.offset].role,"user");
+    const summary=JSON.parse(plan.messages[0].content).completedHistory;assert.equal(summary.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content).length,1);assert.equal(JSON.stringify(original),snapshot);
+    const separate=deduplicateToolResults([...original,{role:"user",content:"另一次决定"},...group] as any);assert.equal(separate.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content).length,2);
+    await db.query("UPDATE agent_runs SET context=$2 WHERE id=$1",[ctx.id,JSON.stringify(run.context)]);const before=fixture.requests.length;responses.push(modelText("保留已有成果"));await executeAgentRun(ctx.id);
+    const outgoing=fixture.requests[before].input.filter((part:any)=>part.type==="function_call_output"&&part.call_id===callId);assert.equal(outgoing.length,1);assert.deepEqual(JSON.parse(outgoing[0].output),feedback);
+    const stored=await record(ctx.id);assert.equal(stored.status,"completed");assert.deepEqual(stored.context.slice(0,original.length),original);
+    const request=(await db.query("SELECT request FROM agent_steps WHERE run_id=$1",[ctx.id])).rows[0].request;assert.equal(request.messages.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content).length,1);
+});
+test("persisted retry requests remove duplicate SDK results only in the new outgoing attempt",async () => {
+    const ctx=await setup(),run=await record(ctx.id),callId=randomUUID(),result={type:"tool-result",toolCallId:callId,toolName:"read_nodes"},feedback={error:"AGENT_INVALID_TOOL_ARGUMENTS"};
+    const request={kind:"decision",system:"fixture",messages:[...run.context,{role:"assistant",content:[{type:"tool-call",toolCallId:callId,toolName:"read_nodes",input:{nodeIds:[ctx.source],includeImages:[null,null,null,0]}}]},{role:"tool",content:[{...result,output:{type:"error-text",value:"SDK validation error"}}]},{role:"tool",content:[{...result,output:{type:"json",value:feedback}}]}],retry:{attempt:1,deadline:Date.now()+run.model_config.limits.requestTimeoutMs,retryAt:0,pending:true,known:true}};
+    await db.query("INSERT INTO agent_steps(run_id,step,item_id,status,request) VALUES($1,1,$2,'finished',$3)",[ctx.id,randomUUID(),JSON.stringify(request)]);
+    await db.query("UPDATE agent_runs SET decision_count=1,model_config=jsonb_set(model_config,'{limits,modelRetries}','1') WHERE id=$1",[ctx.id]);
+    const before=fixture.requests.length;responses.push(modelText("继续未完成内容"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal(fixture.requests.length,before+1);
+    const outputs=fixture.requests[before].input.filter((part:any)=>part.type==="function_call_output"&&part.call_id===callId);assert.equal(outputs.length,1);assert.deepEqual(JSON.parse(outputs[0].output),feedback);
+    const steps=(await db.query("SELECT request FROM agent_steps WHERE run_id=$1 ORDER BY step",[ctx.id])).rows;
+    assert.deepEqual(steps[0].request.messages,request.messages);assert.equal(steps[1].request.messages.filter((message:any)=>message.role==="tool").flatMap((message:any)=>message.content).length,1);assert.deepEqual((await record(ctx.id)).context.slice(0,run.context.length),run.context);
 });
 test("automatic argument correction stops at the existing model-call budget",async () => {
     const ctx=await setup(),budget=(await record(ctx.id)).model_config.limits.decisionBudget,before=fixture.requests.length;

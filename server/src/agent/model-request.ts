@@ -10,7 +10,7 @@ import { readAgentConfig } from "./config.js";
 import { agentEvents } from "./events.js";
 import { agentDecision,expandAgentImages } from "./model.js";
 import { assertSources, recordToolArgumentFailure } from "./tools.js";
-import { contextCheckpoint,estimatedInputTokens,isContextRejection } from "./memory.js";
+import { contextCheckpoint,deduplicateToolResults,estimatedInputTokens,isContextRejection } from "./memory.js";
 import { lockRun,setState,item,type Run } from "./state.js";
 
 class PausedRequest extends Error {}
@@ -25,6 +25,7 @@ export function agentRetryDelay(error:unknown,fallback:number){
 
 // Each transport attempt gets its own durable step. SDK retries stay disabled.
 export async function requestAgentModel(owner:pg.Client,run:Run,request:any,token:string,cancel:AbortSignal):Promise<boolean>{
+    request={...request,messages:deduplicateToolResults(request.messages)};
     const id=run.id,maxRetries=run.model_config.limits.modelRetries??0,previous=request.retry;
     const deadline=previous?.deadline??Date.now()+run.model_config.limits.requestTimeoutMs;
     let attempts=previous?.attempt??0,retryAt=previous?.retryAt??0,step:{step:number;itemId:string}|undefined,lastError:unknown;
