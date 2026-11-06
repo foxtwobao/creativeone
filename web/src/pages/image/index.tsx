@@ -29,7 +29,7 @@ import { imageSettingsForModel } from "@/lib/image-settings";
 import { modelOptionName, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
-import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { formatBytes, formatDuration, imageExtension } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -261,7 +261,7 @@ export default function ImagePage() {
     }, [autoRunToken]);
 
     const downloadImage = (image: GeneratedImage, index: number) => {
-        saveAs(image.dataUrl, `image-${index + 1}.png`);
+        saveAs(image.dataUrl, `image-${index + 1}.${imageExtension(image.dataUrl, image.mimeType)}`);
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {

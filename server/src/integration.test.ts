@@ -278,6 +278,40 @@ test("Banana OpenAI requests preserve parameters, image permissions, user Key an
     }
 });
 
+test("generated images are stored by their actual format and preserve animated bytes", async (t) => {
+    const { persistImages } = await import("./generation-executor.js");
+    const still = sharp({ create: { width: 2, height: 2, channels: 3, background: "white" } });
+    const gif = await sharp(Buffer.concat([Buffer.alloc(12, 255), Buffer.alloc(12)]), { raw: { width: 2, height: 4, channels: 3, pageHeight: 2 } }).gif({ delay: [100, 200], loop: 0 }).toBuffer();
+    const cases = [
+        { bytes: await still.clone().png().toBuffer(), mime: "image/png" },
+        { bytes: await still.clone().jpeg().toBuffer(), mime: "image/jpeg" },
+        { bytes: await still.clone().webp().toBuffer(), mime: "image/webp" },
+        { bytes: await still.clone().avif().toBuffer(), mime: "image/avif" },
+        { bytes: gif, mime: "image/gif" },
+    ];
+    let remoteBytes = gif, contentType = "image/png";
+    t.mock.method(globalThis, "fetch", async (url: unknown) => {
+        assert.equal(String(url), "https://tokenone.test/result.png");
+        return new Response(remoteBytes, { headers: { "Content-Type": contentType } });
+    });
+    for (const { bytes, mime } of cases) {
+        remoteBytes = bytes;
+        for (const source of ["base64", "image/png", "application/octet-stream", "text/plain"]) {
+            contentType = source;
+            const data = source === "base64" ? { b64_json: bytes.toString("base64") } : { url: "https://tokenone.test/result.png" };
+            const result = await persistImages(alice, { output_format: "png", data: [data] }, new AbortController().signal);
+            const saved = result.data[0];
+            assert.equal(saved.file.mimeType, mime);
+            assert.equal(saved.b64_json, undefined);
+            const response = await realFetch(`${base}${saved.url}`, { headers: headers(alice) });
+            assert.equal(response.headers.get("Content-Type"), mime);
+            assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+        }
+    }
+    assert.equal((await sharp(gif).metadata()).pages, 2);
+    await assert.rejects(persistImages(alice, { data: [{ b64_json: Buffer.from("<html>not an image</html>").toString("base64") }] }, new AbortController().signal), { code: "INVALID_IMAGE_RESPONSE" });
+});
+
 test("Grok edits preserve JSON references and model-specific parameters", async () => {
     const body = { model: "grok-imagine-image", prompt: "猫", resolution: "2k", n: 1, response_format: "url", image: { type: "image_url", url: "data:image/png;base64,YQ==" } };
     const response = await call(`/ai/${imageChannel}/v1/images/edits`, alice, "POST", body);

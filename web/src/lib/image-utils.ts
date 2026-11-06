@@ -2,6 +2,11 @@ import { cloudApi } from "@/services/api/cloud";
 import i18n from "@/i18n";
 import type { ReferenceImage } from "@/types/image";
 
+export function imageExtension(dataUrl: string, mimeType?: string) {
+    const type = (mimeType || dataUrl.match(/^data:(image\/[^;,]+)/i)?.[1] || "image/png").split(";")[0].toLowerCase();
+    return ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif", "image/bmp": "bmp" } as Record<string, string>)[type] || "png";
+}
+
 export function formatBytes(bytes: number) {
     if (!Number.isFinite(bytes) || bytes <= 0) {
         return "";

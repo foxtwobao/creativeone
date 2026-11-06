@@ -2,6 +2,7 @@ import { saveAs } from "file-saver";
 
 import i18n from "@/i18n";
 import { createZip } from "@/lib/zip";
+import { imageExtension } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
@@ -89,10 +90,7 @@ function safeFileName(value: string) {
 }
 
 function fileExtension(mimeType: string, storageKey: string) {
-    if (mimeType.includes("png")) return "png";
-    if (mimeType.includes("jpeg")) return "jpg";
-    if (mimeType.includes("webp")) return "webp";
-    if (mimeType.includes("gif")) return "gif";
+    if (mimeType.startsWith("image/")) return imageExtension("", mimeType);
     if (mimeType.startsWith("audio/") && mimeType.includes("mp4")) return "m4a";
     if (mimeType.includes("mp4")) return "mp4";
     if (mimeType.includes("webm")) return "webm";
