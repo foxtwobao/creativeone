@@ -27,7 +27,7 @@ export async function createCreativeSession(options:{
     tools:ToolDefinition<any>[];persistence:PiSessionPersistence;stream:StreamFn;
     signal?:AbortSignal;
     endTurn?:()=>Promise<boolean>;
-    prepareResult?:(message:Extract<AgentMessage,{role:"toolResult"}>,context:{waiting:boolean})=>Promise<void>;
+    prepareResult?:(message:Extract<AgentMessage,{role:"toolResult"}>,context:{waiting:boolean;invalid?:string})=>Promise<void>;
     validateDecision:(message:AgentMessage)=>string|undefined;
     onEvent?:(event:AgentSessionEvent)=>void;
 }) {
@@ -35,7 +35,6 @@ export async function createCreativeSession(options:{
     if(saved){validatePiSnapshot(saved);if(saved.signature!==options.signature)throw new HttpError(409,"AGENT_SESSION_CONFIG_CHANGED");}
     const manager=SessionManager.inMemory(options.cwd,undefined,saved?.entries);
     let durable=saved?.entries.map(entry=>JSON.stringify(entry))||[],failure:unknown,invalid:string|undefined,waiting=false;
-    const rawCalls=new Map<string,unknown>();
     const assertActive=()=>{if(failure)throw failure;options.signal?.throwIfAborted();};
     const flush=async()=>{
         assertActive();
@@ -52,7 +51,7 @@ export async function createCreativeSession(options:{
         sessionManager:manager,settingsManager:SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false,provider:{maxRetries:0}},cacheWarming:"off"}),
         tools:options.tools.map(tool=>tool.name),customTools:options.tools.map(tool=>({...tool,executionMode:"sequential",constrainedSampling:false,
             execute:async(...args:Parameters<typeof tool.execute>)=>{
-                assertActive();await flush();if(rawCalls.has(args[0]))args[1]=structuredClone(rawCalls.get(args[0]));
+                assertActive();await flush();
                 let result;try{result=await tool.execute(...args);}catch(error){failure=error;throw error;}
                 if(result.terminate)waiting=true;return result;
             },
@@ -66,13 +65,19 @@ export async function createCreativeSession(options:{
         },
     });
     session.agent.toolExecution="sequential";
-    session.agent.streamFunction=async(...args)=>{assertActive();await flush();try{return await options.stream(...args);}catch(error){failure=error;throw error;}};
+    session.agent.streamFunction=async(...args)=>{
+        assertActive();await flush();
+        try{
+            const stream=await options.stream(...args),iterate=stream[Symbol.asyncIterator].bind(stream);
+            stream[Symbol.asyncIterator]=async function*(){try{yield* {[Symbol.asyncIterator]:iterate};}catch(error){failure=error;throw error;}};
+            return stream;
+        }catch(error){failure=error;throw error;}
+    };
     session.agent.subscribe(async event=>{
         assertActive();
-        if(event.type==="message_start"&&event.message.role==="toolResult")await options.prepareResult?.(event.message,{waiting});
+        if(event.type==="message_start"&&event.message.role==="toolResult")await options.prepareResult?.(event.message,{waiting,invalid});
         if(event.type==="message_end"){
             if(event.message.role==="assistant"){
-                rawCalls.clear();for(const part of event.message.content)if(part.type==="toolCall")rawCalls.set(part.id,part.arguments);
                 invalid=options.validateDecision(event.message);
             }
             await flush();
@@ -92,7 +97,7 @@ export async function createCreativeSession(options:{
     if(options.onEvent)session.subscribe(options.onEvent);
     const settle=async(work:()=>Promise<void>)=>{
         assertActive();waiting=false;
-        await work();assertActive();await flush();
+        try{await work();assertActive();await flush();}catch(error){failure=error;throw error;}
     };
     return {
         session,flush,

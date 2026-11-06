@@ -122,6 +122,10 @@ test("Pi resumes a question without replaying decisions when SDK message metadat
     await db.query("UPDATE agent_steps SET decision=decision#-'{native,thinkingLevel}' WHERE run_id=$1",[ctx.id]);
     const saved=(await db.query("SELECT body FROM agent_pi_entries WHERE thread_id=$1 ORDER BY position",[ctx.thread])).rows.map(row=>row.body);
     await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"reply",answers:{style:"写实"}});
+    const queued=(await db.query("SELECT content FROM agent_pi_inputs WHERE turn_id=$1 AND NOT delivered ORDER BY sequence",[ctx.id])).rows.map(r=>JSON.parse(r.content));
+    assert.equal(queued.filter(x=>x.type==="operation_result"&&x.name==="request_user_input").length,0);
+    assert.equal(queued.filter(x=>x.role==="user"&&x.detail?.action==="reply").length,1);
+    assert.deepEqual(JSON.parse((await db.query("SELECT result FROM agent_pi_pending WHERE run_id=$1 AND name='request_user_input'",[ctx.id])).rows[0].result).answers,{style:"写实"});
     responses.push(modelText("已收到，继续原目标"));await executeAgentRun(ctx.id);run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,4);
     const current=(await db.query("SELECT body FROM agent_pi_entries WHERE thread_id=$1 ORDER BY position",[ctx.thread])).rows.map(row=>row.body);
     assert.deepEqual(current.slice(0,saved.length),saved);
@@ -130,6 +134,25 @@ test("Pi resumes a question without replaying decisions when SDK message metadat
         const ids=request.input.filter((part:any)=>part.type==="function_call").map((part:any)=>part.call_id);assert.equal(new Set(ids).size,ids.length);
     }
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+});
+test("native Pi stream events reach the consumer only completing after the response is durable",async()=>{
+    const ctx=await setup(),token=randomUUID(),owner=await db.connect();
+    await db.query("UPDATE agent_runs SET status='running',execution_token=$2 WHERE id=$1",[ctx.id,token]);
+    const run={...await record(ctx.id),project_id:ctx.project},body=modelText("正在读取画布");body.output.push(modelTool("read_canvas",{}).output[0] as any);responses.push(body);
+    const {requestPiModel}=await import("./agent/model-request.js"),{creativePiTools}=await import("./agent/pi-tools.js");
+    const model:any={id:"agent-model",name:"agent-model",api:"openai-responses",provider:"creativeone",baseUrl:"https://tokenone.test/v1",reasoning:false,input:["text"],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:276000,maxTokens:0,compat:{supportsStrictMode:true}};
+    const tools=creativePiTools(async()=>({content:[]})).map(({name,description,parameters})=>({name,description,parameters}));
+    try{
+        const stream=requestPiModel(owner as any,run,token,new AbortController().signal,model,{messages:[{role:"system",content:"测试原生事件",toolsAdded:tools,timestamp:0},{role:"user",content:"读取画布",timestamp:0}]}),events:string[]=[];
+        for await(const event of stream){events.push(event.type);if(event.type==="done")assert.equal((await db.query("SELECT status FROM agent_steps WHERE run_id=$1 ORDER BY step DESC LIMIT 1",[ctx.id])).rows[0].status,"decided");}
+        assert.ok(events.includes("start"));assert.ok(events.includes("text_delta"));assert.ok(events.includes("toolcall_start"));assert.ok(events.includes("toolcall_end"));assert.equal(events.at(-1),"done");
+        assert.equal((await stream.result()).stopReason,"toolUse");assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"0");
+    }finally{owner.release();}
+});
+test("business tool failures preserve their actual code instead of inventing a parameter cause",async()=>{
+    const ctx=await setup();responses.push(modelTool("read_skill_file",{skillId:"script",path:"missing.md"}),modelText("所需规则文件不可用"));await executeAgentRun(ctx.id);
+    const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='read_skill_file'",[ctx.id])).rows[0].result;
+    const {modelErrorMessage}=await import("./model-errors.js");assert.equal(receipt.error,"AGENT_SKILL_FILE_NOT_FOUND");assert.equal(receipt.message,modelErrorMessage(receipt.error)||receipt.error);assert.ok(!receipt.message.includes("检查参数与模型能力"));
 });
 test("Pi pauses a valid question batch without requiring the waiting tool to be last",async()=>{
     const ctx=await setup(),before=fixture.requests.length;
@@ -248,10 +271,10 @@ test("video and configured speech/music modes use the existing canonical media a
     }
 });
 test("SIGKILL recovery distinguishes dispatched models, pre-commit rollback and committed receipts",{timeout:30000},async () => {
-    for (const mode of ["during_model","decision_saved","invalid_decision_saved","before_commit","after_commit"]) {
+    for (const mode of ["during_model","decision_saved","invalid_decision_saved","before_commit","after_commit","read_after_commit"]) {
         const ctx=await setup();
         await new Promise<void>((resolve,reject) => {
-            const child=spawn(process.execPath,["--import","tsx","src/fixtures/agent-crash-child.ts",ctx.id,mode],{env:process.env,stdio:["ignore","pipe","pipe"]});
+            const child=spawn(process.execPath,["--import","tsx","src/fixtures/agent-crash-child.ts",ctx.id,mode],{env:{...process.env,TEST_AGENT_READ_NODE_ID:ctx.source},stdio:["ignore","pipe","pipe"]});
             let ready=false,output="";
             const timer=setTimeout(() => {child.kill("SIGKILL");reject(new Error(`Crash probe timed out: ${mode}`));},10000);
             child.stdout.on("data",chunk => {output+=chunk;if (!ready && output.includes("AGENT_CRASH_POINT")) {ready=true;child.kill("SIGKILL");}});
@@ -262,6 +285,12 @@ test("SIGKILL recovery distinguishes dispatched models, pre-commit rollback and 
         const before=(await findCanvasProject(ctx.user,ctx.project)).nodes.length;
         if (mode === "during_model") {
             assert.match(await resumeChild(ctx.id,[]),/"requests":0/);assert.equal((await record(ctx.id)).status,"unknown");
+        } else if(mode==="read_after_commit"){
+            const receipt=(await db.query("SELECT input,result FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0];
+            assert.equal(receipt.input.includeImages,false);assert.equal(receipt.result.nodes[0].content,"小猫回家");
+            assert.match(await resumeChild(ctx.id,[modelText("基于真实正文继续")]),/"requests":1/);assert.equal((await record(ctx.id)).status,"completed");
+            assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"1");
+            assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
         } else {
             assert.equal(before,mode === "after_commit" ? 2 : 1);
             assert.match(await resumeChild(ctx.id,[modelText("从原决定恢复完成")]),/"requests":1/,mode);
@@ -569,6 +598,27 @@ test("same-run correction automatically rejects lingering top-level text and kee
     const feedback=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND result->>'error'='AGENT_INVALID_TOOL_ARGUMENTS'",[ctx.id])).rows;assert.equal(feedback.length,2);for(const row of feedback)assert.deepEqual(row.result.details.problems.map((problem:any)=>problem.field),["text"]);
     for(const request of fixture.requests.slice(start)){const tool=request.tools.find((tool:any)=>tool.name==="create_text_nodes");assert.equal(tool.strict,true);assert.deepEqual(Object.keys(tool.parameters.properties),["nodes"]);}
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+});
+test("Pi normalizes a production read option and returns full text across question recovery",async()=>{
+    const ctx=await setup(),before=fixture.requests.length,bad=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:[null,null,null,0]}),read=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"});
+    responses.push(bad,read,modelTool("request_user_input",{questions:[{id:"next",question:"接下来修改哪段正文？"}]}));await executeAgentRun(ctx.id);
+    const receipt=(await db.query("SELECT input,result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,read.output[0].call_id])).rows[0];
+    assert.equal(receipt.input.includeImages,false);assert.equal(receipt.result.nodes[0].content,"小猫回家");assert.equal(receipt.result.error,undefined);
+    const saved=await nativeEntries(ctx.thread),raw=saved.filter(e=>e.type==="message"&&e.message.role==="assistant").flatMap(e=>e.message.content).find(p=>p.type==="toolCall"&&p.name==="read_nodes"&&p.arguments.includeImages==="false");assert.ok(raw);
+    const run=await record(ctx.id);assert.equal(run.wait.type,"question");await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"reply",answers:{next:"仅核对正文，不修改"}});
+    responses.push(modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"}),modelText("已读取正文：小猫回家"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal(fixture.requests.length,before+5);
+    assert.deepEqual((await nativeEntries(ctx.thread)).slice(0,saved.length),saved);
+    for(const request of fixture.requests.slice(before+2)){
+        const results=request.input.filter((p:any)=>p.type==="function_call_output"&&p.call_id===read.output[0].call_id);assert.equal(results.length,1);assert.equal(JSON.parse(results[0].output).nodes[0].content,"小猫回家");
+    }
+});
+test("a normalized read cannot bypass raw write guards in a mixed decision",async()=>{
+    const ctx=await setup(),read=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"}),write=modelTool("create_text_nodes",{nodes:[{title:"未经允许的副本",text:"正文",sourceNodeIds:[ctx.source],newCopy:"true"}]});read.output.push(write.output[0]);
+    responses.push(read,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);return Response.json(modelText("先修正写入参数"));});await executeAgentRun(ctx.id);
+    const receipts=(await db.query("SELECT name,result FROM agent_tool_receipts WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;
+    assert.equal(receipts.length,2);assert.ok(receipts.every(r=>r.result.error==="AGENT_INVALID_TOOL_ARGUMENTS"));
+    assert.equal(receipts.find(r=>r.name==="read_nodes").result.details.problems,undefined);assert.ok(receipts.find(r=>r.name==="create_text_nodes").result.details.problems.some((p:any)=>p.field==="nodes.0.newCopy"));
+    assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
 });
 test("production-shaped boolean arrays receive exactly one authoritative result per call during correction",async () => {
     for(const [name,field,input,values] of [

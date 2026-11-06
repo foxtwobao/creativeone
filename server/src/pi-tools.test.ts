@@ -21,5 +21,13 @@ test("Pi tools preserve call identity and reject raw production-shaped array par
     await read.execute("call-1",{nodeIds:["node-1"],includeImages:false},undefined,undefined,{} as any);
     assert.deepEqual(calls,[{toolCallId:"call-1",toolName:"read_nodes",input:{nodeIds:["node-1"],includeImages:false}}]);
     const message=fauxAssistantMessage([fauxToolCall("read_nodes",{nodeIds:["node-1"],includeImages:[null,null,null,0]},{id:"bad"})],{stopReason:"toolUse"});
-    assert.match(validateCreativePiDecision(message)!,/includeImages/);
+    assert.match(validateCreativePiDecision(message,tools)!,/includeImages/);
+});
+test("Pi normalizes read options while write flags still require their original types",()=>{
+    const tools=creativePiTools(async()=>({content:[]}));
+    const read=fauxAssistantMessage([fauxToolCall("read_nodes",{nodeIds:["node-1"],includeImages:"false"},{id:"read"})],{stopReason:"toolUse"});
+    assert.equal(validateCreativePiDecision(read,tools),undefined);
+    assert.equal((read.content[0] as any).arguments.includeImages,"false");
+    const write=fauxAssistantMessage([fauxToolCall("create_text_nodes",{nodes:[{title:"额外副本",text:"正文",sourceNodeIds:[],newCopy:"true"}]},{id:"write"})],{stopReason:"toolUse"});
+    assert.match(validateCreativePiDecision(write,tools)!,/newCopy/);
 });
