@@ -815,7 +815,7 @@ test("project commands enforce ownership, versions and idempotency", async () =>
     const replay = await call(`/projects/${projects[0].id}/commands`, alice, "POST", command);
     assert.equal(replay.status, 200);
     assert.deepEqual(await replay.json(), await first.clone().json());
-    const stale = await call(`/projects/${projects[0].id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: projects[0].contentRevision, command: { type: "edit_project", patch: { viewport: {x: 5, y: 7, k: 2} }, graphEdits: [] } });
+    const stale = await call(`/projects/${projects[0].id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: projects[0].contentRevision, command: { type: "edit_project", patch: { title: "stale title" }, graphEdits: [] } });
     assert.equal(stale.status, 409);
     const current = (await first.json()).project;
     const update = await call(`/projects/${projects[0].id}/commands`, alice, "POST", { operationId: randomUUID(), baseRevision: current.contentRevision, command: { type: "edit_project", patch: { viewport: {x: 5, y: 7, k: 2} }, graphEdits: [] } });

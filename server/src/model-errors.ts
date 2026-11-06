@@ -7,6 +7,9 @@ const messages: Record<string, string> = {
     AGENT_OPERATION_CONFLICT: "工具调用标识对应的参数已变化，已拒绝重复执行。",
     AGENT_DISABLED: "创作助手已关闭，请联系管理员在后台启用。",
     AGENT_CONFIG_CHANGED:"配置已被其他管理员更新，请重新加载后再保存。",
+    AGENT_SESSION_CONFIG_CHANGED:"会话的工具定义已变化，原历史已保留，请新建会话或联系管理员处理。",
+    AGENT_HISTORY_REPAIRED:"重复的模型上下文已修复，原历史保留，请点击继续恢复原运行。",
+    AGENT_MIGRATED:"会话已迁移，请明确继续以重新检查授权和当前画布。",
     INVALID_MODEL_CAPABILITIES:"模型能力配置无效，请核对所属模型及文本图片输入设置。",
     AGENT_THREAD_NOT_FOUND: "会话不存在或不属于当前画布。", AGENT_RUN_NOT_FOUND: "运行不存在或无权访问。",
     AGENT_THREAD_BUSY: "当前会话仍有活动运行，请继续、停止或新建会话。", AGENT_SUBMISSION_CONFLICT: "原提交内容已变化，请先确认原运行。",
@@ -25,6 +28,7 @@ const messages: Record<string, string> = {
     AGENT_NODE_NOT_EDITABLE: "草稿入口只修改助手未提交节点；用户已有普通文本请读取后使用确认修改入口。已提交任务和已有作品保留。",
     AGENT_ANSWERS_REQUIRED:"请填写本次全部补充问题后再提交。",
     AGENT_INVALID_TOOL_ARGUMENTS: "模型工具参数不符合定义，本次决定未执行；之前完成的节点保留，可以修正参数后继续。",
+    AGENT_TOOL_DEFERRED:"前序操作正在等待确认或结果，本项尚未执行；这不是字段参数错误。",
     AGENT_INVALID_MODEL_RESPONSE: "模型返回拒绝、截断或无效工具参数，未执行该决定。", AGENT_MODEL_REJECTED: "模型请求被拒绝或无法继续，已停止；请检查错误原因与模型配置。",
     AGENT_MODEL_UNKNOWN: "模型结果未知，可能已计费；已停止自动执行，请查看原运行。",
 

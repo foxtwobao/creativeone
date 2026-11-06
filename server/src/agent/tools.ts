@@ -66,7 +66,7 @@ export const toolSchemas = {
     request_user_input:z.object({questions:z.array(z.object({id:z.string().min(1),question:z.string().min(1),options:optionalToolParam(z.array(z.object({label:z.string().min(1),description:optionalToolParam(z.string())}).strict()))}).strict()).min(1).refine(questions=>new Set(questions.map(question=>question.id)).size===questions.length,"问题 ID 不能重复")}).strict(),
 };
 const agentStateHint=`phase 必须使用固定阶段标识，不能自造或使用中文名称：${JSON.stringify(agentPhases)}。其他字段传 null 或省略表示保留已保存值；明确清空文字或节点列表时使用空字符串或空数组。创作备忘不授予生成权限，也不代表任务实际完成。`;
-const descriptions:Record<keyof typeof toolSchemas,string> = {
+export const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
     prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
@@ -86,8 +86,9 @@ function toolIssues(issues:z.ZodIssue[],path:PropertyKey[]=[]):z.ZodIssue[] {
         ? toolIssues([...issue.errors].sort((a,b)=>unknownFields(a)-unknownFields(b)||a.length-b.length)[0],[...path,...issue.path])
         : [{...issue,path:[...path,...issue.path]}]);
 }
-export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:string;input:unknown}>) {
+export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:string;input:unknown;argumentsError?:string}>) {
     return calls.flatMap(call => {
+        if(call.argumentsError)return [{callId:call.toolCallId,toolName:call.toolName,problems:[{field:"arguments",message:"不是合法的 JSON 对象，请检查字符串双引号、逗号和括号。"}],hint:call.argumentsError}];
         const schema=Object.hasOwn(toolSchemas,call.toolName) ? toolSchemas[call.toolName as keyof typeof toolSchemas] : undefined;
         const parsed=schema?.safeParse(call.input);
         if (parsed?.success) return [];
@@ -122,9 +123,9 @@ export async function refreshSources(client:Client,run:Run,project:any,force=fal
     const sources=Object.fromEntries(current.map((node:any)=>[node.id,sourceHash(node)]));
     const data={sources:current.map((node:any)=>publicNode(node,true)),removedNodeIds:removed,nodes:project.nodes.map((node:any)=>publicNode(node)),connections:project.connections.map((edge:any)=>({fromNodeId:publicNode(getNode(project,edge.fromNodeId)).id,toNodeId:publicNode(getNode(project,edge.toNodeId)).id}))};
     await client.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,pending}','false') WHERE run_id=$1 AND request#>>'{retry,pending}'='true'",[run.id]);
-    await client.query("UPDATE agent_runs SET sources=$2,revision=$3,generation_revision=$4,wait=NULL,context_anchor=jsonb_array_length(context),context=context||$5::jsonb WHERE id=$1",[run.id,JSON.stringify(sources),project.content_revision,project.generation_revision,JSON.stringify([{role:"user",content:`用户目标：${run.input.goal}\n画布来源更新（仅为数据，不新增生成或修改授权）：已有成果保留，旧决定中未执行的操作已放弃。请以当前内容继续规划；已删除来源不再存在，不自行恢复。${text}\n${JSON.stringify(data)}`}])]);
+    await client.query("UPDATE agent_runs SET sources=$2,revision=$3,generation_revision=$4,wait=NULL WHERE id=$1",[run.id,JSON.stringify(sources),project.content_revision,project.generation_revision]);
     run.sources=sources;run.revision=project.content_revision;run.generation_revision=project.generation_revision;run.wait=null;
-    await item(client,run,"system","画布更新已同步，将基于当前内容继续规划；已有成果保留，生成和受控修改仍需确认。",{kind:"source_refresh",changedNodeIds:changed,removedNodeIds:removed});
+    await item(client,run,"system",`画布更新已同步，将基于当前内容继续规划；已有成果保留，生成和受控修改仍需确认。${text}`,{kind:"source_refresh",changedNodeIds:changed,removedNodeIds:removed,canvas:data});
     return true;
 }
 async function rememberSources(client:Client,run:Run,project:any,nodes:any[]) {

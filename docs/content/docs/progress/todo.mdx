@@ -5,6 +5,8 @@ description: Planned follow-up work
 
 # TODO
 
+- Pi Agent 真实验收与部署：运行替换、原生历史、具体确认、预算压缩、隔离回归、备份迁移脚本及独立 worker 配置已移入[待测清单](/docs/progress/pending-test)。继续按授权完成真实模型与多模态/收费链路、缓存与费用对照、浏览器刷新重连、正式 worker 镜像及其他环境数据库迁移恢复（lab 备份迁移和独立 systemd worker 已完成，首次续聊重复决定已修复并恢复原会话，多图回填期间的视图保存误冲突、前端快照同步及 Pi 原生错误原因与进度暂缓分类、图片上下文误计量与宿主重复接管已修复并转入待测，等用户实测）；未验收前不宣称能力提升或生产替换已验证，不自动唤醒未知请求。详见 [最终方案](/docs/progress/pi-agent-evaluation)；后续其他 ONE 接入遵循 [通用规范](/docs/development/one-pi-integration)，不直接复制本项目的业务实现和额度。
+
 - TokenONE 视频失败原因透传：lab 的 `/v1/videos/:id` 对已失败 H3 任务未返回错误字段，CreativeOne 无法展示上游已记录的具体原因；需在 TokenONE 项目授权修复并部署后联调，本项目仅明确提示未返回原因。
 
 

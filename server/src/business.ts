@@ -18,6 +18,7 @@ import { attachCanvasTask, recoverCanvasResults, recoverUnacceptedCanvasSlots } 
 import { canvasGraphView, persistCanvasGraph } from "./canvas-graph.js";
 import { canvasArchiveMediaValid, remapCanvasGraph } from "../../shared/canvas-archive.js";
 import { canvasEditableNode, preserveCanvasGeneration } from "../../shared/canvas-generations.js";
+import { canvasPresentationOnly } from "../../shared/canvas-commands.js";
 import type { CanvasNodeData } from "../../web/src/types/canvas.js";
 
 export const businessRouter = Router();
@@ -149,15 +150,16 @@ export async function applyCanvasCommand(userId: string, id: string, value: unkn
     const input = commandInput.parse(value);
     await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [userId]);
     const project = await findCanvasProject(userId, id, client, true);
+    const presentationOnly = canvasPresentationOnly(input.command);
     const previous = await client.query("SELECT result,base_revision,base_generation_revision,command FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.operationId]);
     if (previous.rows[0]) {
         if (Number(previous.rows[0].base_revision) !== input.baseRevision || Number(previous.rows[0].base_generation_revision) !== input.baseGenerationRevision || !isDeepStrictEqual(previous.rows[0].command, input.command)) throw new HttpError(409, "PROJECT_OPERATION_CONFLICT");
         const receipt = previous.rows[0].result;
-        if (Number(project.content_revision) - Number(project.generation_revision) !== receipt.contentRevision - receipt.generationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
+        if (!presentationOnly && Number(project.content_revision) - Number(project.generation_revision) !== receipt.contentRevision - receipt.generationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
         return canvasProject(project);
     }
-    // Only worker result updates may advance the version without conflicting with an edit.
-    if (input.baseRevision > Number(project.content_revision) || input.baseGenerationRevision > Number(project.generation_revision) || Number(project.content_revision) - Number(project.generation_revision) !== input.baseRevision - input.baseGenerationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
+    // Content edits still require the same edit version; presentation saves never replace graph data.
+    if (input.baseRevision > Number(project.content_revision) || input.baseGenerationRevision > Number(project.generation_revision) || !presentationOnly && Number(project.content_revision) - Number(project.generation_revision) !== input.baseRevision - input.baseGenerationRevision) throw new HttpError(409, "PROJECT_REVISION_CONFLICT");
     let command = input.command.type === "edit_project" ? input.command : undefined;
     if (input.command.type === "restore_edit") {
         const source = (await client.query("SELECT inverse,undone FROM canvas_project_commands WHERE project_id=$1 AND operation_id=$2", [id, input.command.sourceOperationId])).rows[0];

@@ -4,7 +4,7 @@ import { App, Button, Input, Popover, Radio, Select, Spin } from "antd";
 import { ArrowDown, Bot, Plus, Send, Square, Sparkles, X } from "lucide-react";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { flushCanvasPersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { AGENT_PANEL_MIN_WIDTH, AGENT_PANEL_MAX_WIDTH, useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { agentPhases, agentPresets } from "../../../../shared/agent";
 import CanvasServerAgentAttachments, { agentFileAttachment } from "./canvas-server-agent-attachments";
@@ -84,8 +84,8 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
         const held=useServerAgentStore.getState().pending[projectId];
         if (held?.threadId === id && snapshot.runs.some(run => run.submissionId === held.input.submissionId)) {useServerAgentStore.getState().hold(projectId,null);setDraft("");setAttachments([]);setReferenceIds([]);}
         // Merge external graph changes through the existing serialized persistence path.
-        await flushCanvasPersistence();
         await useCanvasStore.getState().refreshProject(projectId);
+        if (version === request.current && threadRef.current === id) setError("");
     },[projectId]);
     useEffect(() => {
         if (!open) return;

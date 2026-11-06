@@ -7,6 +7,8 @@ description: 业务 ONE 对接 Reseller 统一登录、IDONE 和 TokenONE 的通
 
 本文面向所有业务 ONE，按系统说明准备资料、配置接口、实现流程和验收要求。各产品的客户端、域名和回调路径使用实际交付值；不要直接复制示例值。
 
+接入 Pi Agent 的会话、工具、持久化与并发约束见 [ONE 应用 Pi 接入规范](/docs/development/one-pi-integration)。
+
 身份与登录协议以 HomeONE 仓库的 `docs/one-auth/README.md` 和 `docs/one-auth/appone.md` 为准。环境变量名仅为示例，各应用映射到自己的配置；协议字段和已登记回调必须精确一致。
 
 ## 1. 对接 IDONE：标准 OIDC 身份认证

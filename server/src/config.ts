@@ -35,6 +35,7 @@ export const env = z.object({
     }, "PROMPT_GITHUB_PROXY_BASE must be an HTTPS URL without credentials, query or fragment"),
     MEDIA_DOWNLOAD_HOSTS: z.string().default(""),
     PORT: positive.default(4011),
+    AGENT_WORKER_MODE:z.enum(["embedded","external"]).default("embedded"),
 }).parse(process.env);
 
 for (const name of ["APP_ORIGIN", "IDONE_ISSUER", "ENHANCER_BASE_URL", "TOKENONE_BASE_URL"] as const) {

@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "local-development",
+    "one-pi-integration",
     "canvas-data-structure",
     "local-codex-canvas"
   ]

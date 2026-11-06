@@ -39,4 +39,4 @@ export async function readAgentConfig(client:Client=db):Promise<AgentConfig>{
     return agentConfigSchema.parse({...settings,outputTokens:settings.outputTokens??undefined,verifiedModels,verifiedMediaModels});
 }
 export const AGENT_PROTOCOL_VERSION=1;
-export const AGENT_STORAGE_VERSION=1;
+export const AGENT_STORAGE_VERSION=2;

@@ -17,6 +17,7 @@
 
 - [Local Development](/docs/development/local-development)
 - [ONE 对接指南](/docs/development/one-integration)
+- [ONE 应用 Pi 接入规范](/docs/development/one-pi-integration)
 - [用户页面流量巡检](/docs/development/page-size-audit)
 - [Multi-user Cloud Backend](/docs/development/cloud-backend)
 - [Local TokenONE Integration](/docs/development/local-tokenone)
@@ -37,6 +38,7 @@
 
 - [无限画布开放方案](/docs/progress/infinite-canvas-plan)
 - [轻量服务端 Agent 方案](/docs/progress/server-agent-plan)
+- [Pi Agent 替换评估](/docs/progress/pi-agent-evaluation)
 - [WAN3 统一协议接入方案](/docs/progress/wan3-integration-plan)
 - [音频工作台与画布接入方案](/docs/progress/audio-integration-plan)
 - [Reseller 登录会话恢复交接说明](handoffs/reseller-session-recovery.md)
