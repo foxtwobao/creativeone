@@ -12,10 +12,6 @@ import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, typ
 import { defaultAudioInput } from "../../../../shared/audio";
 import { modelAudioTypeOf } from "@/stores/use-config-store";
 
-export function imageExtension(dataUrl: string) {
-    return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
-}
-
 export function audioExtension(mimeType?: string) {
     if (mimeType?.includes("mp4")) return "m4a";
     if (mimeType?.includes("wav")) return "wav";

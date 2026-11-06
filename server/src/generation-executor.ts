@@ -1,5 +1,6 @@
 import pg from "pg";
 import sharp from "sharp";
+import { fileTypeFromBuffer } from "file-type";
 import { env } from "./config.js";
 import { randomUUID } from "node:crypto";
 import { db, transaction } from "./db.js";
@@ -15,12 +16,12 @@ import { attachCanvasTask, finishCanvasTask } from "./canvas-tasks.js";
 async function imageBytes(payload: any, signal: AbortSignal) {
     if (!Array.isArray(payload?.data) || !payload.data.length) throw new HttpError(502, "INVALID_IMAGE_RESPONSE");
     return Promise.all(payload.data.map(async (image: any) => {
-        const file = typeof image.b64_json === "string" && image.b64_json ? { bytes: Buffer.from(image.b64_json, "base64"), mimeType: "image/png" }
-            : typeof image.url === "string" ? await downloadRemoteMedia(image.url, signal) : undefined;
-        if (!file || !file.mimeType.startsWith("image/")) throw new HttpError(502, "INVALID_IMAGE_RESPONSE");
-        const metadata = await sharp(file.bytes).metadata().catch(() => null);
-        if (!metadata?.width || !metadata.height) throw new HttpError(502, "INVALID_IMAGE_RESPONSE");
-        return { ...file, mimeType: metadata.format === "jpeg" ? "image/jpeg" : `image/${metadata.format}` };
+        const bytes = typeof image.b64_json === "string" && image.b64_json ? Buffer.from(image.b64_json, "base64")
+            : typeof image.url === "string" ? (await downloadRemoteMedia(image.url, signal)).bytes : undefined;
+        if (!bytes) throw new HttpError(502, "INVALID_IMAGE_RESPONSE");
+        const [type, metadata] = await Promise.all([fileTypeFromBuffer(bytes).catch(() => undefined), sharp(bytes).metadata().catch(() => null)]);
+        if (!type?.mime.startsWith("image/") || !metadata?.width || !metadata.height) throw new HttpError(502, "INVALID_IMAGE_RESPONSE");
+        return { bytes, mimeType: type.mime };
     }));
 }
 async function storeImages(userId: string, payload: any, images: Awaited<ReturnType<typeof imageBytes>>, client: Pick<typeof db, "query">) {
