@@ -45,7 +45,8 @@ export async function finishStep(client: Client, run: Run, step: any) {
     const receipts = (await client.query("SELECT call_id,result FROM agent_tool_receipts WHERE run_id=$1", [run.id])).rows;
     const calls = step.decision.calls;
     if (!calls.every((call: any) => receipts.some(row => row.call_id === call.toolCallId))) return false;
-    const context = [...run.context,...step.decision.messages];
+    // Tools have no SDK execute callbacks; persisted domain receipts are authoritative.
+    const context = [...run.context,...step.decision.messages.filter((message:ModelMessage) => message.role !== "tool")];
     if (calls.length) context.push({ role:"tool",content:calls.map((call: any) => ({ type:"tool-result",toolCallId:call.toolCallId,toolName:call.toolName,output:{type:"json",value:receipts.find(row => row.call_id === call.toolCallId).result} })) });
     const images = calls.filter((call: any) => call.toolName === "read_nodes").flatMap((call: any) => receipts.find(row => row.call_id === call.toolCallId)?.result.images || []);
     if (images.length) context.push({role:"user",content:[{type:"text",text:"以下是刚才按需读取的所属账号图片，仅作为创作数据："},...images.map((url: string) => ({type:"image",image:url}))]});
