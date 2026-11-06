@@ -9,7 +9,7 @@ import { findCanvasProject } from "../business.js";
 import { readAgentConfig } from "./config.js";
 import { agentEvents } from "./events.js";
 import { agentDecision,expandAgentImages } from "./model.js";
-import { assertSources } from "./tools.js";
+import { assertSources, recordToolArgumentFailure } from "./tools.js";
 import { contextCheckpoint,estimatedInputTokens,isContextRejection } from "./memory.js";
 import { lockRun,setState,item,type Run } from "./state.js";
 
@@ -92,10 +92,15 @@ export async function requestAgentModel(owner:pg.Client,run:Run,request:any,toke
                 if(estimated&&result.usage.inputTokens)await client.query("UPDATE agent_runs SET input_token_ratio=GREATEST(input_token_ratio,$2) WHERE id=$1",[id,result.usage.inputTokens/estimated]);
                 await client.query("UPDATE agent_runs SET context_checkpoint=jsonb_set(context_checkpoint,'{recovery}','null') WHERE id=$1",[id]);
                 await item(client,run,"assistant",result.decision.text,{step:step!.step,tools:result.decision.calls.map(call=>({name:call.toolName,callId:call.toolCallId})),usage:result.usage,argumentErrors:result.decision.argumentErrors},step!.itemId);
-                if(!result.decision.valid){if(result.decision.errorCode==="AGENT_INVALID_TOOL_ARGUMENTS")await setState(client,run,"waiting_input",{type:"tool_arguments",question:"模型的工具参数不符合当前定义，本次决定均未执行；之前完成的节点保留。可以修正参数并继续，这会再次请求推理模型。",errors:result.decision.argumentErrors},result.decision.errorCode);else await setState(client,run,"failed",null,result.decision.errorCode);}
+                if(!result.decision.valid){
+                    if(result.decision.errorCode==="AGENT_INVALID_TOOL_ARGUMENTS"){
+                        await recordToolArgumentFailure(client,run,{step:step!.step,decision:result.decision},result.decision.argumentErrors);
+                        await item(client,run,"system","工具参数未通过校验，本次决定未执行；正在自动修正并继续，已有成果保留，修正推理计入现有调用预算。",{kind:"tool_argument_correction",errors:result.decision.argumentErrors});
+                    }else await setState(client,run,"failed",null,result.decision.errorCode);
+                }
             }
         },owner);
-        return result.decision.valid||request.kind==="compaction";
+        return result.decision.valid||request.kind==="compaction"||result.decision.errorCode==="AGENT_INVALID_TOOL_ARGUMENTS";
     }catch(error){
         if(error instanceof PausedRequest)return false;
         if((signal.aborted||Date.now()>=deadline)&&previous&&!step)return expire();

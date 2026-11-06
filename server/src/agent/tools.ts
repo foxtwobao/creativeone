@@ -2,7 +2,7 @@ import { attachModelProfiles } from "../model-profiles.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { tool, jsonSchema, zodSchema, type JSONSchema7 } from "ai";
+import { tool } from "ai";
 import { db } from "../db.js";
 import { findCanvasProject } from "../business.js";
 import { acceptCanvasGeneration } from "../ai.js";
@@ -17,7 +17,9 @@ import { channelVideoConfig, channelVideoProfile } from "../../../shared/video-m
 import { channelImageConfig, channelImageProfile } from "../../../shared/image-models.js";
 import { audioVoices, audioRequestBody } from "../../../shared/audio.js";
 import { readAgentConfig,type AgentConfig } from "./config.js";
-import { agentImageInputNotice } from "../../../shared/agent.js";
+import { agentImageInputNotice, agentPhases } from "../../../shared/agent.js";
+import { optionalToolParam, mediaParams, reasoningEffort, strictToolInput, videoToolParameterError, mediaModelAllowed, ToolParameterError } from "./schema.js";
+export { ToolParameterError } from "./schema.js";
 import { loadSkill, readSkillFile } from "./skill-store.js";
 import { canvasToolSchemas, canvasToolDescriptions, executeCanvasTool } from "./canvas-edit.js";
 import { creativeStateSchema, readCreativeState, saveCreativeState } from "./creative-state.js";
@@ -26,18 +28,9 @@ import { digest, sourceHash, setState, getNode, command, saveReceipt, finishStep
 import type { Channel } from "../tokenone.js";
 
 const ids = z.array(z.string().min(1)).min(1);
-const reasoningEffort=z.enum(["auto","low","medium","high","xhigh"]);
-const mediaParams = z.object({
-    reasoningEffort:reasoningEffort.optional(),
-    size:z.string().describe("仅图片尺寸或画幅；视频请用 videoSize").optional(),quality:z.string().optional(),background:z.string().optional(),
-    videoSize:z.string().describe("视频画幅，例如 16:9；不是 ratio 或 size").optional(),
-    seconds:z.string().describe("视频时长，使用整数字符串；仅模型支持时可使用 -1 自动时长").optional(),
-    vquality:z.string().describe("视频分辨率，使用能力列表中的值，例如 720、1080").optional(),
-    videoMode:z.enum(["frames","reference"]).optional(),generateAudio:z.enum(["true","false"]).optional(),watermark:z.enum(["true","false"]).optional(),fastMode:z.enum(["true","false"]).optional(),audioInput:audioInputSchema.optional(),
-}).strict();
-const nodeId=z.string().min(1).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。省略时只创建或复用相同内容，不表示修改。").optional();
-const newCopy=z.boolean().nullable().default(false).transform(value=>value ?? false).describe("仅用户明确要求额外副本或多个版本时传布尔值 true；省略、false 或 null 均不新增副本，不接受字符串。");
-const textNodeFields={nodeId:nodeId.nullable().describe("修改已有助手节点时先读取并传真实 ID；新建或复用时填 null。"),newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
+const nodeId=optionalToolParam(z.string().min(1)).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。新建或复用时填 null。");
+const newCopy=optionalToolParam(z.boolean(),false).describe("仅用户明确要求额外副本或多个版本时传布尔值 true；省略、false 或 null 均不新增副本，不接受字符串。");
+const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
 const textNodes=z.array(z.union([
     z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
     z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
@@ -46,12 +39,9 @@ const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text�
 const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
-    z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true,fastMode:true}).extend({seconds:z.string().regex(/^(?:-1|[1-9]\d*)$/,"视频时长必须为整数字符串；仅模型支持时可用 -1").describe("视频时长使用整数字符串，例如 3；不支持 2.5 秒").optional()})}).strict(),
-    z.object({...mediaNodeFields,kind:z.literal("audio"),parameters:mediaParams.pick({audioInput:true})}).strict(),
+    z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true,fastMode:true})}).strict(),
+    z.object({...mediaNodeFields,kind:z.literal("audio"),parameters:z.object({audioInput:audioInputSchema}).strict()}).strict(),
 ]);
-export class ToolParameterError extends HttpError {
-    constructor(public explanation:string,code="MODEL_CAPABILITY_INVALID") {super(400,code);}
-}
 export const toolSchemas = {
     ...canvasToolSchemas,
     ...siteToolSchemas,
@@ -63,23 +53,19 @@ export const toolSchemas = {
     load_skill:z.object({ name:z.string().min(1) }).strict(),
     read_canvas:z.object({}).strict(),
     canvas_export_snapshot:z.object({}).strict(),
-    find_nodes:z.object({ query:z.string().optional(), type:z.enum(["text","config","image","video","audio","group"]).optional() }).strict(),
-    read_nodes:z.object({ nodeIds:ids, includeImages:z.boolean().optional() }).strict(),
+    find_nodes:z.object({ query:optionalToolParam(z.string()), type:optionalToolParam(z.enum(["text","config","image","video","audio","group"])) }).strict(),
+    read_nodes:z.object({ nodeIds:ids, includeImages:optionalToolParam(z.boolean()) }).strict(),
     get_model_capabilities:z.object({}).strict(),
     create_text_nodes:z.object({nodes:textNodes}).strict(),
     prepare_media_nodes:z.object({ nodes:z.array(preparedMediaNode).min(1) }).strict(),
     prepare_text_generation:z.object({nodes:z.array(z.object({...mediaNodeFields,parameters:mediaParams.pick({reasoningEffort:true})}).strict()).min(1)}).strict(),
     connect_nodes:z.object({ connections:z.array(z.object({ fromNodeId:z.string(), toNodeId:z.string() }).strict()).min(1) }).strict(),
     submit_generation:z.object({ nodeIds:ids }).strict(),
-    read_task_results:z.object({ taskIds:ids }).strict(),
-    wait_for_tasks:z.object({ taskIds:ids }).strict(),
-    request_user_input:z.object({question:z.string().min(1).optional(),questions:z.array(z.object({id:z.string().min(1),question:z.string().min(1),options:z.array(z.object({label:z.string().min(1),description:z.string().optional()}).strict()).optional()}).strict()).min(1).optional()}).strict().refine(input=>Boolean(input.question || input.questions?.length)),
+    read_task_results:z.object({ taskIds:z.array(z.uuid()).min(1) }).strict(),
+    wait_for_tasks:z.object({ taskIds:z.array(z.uuid()).min(1) }).strict(),
+    request_user_input:z.object({questions:z.array(z.object({id:z.string().min(1),question:z.string().min(1),options:optionalToolParam(z.array(z.object({label:z.string().min(1),description:optionalToolParam(z.string())}).strict()))}).strict()).min(1).refine(questions=>new Set(questions.map(question=>question.id)).size===questions.length,"问题 ID 不能重复")}).strict(),
 };
-// Strict function calling requires every declared field, with null for absent values.
-const strictTextInput=jsonSchema(z.toJSONSchema(toolSchemas.create_text_nodes,{target:"draft-7",io:"input",reused:"inline",override:({jsonSchema:schema})=>{
-    if(schema.properties)schema.required=Object.keys(schema.properties);
-    delete schema.default;
-}}) as JSONSchema7,{validate:zodSchema(toolSchemas.create_text_nodes).validate});
+const agentStateHint=`phase 必须使用固定阶段标识，不能自造或使用中文名称：${JSON.stringify(agentPhases)}。其他字段传 null 或省略表示保留已保存值；明确清空文字或节点列表时使用空字符串或空数组。创作备忘不授予生成权限，也不代表任务实际完成。`;
 const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
@@ -91,6 +77,9 @@ const descriptions:Record<keyof typeof toolSchemas,string> = {
     load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；newCopy 只用于用户明确要额外副本。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用；newCopy 仅用于用户明确要额外版本。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
 };
 descriptions.create_text_nodes+=` ${textNodeHint}`;
+descriptions.set_agent_state+=` ${agentStateHint}`;
+descriptions.request_user_input+=" 统一使用 questions 数组，单个问题也用数组；每项须有唯一 id、question，未提供选项时 options 填 null。";
+const argumentHints:Record<string,string>={create_text_nodes:textNodeHint,set_agent_state:agentStateHint,assets_add:siteToolDescriptions.assets_add,request_user_input:descriptions.request_user_input,prepare_media_nodes:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。未设置或模型不支持的可选参数填 null；合法取值以模型能力为准。"};
 const unknownFields=(issues:z.ZodIssue[])=>issues.reduce((count,issue)=>count+(issue.code === "unrecognized_keys" ? issue.keys.length : 0),0);
 function toolIssues(issues:z.ZodIssue[],path:PropertyKey[]=[]):z.ZodIssue[] {
     return issues.flatMap(issue=>issue.code === "invalid_union" && issue.errors.length
@@ -102,13 +91,20 @@ export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:strin
         const schema=Object.hasOwn(toolSchemas,call.toolName) ? toolSchemas[call.toolName as keyof typeof toolSchemas] : undefined;
         const parsed=schema?.safeParse(call.input);
         if (parsed?.success) return [];
-        const problems=parsed && !parsed.success ? toolIssues(parsed.error.issues).flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys.map(key => ({field:[...issue.path,key].join("."),message:`工具不支持字段 ${key}`})) : [{field:issue.path.join("."),message:issue.code === "invalid_type" ? `应为${({boolean:"布尔值（true 或 false）",string:"字符串",number:"数字",array:"数组",object:"对象"} as Record<string,string>)[issue.expected] || issue.expected}，请按工具定义填写` : issue.message}]) : [{field:"tool",message:"工具未登记"}];
-        return [{callId:call.toolCallId,toolName:call.toolName,problems,...(call.toolName === "create_text_nodes" ? {hint:textNodeHint} : call.toolName === "prepare_media_nodes" ? {hint:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。合法取值以模型能力为准。"} : {})}];
+        const problems=parsed && !parsed.success ? toolIssues(parsed.error.issues).flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys.map(key => ({field:[...issue.path,key].join("."),message:`工具不支持字段 ${key}`})) : [{field:issue.path.join("."),message:issue.code === "invalid_value" ? `只支持以下取值：${issue.values.map(String).join("、")}` : issue.code === "invalid_type" ? `应为${({boolean:"布尔值（true 或 false）",string:"字符串",number:"数字",array:"数组",object:"对象"} as Record<string,string>)[issue.expected] || issue.expected}，请按工具定义填写` : issue.message}]) : [{field:"tool",message:"工具未登记"}];
+        return [{callId:call.toolCallId,toolName:call.toolName,problems,...(argumentHints[call.toolName] ? {hint:argumentHints[call.toolName]} : {})}];
     });
 }
-export const agentTools = Object.fromEntries(Object.entries(toolSchemas).map(([name,inputSchema]) => [name,tool({description:descriptions[name as keyof typeof descriptions],inputSchema:name === "create_text_nodes" ? strictTextInput : inputSchema,...(name === "create_text_nodes" ? {strict:true} : {})})]));
+export async function recordToolArgumentFailure(client:Client,run:Run,step:any,errors=toolArgumentErrors(step.decision.calls)) {
+    for(const call of step.decision.calls)if(!(await client.query("SELECT 1 FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[run.id,call.toolCallId])).rowCount)
+        await saveReceipt(client,run,{...call,input:call.input??null},{error:"AGENT_INVALID_TOOL_ARGUMENTS",message:"本次决定未执行，请依据工具 schema 修正；不要重复之前已成功的节点。",details:errors.find(error=>error.callId===call.toolCallId)||{message:errors.length ? "同一决定含无效参数，当前调用也未执行，请重新规划。" : "工具定义已更新，原决定仍未执行；请按当前定义重新规划，不重做已成功内容。"}});
+    await finishStep(client,run,step);
+}
+export const agentTools = Object.fromEntries(Object.entries(toolSchemas).map(([name,inputSchema]) => {
+    return [name,tool({description:descriptions[name as keyof typeof descriptions],inputSchema:strictToolInput(inputSchema),strict:true})];
+}));
 export const publicNode = (node:any, full=false) => ({ id:node.entityId || node.id,type:node.type,title:node.title,...(full ? { position:node.position,width:node.width,height:node.height,groupId:node.metadata?.groupId,status:node.metadata?.status,taskId:node.metadata?.generationTaskId,content:node.metadata?.content,prompt:node.metadata?.prompt,parameters:publicParameters(node),file:node.metadata?.storageKey ? { url:node.metadata.content,storageKey:node.metadata.storageKey,mimeType:node.metadata.mimeType,width:node.metadata.naturalWidth,height:node.metadata.naturalHeight } : undefined } : {}) });
-export const publicParameters = (node:any) => ({ ...mediaParams.parse(Object.fromEntries(Object.keys(mediaParams.shape).filter(key => node.metadata?.[key] !== undefined).map(key => [key,node.metadata[key]]))),model:node.metadata?.model?.split("::").slice(1).join("::") });
+export const publicParameters = (node:any) => ({ ...Object.fromEntries(Object.keys(mediaParams.shape).filter(key => node.metadata?.[key] !== undefined).map(key => [key,node.metadata[key]])),model:node.metadata?.model?.split("::").slice(1).join("::") });
 export async function assertSources(run:Run,project:any) {
     for (const [id,hash] of Object.entries(run.sources)) if (sourceHash(getNode(project,id)) !== hash) throw new HttpError(409,"AGENT_SOURCE_CHANGED");
 }
@@ -262,14 +258,14 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
     }
     if (name === "get_model_capabilities") {
         const channels=await attachModelProfiles((await client.query("SELECT * FROM channels WHERE enabled")).rows, client);
-        return { models:channels.flatMap(channel => channel.models.map((model:string) => {
+        return { models:channels.flatMap(channel => channel.models.filter((model:string)=>channel.capability === "text" || mediaModelAllowed(run,currentConfig,model)).map((model:string) => {
             let capabilities:unknown,parameters:unknown;
             if (channel.capability === "text") {const target=textGenerationModel(run,model,currentConfig);capabilities={generation:Boolean(target),imageInput:Boolean(target?.imageInput)};parameters={reasoningEffort:reasoningEffort.options};}
             if (channel.capability === "image" && channel.image_types[model]) {const {family,...profile}=channelImageProfile(channel,model);capabilities=profile;}
-            if (channel.capability === "video") { const {family,...profile}=channelVideoProfile(channel, model); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,...profile.durationConfigurable?{seconds:{...profile.duration,integer:true,valueType:"string"}}:{},videoMode:profile.modes,...profile.fastModeOptions ? {fastMode:profile.fastModeOptions.filter(Boolean)} : {}}; }
+            if (channel.capability === "video") { const {family,...profile}=channelVideoProfile(channel, model); capabilities=profile;parameters={videoSize:profile.ratios,vquality:profile.resolutions,...profile.durationConfigurable?{seconds:{...profile.duration,integer:true,valueType:"string"}}:{},videoMode:profile.modes,...profile.audioOptions?{generateAudio:["true","false"],watermark:["true","false"]}:{},...profile.fastModeOptions ? {fastMode:profile.fastModeOptions.filter(Boolean)} : {}}; }
             if (channel.capability === "audio" && channel.audio_types[model]) capabilities={modes:channel.audio_types[model] === "gemini-tts" ? ["single","duo"] : ["song","instrumental"],voices:channel.audio_types[model] === "gemini-tts" ? audioVoices : []};
             return {model,capability:channel.capability,description:channel.model_descriptions[model] || "",capabilities,parameters};
-        })),pricing:external.pricing || {note:"公开价格暂不可用，实际金额以账单为准"} };
+        })),limits:{nodeBatch:limits.nodeBatch,mediaBatch:limits.mediaBatch},pricing:external.pricing || {note:"公开价格暂不可用，实际金额以账单为准"} };
     }
     if (name === "create_text_nodes" || name === "prepare_media_nodes" || name === "prepare_text_generation") {
         if (input.nodes.length * (name === "create_text_nodes" ? 1 : 2) > limits.nodeBatch) throw new HttpError(400,"AGENT_BATCH_LIMIT");
@@ -316,6 +312,7 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
                 const node=existing ? {...existing,title:spec.title,metadata:{...existing.metadata,content:text}} : base;
                 write([node],sources,node);results.push(node);(existing ? updated : created).push(node);continue;
             }
+            if(spec.kind !== "text" && !mediaModelAllowed(run,currentConfig,spec.model))throw new HttpError(400,"AGENT_MODEL_UNAVAILABLE");
             const channel=await modelChannel(client,spec.kind,spec.model);
             const referenceNodes=spec.referenceNodeIds.map((id:string) => getNode(project,id));
             const refs=await referenceFiles(client,run.user_id,referenceNodes);
@@ -327,8 +324,8 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
             if (spec.kind === "audio" && referenceNodes.length) throw new HttpError(400,"MODEL_CAPABILITY_INVALID");
             const metadata={...spec.parameters,prompt:spec.prompt,composerContent:spec.prompt,generationMode:spec.kind,model:`${channel.id}::${spec.model}`,references:[...refs.images,...refs.videos,...refs.audios],status:"idle"};
             const family=spec.kind === "text" ? undefined : spec.kind === "image" ? channel.image_types![spec.model] : spec.kind === "video" ? channelVideoProfile(channel, spec.model).family : channel.audio_types![spec.model];
-            if (spec.kind === "video" && family === "veo" && ["seconds","generateAudio","watermark"].some(key=>spec.parameters[key]!==undefined)) throw new ToolParameterError("当前视频模型的时长由模型决定，不提供时长、生成音频或水印参数；请省略这些字段。");
-            if (spec.kind === "video" && family !== "h3" && spec.parameters.fastMode !== undefined) throw new ToolParameterError("当前参数预设不提供标准／优先模式。");
+            const parameterError=spec.kind === "video" ? videoToolParameterError(channelVideoProfile(channel,spec.model),spec.parameters) : "";
+            if(parameterError)throw new ToolParameterError(parameterError);
             let request:ReturnType<typeof canvasRequestBody>;
             try {request=canvasRequestBody(spec.model,spec.kind,family as any,metadata as any,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined,spec.kind === "image" ? channelImageConfig(channel,spec.model) : undefined);} catch (error) {throw new ToolParameterError(error instanceof Error ? error.message : "媒体参数不完整");}
             const error=spec.kind === "image" ? imageRequestCapabilityError(spec.model,channelImageConfig(channel,spec.model),request) : spec.kind === "video" ? videoRequestCapabilityError(spec.model,channelVideoConfig(channel,spec.model),request) : undefined;
@@ -409,7 +406,6 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
         await setState(client,run,"waiting_tasks",{type:"tasks",callId:call.toolCallId,taskIds:input.taskIds});
         return undefined;
     }
-    if(input.questions && new Set(input.questions.map((question:any)=>question.id)).size !== input.questions.length)throw new HttpError(400,"AGENT_INVALID_TOOL");
-    await setState(client,run,"waiting_input",{type:"question",callId:call.toolCallId,question:input.question,questions:input.questions});
+    await setState(client,run,"waiting_input",{type:"question",callId:call.toolCallId,questions:input.questions});
     return undefined;
 }

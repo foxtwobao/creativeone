@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import dagre from "@dagrejs/dagre";
 import { z } from "zod";
+import { optionalToolParam } from "./schema.js";
 import { findCanvasProject } from "../business.js";
 import { HttpError } from "../http.js";
 import { applyGroupSelection, applyUngroupSelection, collectGroupMemberNodes, getGroupWrapRect, nodeBounds } from "../../../shared/canvas-groups.js";
@@ -9,16 +10,16 @@ import { command, digest, getNode, setState, sourceHash, type Client, type Run }
 
 const ids=z.array(z.string().min(1)).min(1);
 export const canvasToolSchemas={
-    read_connections:z.object({nodeIds:ids,direction:z.enum(["upstream","downstream","both"]).default("both")}).strict(),
+    read_connections:z.object({nodeIds:ids,direction:optionalToolParam(z.enum(["upstream","downstream","both"]),"both")}).strict(),
     rename_nodes:z.object({nodes:z.array(z.object({nodeId:z.string().min(1),title:z.string().trim().min(1)}).strict()).min(1)}).strict(),
     delete_nodes:z.object({nodeIds:ids}).strict(),
     delete_connections:z.object({connectionIds:ids}).strict(),
     create_group:z.object({nodeIds:ids,title:z.string().trim().min(1)}).strict(),
     ungroup_nodes:z.object({nodeIds:ids}).strict(),
-    arrange_nodes:z.object({nodeIds:ids.optional()}).strict(),
+    arrange_nodes:z.object({nodeIds:optionalToolParam(ids)}).strict(),
     move_nodes:z.object({nodes:z.array(z.object({nodeId:z.string().min(1),x:z.number().finite(),y:z.number().finite()}).strict()).min(1)}).strict(),
-    resize_node:z.object({nodeId:z.string().min(1),width:z.number().finite().positive(),height:z.number().finite().positive(),freeResize:z.boolean().optional()}).strict(),
-    update_text_node:z.object({nodeId:z.string().min(1),title:z.string().trim().min(1).optional(),content:z.string().min(1)}).strict(),
+    resize_node:z.object({nodeId:z.string().min(1),width:z.number().finite().positive(),height:z.number().finite().positive(),freeResize:optionalToolParam(z.boolean())}).strict(),
+    update_text_node:z.object({nodeId:z.string().min(1),title:optionalToolParam(z.string().trim().min(1)),content:z.string().min(1)}).strict(),
 };
 export const canvasToolDescriptions={read_connections:"读取节点的直接上游、下游及真实连线 ID。",rename_nodes:"只修改已读取节点的标题，不覆盖正文或作品。",delete_nodes:"预览删除指定节点和相关连线，等待用户确认；删除分组只释放成员，不删除成员或后台任务。",delete_connections:"预览删除真实连线并等待用户确认，不删除节点。",create_group:"按现有画布分组规则包装指定节点，复用已有相同成员分组；不生成内容。",ungroup_nodes:"取消指定分组或释放指定成员，保留正文与作品。",arrange_nodes:"预览指定节点布局；省略范围时排列顶层节点，分组和成员整体移动，等待用户确认。不改变尺寸、内容、连线或任务。",move_nodes:"按指定绝对坐标移动已读取节点；分组连同成员移动，预览后确认。",resize_node:"调整已读取节点尺寸，图片默认保持原比例，自由变形必须明确传 freeResize=true；预览后确认。",update_text_node:"专门修改用户已有普通文本或剧本，必须先读取当前正文；展示修改前后全文并等待用户确认。不能覆盖已提交任务、生成作品或正在生成的文本。助手自己的未提交草稿优先使用 create_text_nodes.nodeId 原位修改。"};
 const graphHash=(project:any) => digest({nodes:project.nodes,connections:project.connections});
