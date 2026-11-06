@@ -2,7 +2,7 @@ import { attachModelProfiles } from "../model-profiles.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { tool } from "ai";
+import { tool, jsonSchema, zodSchema, type JSONSchema7 } from "ai";
 import { db } from "../db.js";
 import { findCanvasProject } from "../business.js";
 import { acceptCanvasGeneration } from "../ai.js";
@@ -37,12 +37,12 @@ const mediaParams = z.object({
 }).strict();
 const nodeId=z.string().min(1).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。省略时只创建或复用相同内容，不表示修改。").optional();
 const newCopy=z.boolean().nullable().default(false).transform(value=>value ?? false).describe("仅用户明确要求额外副本或多个版本时传布尔值 true；省略、false 或 null 均不新增副本，不接受字符串。");
-const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
+const textNodeFields={nodeId:nodeId.nullable().describe("修改已有助手节点时先读取并传真实 ID；新建或复用时填 null。"),newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
 const textNodes=z.array(z.union([
     z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
     z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
 ])).min(1);
-const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。newCopy 只接受布尔值或 null；省略、false、null 均不新增副本。正文示例：{"nodes":[{"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
+const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。newCopy 只接受布尔值或 null；省略、false、null 均不新增副本。正文示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
 const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
@@ -75,6 +75,11 @@ export const toolSchemas = {
     wait_for_tasks:z.object({ taskIds:ids }).strict(),
     request_user_input:z.object({question:z.string().min(1).optional(),questions:z.array(z.object({id:z.string().min(1),question:z.string().min(1),options:z.array(z.object({label:z.string().min(1),description:z.string().optional()}).strict()).optional()}).strict()).min(1).optional()}).strict().refine(input=>Boolean(input.question || input.questions?.length)),
 };
+// Strict function calling requires every declared field, with null for absent values.
+const strictTextInput=jsonSchema(z.toJSONSchema(toolSchemas.create_text_nodes,{target:"draft-7",io:"input",reused:"inline",override:({jsonSchema:schema})=>{
+    if(schema.properties)schema.required=Object.keys(schema.properties);
+    delete schema.default;
+}}) as JSONSchema7,{validate:zodSchema(toolSchemas.create_text_nodes).validate});
 const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
@@ -101,7 +106,7 @@ export function toolArgumentErrors(calls:Array<{toolCallId:string;toolName:strin
         return [{callId:call.toolCallId,toolName:call.toolName,problems,...(call.toolName === "create_text_nodes" ? {hint:textNodeHint} : call.toolName === "prepare_media_nodes" ? {hint:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。合法取值以模型能力为准。"} : {})}];
     });
 }
-export const agentTools = Object.fromEntries(Object.entries(toolSchemas).map(([name,inputSchema]) => [name,tool({ description:descriptions[name as keyof typeof descriptions],inputSchema })]));
+export const agentTools = Object.fromEntries(Object.entries(toolSchemas).map(([name,inputSchema]) => [name,tool({description:descriptions[name as keyof typeof descriptions],inputSchema:name === "create_text_nodes" ? strictTextInput : inputSchema,...(name === "create_text_nodes" ? {strict:true} : {})})]));
 export const publicNode = (node:any, full=false) => ({ id:node.entityId || node.id,type:node.type,title:node.title,...(full ? { position:node.position,width:node.width,height:node.height,groupId:node.metadata?.groupId,status:node.metadata?.status,taskId:node.metadata?.generationTaskId,content:node.metadata?.content,prompt:node.metadata?.prompt,parameters:publicParameters(node),file:node.metadata?.storageKey ? { url:node.metadata.content,storageKey:node.metadata.storageKey,mimeType:node.metadata.mimeType,width:node.metadata.naturalWidth,height:node.metadata.naturalHeight } : undefined } : {}) });
 export const publicParameters = (node:any) => ({ ...mediaParams.parse(Object.fromEntries(Object.keys(mediaParams.shape).filter(key => node.metadata?.[key] !== undefined).map(key => [key,node.metadata[key]]))),model:node.metadata?.model?.split("::").slice(1).join("::") });
 export async function assertSources(run:Run,project:any) {

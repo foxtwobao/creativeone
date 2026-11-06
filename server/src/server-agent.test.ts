@@ -313,6 +313,8 @@ test("text tool schemas expose the two node shapes and identify misplaced storyb
     responses.push(modelText("已读取工具定义"));await agentDecision("agent-model","test","工具定义测试",[{role:"user",content:"读取定义"}],{},new AbortController().signal);
     const definition=fixture.requests.at(-1).tools.find((tool:any)=>tool.name==="create_text_nodes"),variants=definition.parameters.properties.nodes.items.anyOf;
     assert.equal(variants.length,2);assert.ok(variants.some((variant:any)=>variant.required.includes("text")&&!variant.properties.shots));assert.ok(variants.some((variant:any)=>variant.required.includes("shots")&&!variant.properties.text));assert.match(definition.description,/nodes\[\]\.shots\[\]/);
+    assert.equal(definition.strict,true);assert.deepEqual(Object.keys(definition.parameters.properties),["nodes"]);
+    const strictObjects=(schema:any)=>{if(!schema||typeof schema!=="object")return;assert.equal(Object.hasOwn(schema,"default"),false);if(schema.properties){assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(schema.properties).sort());}for(const value of Object.values(schema))strictObjects(value);};strictObjects(definition.parameters);
     const shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
     const input={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[],newCopy:"false",...shot})),shots:[shot],text:"错误的顶层正文"};
     const errors=toolArgumentErrors([{toolCallId:"misnested",toolName:"create_text_nodes",input}]);assert.equal(errors.length,1);assert.match(errors[0].hint!,/顶层只传 nodes/);
@@ -344,6 +346,19 @@ test("misnested storyboard decisions pause without writes and explicit correctio
     run=await record(ctx.id);assert.equal(run.status,"completed");const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,6);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"已有成果");assert.ok(project.nodes.find((node:any)=>node.title==="镜头1").metadata.content.includes("镜头 1 · 3 秒"));
     const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,invalid.output[1].call_id])).rows[0].result;assert.match(receipt.details.hint,/nodes\[\]\.shots\[\]/);
     const original=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND step=2",[ctx.id])).rows[0].decision.raw;assert.equal(original.output[1].arguments,invalid.output[1].arguments);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+});
+test("same-run correction rejects lingering top-level text and sends strict text tools on every attempt",async () => {
+    const ctx=await setup(),start=fixture.requests.length,body={nodes:[{nodeId:null,newCopy:false,title:"未完成正文",text:"保存这一段",sourceNodeIds:[ctx.source]}]};
+    const invalid=()=>modelTool("create_text_nodes",{...body,text:"误留的顶层正文"});
+    responses.push(modelTool("create_text_nodes",{nodes:[{title:"已成功正文",text:"保留原成果",sourceNodeIds:[ctx.source]}]}),invalid());await executeAgentRun(ctx.id);
+    let run=await record(ctx.id);assert.equal(run.wait.type,"tool_arguments");assert.deepEqual(run.wait.errors[0].problems.map((problem:any)=>problem.field),["text"]);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);
+    await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"correct_tool_arguments"});responses.push(invalid());await executeAgentRun(ctx.id);
+    run=await record(ctx.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.errors[0].problems[0].field,"text");assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);
+    const paused=fixture.requests.length;await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,paused);
+    await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"correct_tool_arguments"});responses.push(modelTool("create_text_nodes",body),modelTool("create_text_nodes",body),modelText("仅补全未完成正文"));await executeAgentRun(ctx.id);
+    assert.equal((await record(ctx.id)).status,"completed");const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,3);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"保留原成果");
+    for(const request of fixture.requests.slice(start)){const tool=request.tools.find((tool:any)=>tool.name==="create_text_nodes");assert.equal(tool.strict,true);assert.deepEqual(Object.keys(tool.parameters.properties),["nodes"]);}
+    assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
 
 test("invalid video arguments pause with details, then explicit correction continues the same run",async () => {
