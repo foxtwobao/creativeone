@@ -11,17 +11,18 @@ description: 已确认采用 Pi Coding Agent SDK，以原生会话条目和独�
 
 替换代码已经接入当前 worker：此前是 AI SDK 的单轮模型请求加自研 worker 循环、ModelMessage 拼接和摘要投影；现在由 Pi AgentSession 管理原生历史、工具循环与压缩检查点。CreativeOne 继续负责账号授权、任务领取、请求预算、画布事务、具体操作确认和业务回执。PostgreSQL 是唯一持久来源，内存 Session 从原生条目恢复。
 
-本分支完成实现与隔离数据库回归，已按用户要求部署到 lab，并完成原会话备份迁移；用户已在 lab 发起真实创作并完成一批缓存日志核验，尚未构建正式容器或部署生产环境。预期收益是减少自研状态衔接错误、简化维护；**不能据此承诺模型能力大幅提升，或保证真实模型不再填错参数。** 真实任务成功率、人工介入和费用仍需同模型对照验收。
+本分支完成实现与隔离数据库回归，已按用户要求部署到 lab，并完成原会话备份迁移；用户已在 lab 发起真实创作并完成一批缓存日志核验，worker 镜像已完成本机构建与隔离容器验收，正式发布和生产部署待验收。预期收益是减少自研状态衔接错误、简化维护；**不能据此承诺模型能力大幅提升，或保证真实模型不再填错参数。** 真实任务成功率、人工介入和费用仍需同模型对照验收。
 
 ### 实施进度
 
 - `pi-session.ts`：公开 SDK 宿主、固定规则和工具白名单、原始参数整轮预检、顺序执行、异步持久化屏障、等待停止与尾部业务事件。保存失败使 Session 失效，禁用 SDK 自动重试、预热与默认自动压缩。
 - `pi-runtime.ts` / `model-request.ts`：接入全部现有领域工具、唯一收费请求入口、具体确认、后台结果、图片理解、已有调用预算、持久重试和显式 Pi 压缩；正常输出仍不设置应用上限。
+- `creativeone-tools.ts` 集中组装业务工具、执行事务、具体授权及工具回执，会话驱动通过工具集合接入。官方 SDK 版本统一在服务端依赖和 lockfile 中维护。worker 镜像按锁定依赖与业务代码分层，镜像工作流分别发布 `creativeone` 与 `creativeone-agent`，容器发布验收见待测清单。
 - 正常输入通过公开 Session 接口追加并直接启动这一轮，不再额外拼接“继续”消息。恢复只处理未完成尾部，以稳定响应 ID 判断是否已保存，绝不扫描和重放已完成的步骤；Pi 补充的 thinkingLevel 等元数据不参与历史身份判断。
 - 原生历史按 `threadId` 保存，条目保留 `turnId` 与稳定 ID；用户/业务输入通过事务 inbox 只追加一次。请求日志和业务回执用于审计和故障恢复，不再拼接另一份模型上下文。旧 `context` 仅作为迁移档案，新运行不写入模型历史。
 - `pi-session-store.ts`：原始 JSON 文本追加保存；校验账号、线程、运行、执行令牌、条目归属和连续顺序；并发追加、取消、损坏清单和未知版本均拒绝覆盖。摘要检查点、消费输入和运行状态随追加事务提交。
 - `migrate-agent-pi.mjs`：停机后先独占备份、校验并落盘，再一次性转换旧会话；未知在途请求不重发，未开始运行需显式恢复，确认中的原操作保留。没有线上双格式兼容分支。
-- `Dockerfile.agent` / `deploy/agent-worker.yml`：Node 22.23.1 Debian slim 独立 worker，无监听端口，与 API 共用数据库及媒体卷。API 关闭扫描后不加载 Pi 执行模块；worker 复用当前领域代码，不新增远程画布工具协议。正式镜像尚未构建和部署。
+- `Dockerfile.agent` / `deploy/agent-worker.yml`：Node 22.23.1 Debian slim 独立 worker，无监听端口，与 API 共用数据库及媒体卷。API 关闭扫描后不加载 Pi 执行模块；worker 复用当前领域代码，不新增远程画布工具协议。worker 镜像的本机构建、隔离容器验收与 lab 独立容器部署已完成，CI 首次发布和生产部署待验收。
 
 用户明确要求：**不修改 Pi 源码、发布包或私有方法，不 fork、不打补丁。** 只使用导出的 SDK、公开 `session.agent` 属性与钩子。此前仅因其名称与终端定位排除 `pi-coding-agent`，判断不充分；现已通过公开 API 验证可仅启用宿主自定义工具、资源加载和会话恢复。
 
@@ -87,7 +88,7 @@ description: 已确认采用 Pi Coding Agent SDK，以原生会话条目和独�
 
 worker 使用同一仓库的服务端领域代码和事务，不因独立容器再造远程工具协议。浏览器仍连接当前 API，不直接访问 Pi；模型凭据继续由经过验证的用户身份取得。API 与 worker 明确任务领取职责，不能让两套执行器同时消费。
 
-推荐 Node 22 Debian slim worker 镜像，实施时固定具体版本/摘要。独立容器隔离依赖、发布与崩溃，不代替执行锁和幂等；不挂载开发目录、个人认证配置或 Docker socket。无需修改现有 API/web 的 Alpine 基础镜像。本轮没有构建或部署正式 worker，也没有新增资源上限。
+推荐 Node 22 Debian slim worker 镜像，实施时固定具体版本/摘要。独立容器隔离依赖、发布与崩溃，不代替执行锁和幂等；不挂载开发目录、个人认证配置或 Docker socket。无需修改现有 API/web 的 Alpine 基础镜像。worker 的本机镜像构建、隔离容器验收和 lab 部署已完成，运行使用后台已有的并发和请求预算，生产部署待验收。
 
 ### 一个原生 Session，一份持久历史
 
@@ -181,7 +182,7 @@ SDK 内部将完整消息追加到 SessionManager 后，宿主的 `session.agent
 - 登记确认请求后跨进程批准并继续，未批准时禁止副作用，重复执行复用业务回执，旧 pending 记录不变。
 - 决定保存后、业务回执提交后分别 SIGKILL，新进程恢复并再次恢复，副作用与工具结果唯一；请求登记后 SIGKILL，恢复不重发未知请求。
 
-独立 `node:22-bookworm-slim`（Node 22.23.1）容器中，禁网、依赖与仓库只读挂载，SDK 离线项通过；数据库项明确跳过。数据库测试在宿主 Node 22.19.0 上执行，创建并清理本轮 UUID 命名库，不操作现有业务表或停止任何服务。未验证 Alpine、正式 worker 镜像、真实媒体付费、数据库主从切换或存储故障。测试的小压缩阈值只用于夹具。
+前期选型探针在独立 `node:22-bookworm-slim`（Node 22.23.1）容器中，禁网、依赖与仓库只读挂载，SDK 离线项通过；数据库项明确跳过。数据库测试在宿主 Node 22.19.0 上执行，创建并清理本轮 UUID 命名库，不操作现有业务表或停止任何服务。该选型探针范围之外的项目包括 Alpine、正式 worker 镜像、真实媒体付费、数据库主从切换和存储故障，后续 worker 镜像验证见部署章节。测试的小压缩阈值只用于夹具。
 
 模型均使用 Pi 自带 faux provider，fetch 禁用。实际 Responses 适配器在 `onPayload` 阶段截获载荷后停止，不发送模型请求。数据库探针只使用测试领域操作，不能代替完整生产业务回归，也不证明真实模型更会纠错或真实缓存已命中。
 
@@ -209,7 +210,11 @@ PI_EVAL_MODULE_ROOT="$pi_eval_dir/node_modules" PI_EVAL_POSTGRES=1 \
 
 ## 独立 worker 与历史迁移
 
-lab 已部署为两个独立 systemd 用户服务：`creativeone-lab-api.service` 与 `creativeone-lab-agent.service`，前端服务保持原样。API 监听 4013，并以 `AGENT_WORKER_MODE=external` 停止领取 Agent 运行；独立 worker 使用同一代码、数据库、媒体目录与 lab CA，负责 Pi 执行。当前后台并发配置保持全局 2、单账号 1，同账号更多运行排队。
+lab API 由 `creativeone-lab-api.service` 管理，监听 4013 并设置 `AGENT_WORKER_MODE=external`。`creativeone-lab-agent.service` 已改为管理独立 Docker 容器 `creativeone-lab-agent`，使用镜像 `creativeone-agent:lab-027404701643`。worker 在普通 bridge 网络 `creativeone-lab-agent` 中通过容器服务名访问现有 CreativeONE PostgreSQL，挂载实际媒体目录与只读 lab CA。当前后台并发为全局 2、单账号 1，同账号更多运行排队。
+
+每次启动前运行 `server/scripts/prepare-lab-agent-env.mjs`，从 `server/.env` 读取当前配置并生成权限 0600 的 `server/data/lab-agent-container.env`。数据库连接按已核实的宿主 `127.0.0.1:5433` 到容器 `creativeone-local-postgres:5432` 映射，映射来源变化时先报错要求核对；媒体目录和 CA 路径按实际挂载转换为容器路径。原服务配置、环境配置、运行/历史快照和完整数据库备份保存在 `server/data/agent-backups/lab-container-c985096f-5391-467b-9c25-599af56f7f64/`，归档 160 项通过可读性校验。
+
+容器默认入口和配置生成前置步骤重启验证通过，UID 1000 能读写实际媒体卷；数据库连通，Reseller 与 TokenONE 的 DNS/TLS 均正常。10 个已有会话工具签名全部匹配，27 条运行状态、后台设置与 410 条原生历史的联合哈希前后一致。API 健康检查正常，两个 lab 域名首页均 200、匿名身份接口均 401。原会话续聊、读取和生成确认由用户实测。
 
 实际部署先停止原 API 写入，保存完整 PostgreSQL custom dump 并核对归档可读性，再执行事务迁移。20 条运行已转为存储版本 2，9 个原生会话、210 条原生条目通过仓储加载验证；原运行输入、模型快照、旧 context、各运行状态和 211 条展示消息均核对保留。11 条完成、4 条失败、1 条待确认、4 条待输入，没有自动继续旧运行或发起模型调用。
 
@@ -229,7 +234,29 @@ cd /home/hulei/projects/creativeone
 docker compose -f docker-compose.yml -f docker-compose.cloud.yml -f deploy/agent-worker.yml up -d --build
 ```
 
-上面的容器构建和部署命令尚未执行；lab 本轮使用独立 systemd 进程，无需构建镜像。正式容器部署与其他环境迁移仍应核对备份、等待中的具体操作、媒体卷权限及数据库连接；不能在仍运行旧执行器时迁移，也不能通过重启自动重发未知模型请求。
+worker 已通过 `docker build -f Dockerfile.agent` 完成本机构建和隔离容器启动验收，lab 已切换为 systemd 管理的独立 Docker worker，生产环境 Compose 部署待验收。正式容器部署与其他环境迁移仍应核对备份、等待中的具体操作、媒体卷权限及数据库连接；不能在仍运行旧执行器时迁移，也不能通过重启自动重发未知模型请求。
+
+使用发布镜像时，在根目录 `.env` 中为 `APP_IMAGE` 与 `AGENT_IMAGE` 选择相同提交或版本的标签，随后拉取并部署两个服务。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cloud.yml -f deploy/agent-worker.yml pull app agent-worker
+docker compose -f docker-compose.yml -f docker-compose.cloud.yml -f deploy/agent-worker.yml up -d --no-build
+```
+
+工作流已配置独立 worker 镜像发布。本机 `creativeone-agent:codex-pi-separation`（镜像 ID `027404701643`）已完成构建；默认 SDK worker 入口以 UID 1000 初始化临时数据库、扫描任务、读写独立媒体卷并通过 SIGTERM 正常退出。镜像内使用临时内部网络、独立 PostgreSQL 18 与模拟上游完成助手 151 项、宿主/仓储/工具绑定 15 项回归，临时容器、网络与媒体卷已清理。lab 独立容器部署已完成，首次 CI 推送与生产部署仍待验收。
+
+容器回归发现，重试等待被请求总期限截断时，计时器提前返回可能使下一步误入服务授权错误路径。现直接依据原定重试时间与截止点停止，并保留既定的超时分类、持久重试状态和预算，镜像内原有超时回归通过。
+
+本次 worker 部署采用 Docker 默认网络，下表记录业务实际依赖的网络目标及访问失败处理，供部署排查使用。
+
+| 用途 | 允许目标 | 访问失败时的现有行为 |
+| --- | --- | --- |
+| 会话、领取、回执与任务状态 | `DATABASE_URL` 指定的数据库主机和端口 | 连接失败使执行停止，已有请求按持久记录恢复 |
+| 用户模型 Key 与价格 | `ENHANCER_BASE_URL` 的主机和端口 | 通过现有服务错误或授权等待反馈 |
+| 模型推理与摘要 | `TOKENONE_BASE_URL` 的主机和端口 | 使用既有重试和总期限，未知响应按现有未知状态处理 |
+| 提示词首次读取与缓存刷新 | 启用来源 URL 的主机，默认包含 `raw.githubusercontent.com:443`，受应用的来源域名规则约束 | 保存来源读取错误，已有成功缓存继续可查 |
+
+DNS 使用部署环境的解析器。账号与具体操作授权由业务工具校验。容器出口白名单属于可选部署加固，后续有明确需求时再按实际访问目标评估。
 
 ### lab 首次续聊问题修复
 
@@ -240,4 +267,4 @@ docker compose -f docker-compose.yml -f docker-compose.cloud.yml -f deploy/agent
 1. 使用相同目标、相同模型对照旧实现：首轮参数错误率、纠正成功率、任务成功率、请求次数、人工介入、输入/缓存用量、费用及耗时；不能用模拟模型的预定纠正证明真实能力提升。
 2. 实际文本/多模态、收费媒体与上游缓存链路按授权联调。正常续聊只追加，压缩或明确模型/工具配置变化是前缀变化边界；供应商仍决定实际缓存命中。
 3. 浏览器刷新重连、确认/取消/任务唤醒、明暗主题与窄屏实测；现有前端接口和 `threadId/turnId/itemId` 映射保留，没有新增浏览器直连 Pi 或 Key 配置。
-4. 构建并验收正式 worker 镜像、多实例运行、真实数据库备份迁移与恢复。验证完成后再按用户指示部署或准备合并；lab 已保留真实旧会话的等待状态，不自动唤醒；用户继续或确认后才进入对应操作。
+4. 继续验收 CI 镜像发布、目标环境部署、多实例运行、真实数据库备份迁移与恢复。验证完成后再按用户指示部署或准备合并；lab 已保留真实旧会话的等待状态，不自动唤醒；用户继续或确认后才进入对应操作。
