@@ -48,7 +48,11 @@ export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:A
     }
     const signal=AbortSignal.any([cancel,...(options?.signal?[options.signal]:[]),AbortSignal.timeout(deadline-Date.now())]);
     for(;;){
-        try{if(retryAt>Date.now())await delay(Math.min(retryAt,deadline)-Date.now(),{abortSignal:signal});signal.throwIfAborted();if(Date.now()>=deadline)throw new HttpError(409,"AGENT_MODEL_RETRY_TIMEOUT");}
+        try{
+            if(retryAt>Date.now())await delay(Math.min(retryAt,deadline)-Date.now(),{abortSignal:signal});
+            signal.throwIfAborted();
+            if(retryAt>=deadline||Date.now()>=deadline)throw new HttpError(409,"AGENT_MODEL_RETRY_TIMEOUT");
+        }
         catch(error){
             if(cancel.aborted)throw error;
             await transaction(async client=>{

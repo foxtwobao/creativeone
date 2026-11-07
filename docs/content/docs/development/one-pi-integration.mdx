@@ -22,6 +22,14 @@ description: 以原生 Session 为唯一模型历史，用最少宿主逻辑接�
 
 不要求各 ONE 复制 CreativeONE 的表名、画布工具、状态枚举或全部代码。使用应用已有的持久库、后台任务和领域服务；不为接 Pi 新造中心化 Agent 服务、跨应用工具协议或通用工作流引擎。身份和模型授权继续遵循 [ONE 对接指南](/docs/development/one-integration)。
 
+### 运行时与业务工具分层
+
+官方 Pi SDK 的版本由应用的 `package.json` 与 lockfile 固定，升级时同步更新三个 Pi 包并回归会话、工具和恢复链路。应用业务工具通过公开 `customTools` 注册，工具执行复用所属应用的授权、领域函数和业务回执。
+
+CreativeONE 的 `creativeone-tools.ts` 集中组装业务工具、执行事务及处理工具结果，`pi-tools.ts` 维护现有工具定义和参数规则，`pi-session.ts` 负责公开 SDK 会话接线，`pi-runtime.ts` 负责应用运行与恢复。worker Dockerfile 先安装锁定依赖，再复制业务代码，业务修改可以复用依赖层。
+
+API 与 worker 镜像分别发布，部署时按同一应用提交选择两者的镜像标签，worker 通过 `AGENT_IMAGE` 指定。镜像是应用交付物，官方 SDK 依赖和应用工具分别维护，其他 ONE 按自己的领域代码组装工具集合。
+
 ## 2. 正常输入只走一次 Session 入口
 
 前端提交本次新输入、会话 ID、提交 ID 和业务引用；服务端验证归属后恢复该会话的原生 Session。不得每次把整份 UI 对话重新灌入 Pi，也不得同时投递“用户消息”和一份内容相同的业务消息。

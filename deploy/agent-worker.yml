@@ -18,7 +18,7 @@ services:
       MAX_REFERENCE_IMAGE_BYTES: ${MAX_REFERENCE_IMAGE_BYTES:-10485760}
       MEDIA_DOWNLOAD_HOSTS: ${MEDIA_DOWNLOAD_HOSTS:-}
   agent-worker:
-    image: creativeone-agent:local
+    image: ${AGENT_IMAGE:-creativeone-agent:local}
     build:
       context: .
       dockerfile: Dockerfile.agent
