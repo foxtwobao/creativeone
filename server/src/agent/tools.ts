@@ -29,13 +29,13 @@ import type { Channel } from "../tokenone.js";
 
 const ids = z.array(z.string().min(1)).min(1);
 const nodeId=optionalToolParam(z.string().min(1)).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。新建或复用时填 null。");
-const newCopy=optionalToolParam(z.boolean(),false).describe("仅用户明确要求额外副本或多个版本时传布尔值 true；省略、false 或 null 均不新增副本，不接受字符串。");
+const newCopy=optionalToolParam(z.boolean(),false).describe("每个节点必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受字符串 true/false。");
 const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
 const textNodes=z.array(z.union([
     z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
     z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
 ])).min(1);
-const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。newCopy 只接受布尔值或 null；省略、false、null 均不新增副本。正文示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
+const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。每个节点必须传 newCopy 布尔值，默认 false；仅用户明确要求额外副本或多个版本时传 true，不要传字符串。正文示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
 const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
@@ -69,17 +69,17 @@ const agentStateHint=`phase 必须使用固定阶段标识，不能自造或使�
 export const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
-    prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
+    prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。每个节点必须传 newCopy 布尔值，默认 false；仅用户明确要求额外副本或多个版本时传 true，不要传字符串。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
     create_attachment_nodes:"按本次附件编号（从 1 开始）把上传图片、视频、音频或文本保存为真实画布节点；相同文件或正文复用，不发起媒体生成。",
     create_asset_nodes:"将账号素材库中的指定真实素材放到当前画布，先 assets_list 查询 ID；已有相同文件或正文复用，不调用模型生成。",
     canvas_export_snapshot:"读取当前画布的结构化布局快照，含节点位置、尺寸和连线；不是截图或已生成图片。",
     ...canvasToolDescriptions,set_agent_state:"保存创作阶段、已确认方案和真实节点引用；该备忘不代表生成授权或完成。",read_agent_state:"读取本会话已保存的创作阶段与备忘，不推断任务状态。",read_skill_file:"读取已加载 Skill 快照中的相对文本附属文件；不能读取服务器文件系统或执行内容。",
-    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；newCopy 只用于用户明确要额外副本。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用；newCopy 仅用于用户明确要额外版本。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
+    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；每个节点必须传 newCopy 布尔值，默认 false，明确要求额外副本时传 true。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用。每个节点必须传 newCopy 布尔值，默认 false，仅用户明确要求额外版本时传 true；不能传字符串 true/false。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
 };
 descriptions.create_text_nodes+=` ${textNodeHint}`;
 descriptions.set_agent_state+=` ${agentStateHint}`;
 descriptions.request_user_input+=" 统一使用 questions 数组，单个问题也用数组；每项须有唯一 id、question，未提供选项时 options 填 null。";
-const argumentHints:Record<string,string>={create_text_nodes:textNodeHint,set_agent_state:agentStateHint,assets_add:siteToolDescriptions.assets_add,request_user_input:descriptions.request_user_input,prepare_media_nodes:"按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。未设置或模型不支持的可选参数填 null；合法取值以模型能力为准。"};
+const argumentHints:Record<string,string>={create_text_nodes:textNodeHint,set_agent_state:agentStateHint,assets_add:siteToolDescriptions.assets_add,request_user_input:descriptions.request_user_input,prepare_media_nodes:"每个节点必须传 newCopy 布尔值：默认 false，仅用户明确要求额外版本时传 true；不能传字符串 true/false。按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。未设置或模型不支持的可选参数填 null；合法取值以模型能力为准。"};
 const unknownFields=(issues:z.ZodIssue[])=>issues.reduce((count,issue)=>count+(issue.code === "unrecognized_keys" ? issue.keys.length : 0),0);
 function toolIssues(issues:z.ZodIssue[],path:PropertyKey[]=[]):z.ZodIssue[] {
     return issues.flatMap(issue=>issue.code === "invalid_union" && issue.errors.length
