@@ -3152,7 +3152,10 @@ function InfiniteCanvasPage() {
 
     return (
         <main onPlayCapture={onAudioPlay} className="relative flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            {serverAgentEnabled ? <Suspense fallback={null}><CanvasServerAgentPanel selectedNodeIds={[...selectedNodeIds]} onFlush={async () => {
+                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
+                await flushCanvasPersistence();
+            }} onFocusNode={focusNode} /></Suspense> : null}
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
@@ -3445,10 +3448,7 @@ function InfiniteCanvasPage() {
 
                 <AssetPickerModal includeAudio open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
-            {serverAgentEnabled ? <Suspense fallback={null}><CanvasServerAgentPanel selectedNodeIds={[...selectedNodeIds]} onFlush={async () => {
-                updateProject(projectId, { nodes: nodesRef.current, connections: connectionsRef.current });
-                await flushCanvasPersistence();
-            }} onFocusNode={focusNode} /></Suspense> : null}
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
         </main>
     );
 }

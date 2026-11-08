@@ -129,14 +129,11 @@ CREATE TABLE IF NOT EXISTS reseller_authorizations (
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS request jsonb;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS hidden_from_history boolean NOT NULL DEFAULT false;
-CREATE TABLE IF NOT EXISTS prompt_caches (
-    user_id uuid NOT NULL REFERENCES users(id), source_id text NOT NULL,
-    source_url text NOT NULL, last_attempt_at timestamptz NOT NULL DEFAULT now(), items jsonb NOT NULL DEFAULT '[]',
-    last_success_at timestamptz, last_error text NOT NULL DEFAULT '',
-    PRIMARY KEY (user_id, source_id)
+CREATE TABLE IF NOT EXISTS prompt_source_caches (
+    source_url text PRIMARY KEY, revision bigint NOT NULL DEFAULT 1, items jsonb NOT NULL DEFAULT '[]',
+    last_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_success_at timestamptz, last_error text NOT NULL DEFAULT ''
 );
-
-ALTER TABLE prompt_caches ADD COLUMN IF NOT EXISTS last_attempt_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS execution_token uuid;
 

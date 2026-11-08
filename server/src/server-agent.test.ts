@@ -1075,7 +1075,7 @@ test("direct asset saving creates no canvas copy and prompt search uses the norm
     const imported=await recordedTool(ctx,"create_asset_nodes",{assetIds:[first.asset.id]}),reused=await recordedTool(ctx,"create_asset_nodes",{assetIds:[first.asset.id]});assert.equal(imported.createdNodeIds.length,1);assert.deepEqual(reused.reusedNodeIds,imported.createdNodeIds);
     const source={id:"fixture-library",name:"测试提示词库",url:"https://raw.githubusercontent.com/fixture/prompts/main/data.json",homepage:"https://github.com/fixture/prompts",enabled:true};
     await db.query("INSERT INTO documents(user_id,namespace,key,value) VALUES($1,'app_state','infinite-canvas:prompt_source_store_v2',$2)",[ctx.user,JSON.stringify(JSON.stringify({state:{sources:[source]},version:0}))]);
-    await db.query("INSERT INTO prompt_caches(user_id,source_id,source_url,items,last_success_at) VALUES($1,$2,$3,$4,now())",[ctx.user,source.id,source.url,JSON.stringify([{id:"cat",title:"小猫创作",prompt:"小猫回家",description:"自然光",tags:["猫"],coverUrl:"",referenceImageUrls:[]}])]);
+    await db.query("INSERT INTO prompt_source_caches(source_url,items,last_success_at) VALUES($1,$2,now())",[source.url,JSON.stringify([{id:"cat",title:"小猫创作",prompt:"小猫回家",description:"自然光",tags:["猫"],coverUrl:"",referenceImageUrls:[]}])]);
     const before=fixture.requests.length,found=await recordedTool(ctx,"prompts_search",{keyword:"小猫",page:1,pageSize:1});assert.equal(found.total,1);assert.equal(found.items[0].prompt,"小猫回家");assert.equal(fixture.requests.length,before);
 });
 test("vision-capable runs expand only owned images and later text-only runs retain history without sending pixels",async()=>{
