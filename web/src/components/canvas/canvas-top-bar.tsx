@@ -1,8 +1,8 @@
 import { useServerAgentStore } from "@/stores/canvas/use-server-agent-store";
 import { features } from "@/constant/features";
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
-import { Button, Dropdown, Modal, Tooltip } from "antd";
+import { BookOpen, Bot, Download, Home, Images, Menu, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { Button, Dropdown, Modal } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -64,8 +64,6 @@ export function CanvasTopBar({
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
-    const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
-    const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -78,20 +76,9 @@ export function CanvasTopBar({
 
     return (
         <>
-            <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between pl-1 pr-4">
-                <div className="pointer-events-auto flex min-w-0 items-center gap-2">
-                    {serverAgentEnabled ? <button type="button" aria-label={serverAgentOpen ? "收起创作助手" : "打开创作助手"} aria-pressed={serverAgentOpen} onClick={toggleServerAgent} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>创作助手</button> : null}
-                    <Tooltip title={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}>
-                        <button
-                            type="button"
-                            onClick={toggleSidePanel}
-                            aria-label={sidePanelOpen ? t("canvas.collapsePanel") : t("canvas.expandPanel")}
-                            className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10"
-                            style={{ color: theme.node.text }}
-                        >
-                            {sidePanelOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-                        </button>
-                    </Tooltip>
+            <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex min-h-16 flex-wrap items-center justify-between gap-y-1 py-3 pl-1 pr-3">
+                <div className="pointer-events-auto flex min-w-0 flex-[1_1_20rem] items-center gap-2">
+                    {serverAgentEnabled && !serverAgentOpen ? <button type="button" aria-label="打开创作助手" onClick={() => { if (window.matchMedia("(max-width: 1023px)").matches) useCanvasSidePanelStore.getState().closePanel(); toggleServerAgent(); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>创作助手</button> : null}
                     <Dropdown
                         trigger={["click"]}
                         menu={{
@@ -111,12 +98,12 @@ export function CanvasTopBar({
                             ],
                         }}
                     >
-                        <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label={t("canvas.openMenu")}>
+                        <button type="button" className="grid size-7 shrink-0 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label={t("canvas.openMenu")}>
                             <Menu className="size-4" />
                         </button>
                     </Dropdown>
 
-                    <div ref={titleRef} className="flex min-w-0 items-center gap-2">
+                    <div ref={titleRef} className="flex min-w-0 flex-1 items-center gap-2">
                         {isTitleEditing ? (
                             <input
                                 autoFocus
@@ -127,13 +114,13 @@ export function CanvasTopBar({
                                     if (event.key === "Enter") onFinishTitleEditing();
                                     if (event.key === "Escape") onCancelTitleEditing();
                                 }}
-                                className="max-w-[280px] bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
+                                className="w-full max-w-[280px] bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
                                 style={{ color: theme.node.text }}
                             />
                         ) : (
                             <button
                                 type="button"
-                                className="max-w-[280px] truncate border-b border-dashed border-transparent text-left text-lg font-semibold tracking-normal transition hover:border-current"
+                                className="min-w-0 max-w-[280px] truncate border-b border-dashed border-transparent text-left text-lg font-semibold tracking-normal transition hover:border-current"
                                 onDoubleClick={onStartTitleEditing}
                                 title={t("canvas.renameHint")}
                             >
@@ -144,19 +131,11 @@ export function CanvasTopBar({
                     {features.canvasAgent ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
                 </div>
 
-                <div className="pointer-events-auto flex items-center gap-1.5">
+                <div className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5">
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={features.canvasPlugins ? onOpenPlugins : undefined} />
                     {features.canvasAgent ? <>
-                    <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
-                    <Button
-                        type="text"
-                        className="!h-10 !rounded-xl !px-3 !font-medium"
-                        style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
-                        icon={<Bot className="size-4" />}
-                        onClick={onToggleAgent}
-                    >
-                        Agent
-                    </Button>
+                        <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
+                        <Button type="text" className="!h-10 !rounded-xl !px-3 !font-medium" style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }} icon={<Bot className="size-4" />} onClick={onToggleAgent}>Agent</Button>
                     </> : null}
                 </div>
             </div>

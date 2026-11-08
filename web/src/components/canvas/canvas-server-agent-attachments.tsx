@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { App, Popover } from "antd";
-import { FolderOpen, Paperclip, Upload, X } from "lucide-react";
+import { FolderOpen, Plus, Upload, X } from "lucide-react";
 import { cloudApi } from "@/services/api/cloud";
 import { assertReferenceImageSize } from "@/services/image-storage";
 import type { AgentAttachment } from "@/services/api/server-agent";
@@ -27,10 +27,10 @@ export default function CanvasServerAgentAttachments({value,onChange,disabled,in
         onChange(next);
     };
     const button="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40";
-    return <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <Popover trigger="click" placement="topLeft" content={<div className="flex flex-col"><button type="button" className={button} onClick={()=>input.current?.click()}><Upload className="size-3.5"/>上传文件</button><button type="button" className={button} onClick={()=>setAssetsOpen(true)}><FolderOpen className="size-3.5"/>我的素材</button></div>}><button type="button" className={button} aria-label="添加对话附件" disabled={disabled||uploading}><Paperclip className="size-3.5"/>{uploading?"上传中":"附件"}</button></Popover>
+    return <div className="contents">
+        <Popover trigger="click" placement="topLeft" content={<div className="flex flex-col"><button type="button" className={button} onClick={()=>input.current?.click()}><Upload className="size-3.5"/>上传文件</button><button type="button" className={button} onClick={()=>setAssetsOpen(true)}><FolderOpen className="size-3.5"/>我的素材</button></div>}><button type="button" title="添加附件" className="inline-flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40" aria-label={uploading?"正在添加附件":"添加对话附件"} disabled={disabled||uploading}><Plus className="size-5"/></button></Popover>
         <input ref={input} type="file" multiple accept="image/*,video/*,audio/*,.txt,.md" className="hidden" onChange={async event=>{const files=Array.from(event.target.files||[]);event.target.value="";setUploading(true);onBusyChange(true);try{const items=[];for(const file of files)items.push(await agentFileAttachment(file));add(items);}catch(error){message.error((error as Error).message);}finally{setUploading(false);onBusyChange(false);}}}/>
-        {value.map((item,index)=><span key={index} className="inline-flex max-w-full items-center gap-1 rounded border border-current/15 px-1.5 py-1 text-[11px]" title={item.title}>{item.kind==="image"?<img alt="" src={`${item.url}?preview=1`} className="size-5 rounded object-cover"/>:null}<span className="max-w-32 truncate">{item.title}</span><button type="button" aria-label={`移除附件 ${item.title}`} disabled={disabled} onClick={()=>onChange(value.filter((_,i)=>i!==index))}><X className="size-3"/></button></span>)}
+        {value.length ? <div className="order-last flex w-full min-w-0 flex-wrap gap-1">{value.map((item,index)=><span key={index} className="inline-flex max-w-full items-center gap-1 rounded border border-current/15 px-1.5 py-1 text-[11px]" title={item.title}>{item.kind==="image"?<img alt="" src={`${item.url}?preview=1`} className="size-5 rounded object-cover"/>:null}<span className="max-w-32 truncate">{item.title}</span><button type="button" aria-label={`移除附件 ${item.title}`} disabled={disabled} onClick={()=>onChange(value.filter((_,i)=>i!==index))}><X className="size-3"/></button></span>)}</div> : null}
         <AssetPickerModal open={assetsOpen} includeAudio onClose={()=>setAssetsOpen(false)} onInsert={asset=>{try{add([attachmentFromAsset(asset)]);setAssetsOpen(false);}catch(error){message.error((error as Error).message);}}}/>
     </div>;
 }

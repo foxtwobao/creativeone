@@ -14,7 +14,7 @@ import { features } from "@/constant/features";
 import { useOneNavigation } from "@/hooks/use-one-navigation";
 
 export function AppTopNav() {
-    const { homeLink, refresh } = useOneNavigation();
+    const { refresh } = useOneNavigation();
     const { t } = useTranslation();
     const { pathname } = useLocation();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -76,7 +76,7 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <a {...homeLink} className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 aria-disabled:opacity-40">首页</a>
+                            <Link to="/" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">首页</Link>
                             <Link to="/studio" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">新版 UI</Link>
                             {features.assistant && <Tooltip title={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")}>
                                 <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")} />

@@ -1,15 +1,13 @@
 import { ConfigPromptSources } from "./config-prompt-sources";
-import { Alert, App, Button } from "antd";
+import { Alert } from "antd";
 import { ArrowUpRight, Cloud, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ModelPicker } from "@/components/model-picker";
-import { cloudApi, cloudSession } from "@/services/api/cloud";
+import { cloudSession } from "@/services/api/cloud";
 import { selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { features } from "@/constant/features";
-import { useCloudStore } from "@/stores/use-cloud-store";
 
 export function CloudConfigPanel() {
-    const { message, modal } = App.useApp();
     const config = useConfigStore((state) => state.config);
     const update = useConfigStore((state) => state.updateConfig);
     return <div className="flex flex-col gap-8">
@@ -44,13 +42,6 @@ export function CloudConfigPanel() {
             <Link to="/admin" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => useConfigStore.getState().setConfigDialogOpen(false)}>进入管理后台<ArrowUpRight size={15} aria-hidden="true" /></Link>
         </section> : null}
         <section><h2 className="mb-4 text-base font-semibold">提示词来源</h2><ConfigPromptSources /></section>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs leading-5 text-muted-foreground">分组授权、订阅和余额由 TokenONE 管理。</p>
-            <Button type="text" onClick={() => modal.confirm({ title: "断开模型服务授权？", content: "后续模型请求需要重新授权，已提交的任务不会取消。", okText: "断开授权", cancelText: "取消", onOk: async () => {
-                await cloudApi("/model-authorization/revoke", { method: "POST" });
-                useCloudStore.getState().setModelAuthorized(false);
-                message.success("已断开模型服务授权");
-            } })}>断开模型服务授权</Button>
-        </div>
+        <p className="text-xs leading-5 text-muted-foreground">分组授权、订阅和余额由 TokenONE 管理。</p>
     </div>;
 }

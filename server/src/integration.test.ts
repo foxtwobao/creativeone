@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
+import { spawn } from "node:child_process";
 import { unzipSync } from "fflate";
 import { createFile } from "mp4box";
 import sharp from "sharp";
@@ -48,10 +49,11 @@ let promptFails = false;
 let videoQueryHandler: (() => Promise<Response>) | undefined;
 globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url === "https://raw.githubusercontent.com/test/prompts.json") {
+    if (["https://raw.githubusercontent.com/test/prompts.json", "https://raw.githubusercontent.com/test/other-prompts.json"].includes(url)) {
         promptFetches++;
-        return promptFails ? new Response("offline", { status: 503 }) : Response.json(Array.from({length: 25}, (_, i) => ({id: String(i), title: `test prompt ${i}`, prompt: `draw ${i}`, tags: ["test"]})));
+        return promptFails ? new Response("offline", { status: 503 }) : Response.json(Array.from({length: 25}, (_, i) => ({id: String(i), title: `test prompt ${i}`, prompt: `draw ${i}`, tags: ["test"], coverUrl: "https://images.invalid/cover.jpg", referenceImageUrls: ["https://images.invalid/reference.jpg"]})));
     }
+    if (url.startsWith("https://images.invalid/")) assert.fail("Prompt refresh must not download images");
     if (url.startsWith("https://enhancer.test")) {
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer app-test-credential");
         if (url.endsWith("/groups")) return Response.json({ app_id: "creativeone", groups: [{ id: "8", name: "应用默认组", status: "active", is_default: true }] });
@@ -1104,33 +1106,107 @@ test("server cleanup preserves another project reference and export streams one 
     await call(`/projects/${project.id}`, alice, "DELETE");
     assert.equal((await realFetch(`${base}${url}`, {headers: headers(alice)})).status, 404);
 });
-test("prompt caching, refresh and pagination run on the server and retain cache after failure", async () => {
-    const state = await (await call("/prompt-sources")).json();
-    for (const source of state.sources) await call(`/prompt-sources/${source.id}`, alice, "PATCH", {enabled: false});
-    const saved = await (await call("/prompt-sources", alice, "POST", {name: "test source", url: "https://raw.githubusercontent.com/test/prompts.json", homepage: "", enabled: true})).json();
-    const source = saved.sources.find((s: any) => s.name === "test source"); assert.ok(source.id);
-    const first = await (await call(`/prompts?sourceId=${source.id}&pageSize=10`)).json();
-    assert.equal(first.total, 25); assert.equal(first.items.length, 10); assert.equal(promptFetches, 1);
-    const second = await (await call(`/prompts?sourceId=${source.id}&pageSize=10&page=2`)).json();
-    assert.notEqual(first.items[0].id, second.items[0].id); assert.equal(promptFetches, 1);
-    assert.equal((await (await call(`/prompts?sourceId=${source.id}&keyword=draw%2024`)).json()).total, 1);
-    promptFails = true;
-    const result = await (await call("/prompt-sources/refresh", alice, "POST", {sourceId: source.id})).json();
-    assert.equal(result.failureCount, 1);
-    assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 25);
-    promptFails = false;
+test("shared prompt cache fetches each URL once and retains account preferences", async t => {
+    const url = "https://raw.githubusercontent.com/test/prompts.json";
+    for (const user of [alice, bob]) {
+        const state = await (await call("/prompt-sources", user)).json();
+        for (const source of state.sources) await call(`/prompt-sources/${source.id}`, user, "PATCH", {enabled: false});
+    }
+    const add = async (user: string, name: string, sourceUrl = url) => (await (await call("/prompt-sources", user, "POST", {name, url: sourceUrl, homepage: "", enabled: true})).json()).sources.find((s: any) => s.name === name);
+    const source = await add(alice, "Alice source"), other = await add(bob, "Bob source");
+    assert.notEqual(source.id, other.id);
+    await t.test("concurrent readers share raw JSON but receive their own source IDs and labels", async () => {
+        const before = promptFetches;
+        const [first, second] = await Promise.all([call(`/prompts?sourceId=${source.id}&pageSize=10`), call(`/prompts?sourceId=${other.id}&pageSize=10`, bob)]).then(rs => Promise.all(rs.map(r => r.json())));
+        assert.equal(first.total, 25); assert.equal(first.items.length, 10); assert.equal(promptFetches, before + 1);
+        assert.equal(first.items[0].sourceId, source.id); assert.equal(first.items[0].category, "Alice source");
+        assert.equal(second.items[0].sourceId, other.id); assert.equal(second.items[0].category, "Bob source");
+        assert.equal(first.items[0].coverUrl, "https://images.invalid/cover.jpg");
+        assert.equal((await db.query("SELECT count(*) FROM prompt_source_caches WHERE source_url=$1", [url])).rows[0].count, "1");
+        const page2 = await (await call(`/prompts?sourceId=${source.id}&pageSize=10&page=2`)).json();
+        assert.notEqual(first.items[0].id, page2.items[0].id);
+        assert.equal((await (await call(`/prompts?sourceId=${source.id}&keyword=draw%2024`)).json()).total, 1);
+        assert.equal(promptFetches, before + 1);
+    });
+    await t.test("statuses and source mutations remain account scoped", async () => {
+        const status = await (await call("/prompt-source-statuses", bob)).json();
+        assert.equal(status[other.id].count, 25); assert.equal(status[source.id], undefined);
+        await call(`/prompt-sources/${other.id}`, bob, "PATCH", {enabled: false, name: "Bob renamed"});
+        assert.equal((await (await call("/prompts", bob)).json()).total, 0);
+        assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 25);
+        await call(`/prompt-sources/${other.id}`, bob, "PATCH", {enabled: true});
+    });
     const { refreshDuePromptSources } = await import("./prompts.js");
-    await db.query("UPDATE prompt_caches SET last_attempt_at=now()-interval '1 hour' WHERE user_id=$1 AND source_id=$2", [alice, source.id]);
-    const before = promptFetches;
-    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
-    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
-    assert.deepEqual(await (await call("/prompt-source-statuses", bob)).json(), {});
-    await call("/prompt-schedule", alice, "PATCH", {intervalMinutes: 0});
-    assert.equal((await (await call("/prompt-sources")).json()).schedule.intervalMinutes, 0);
-    await db.query("UPDATE prompt_caches SET last_attempt_at=now()-interval '1 hour' WHERE user_id=$1 AND source_id=$2", [alice, source.id]);
-    await refreshDuePromptSources(); assert.equal(promptFetches, before+1);
-    await call(`/prompt-sources/${source.id}`, alice, "DELETE");
-    assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 0);
+    await t.test("one scheduled refresh per URL and failures retain last successful content", async () => {
+        await db.query("UPDATE prompt_source_caches SET last_attempt_at=now()-interval '1 hour' WHERE source_url=$1", [url]);
+        const before = promptFetches;
+        await Promise.all([refreshDuePromptSources(), refreshDuePromptSources()]); assert.equal(promptFetches, before + 1);
+        await refreshDuePromptSources(); assert.equal(promptFetches, before + 1);
+        promptFails = true;
+        try {
+            await db.query("UPDATE prompt_source_caches SET last_attempt_at=now()-interval '1 hour' WHERE source_url=$1", [url]);
+            await refreshDuePromptSources(); assert.equal(promptFetches, before + 2);
+            await refreshDuePromptSources(); assert.equal(promptFetches, before + 2);
+            assert.equal((await (await call(`/prompts?sourceId=${other.id}`, bob)).json()).total, 25);
+            const status = await (await call("/prompt-source-statuses", alice)).json();
+            assert.equal(status[source.id].lastError, "PROMPT_SOURCE_FETCH_FAILED"); assert.ok(status[source.id].lastSuccessAt);
+        } finally { promptFails = false; }
+        const result = await (await call("/prompt-sources/refresh", alice, "POST", {sourceId: source.id})).json();
+        assert.equal(result.successCount, 1);
+        assert.equal((await (await call("/prompt-source-statuses", bob)).json())[other.id].lastError, "");
+    });
+    await t.test("URL changes never show stale contents or delete another user's cache", async () => {
+        const before = promptFetches;
+        const changed = "https://raw.githubusercontent.com/test/other-prompts.json";
+        await call(`/prompt-sources/${source.id}`, alice, "PATCH", {url: changed});
+        assert.equal((await (await call("/prompt-source-statuses")).json())[source.id], undefined);
+        assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 25);
+        assert.equal(promptFetches, before + 1);
+        await call(`/prompt-sources/${source.id}`, alice, "DELETE");
+        assert.equal((await (await call(`/prompts?sourceId=${source.id}`)).json()).total, 0);
+        assert.equal((await (await call(`/prompts?sourceId=${other.id}`, bob)).json()).total, 25);
+        await db.query("UPDATE prompt_source_caches SET last_attempt_at=now()-interval '1 hour' WHERE source_url=$1", [changed]);
+        await refreshDuePromptSources(); assert.equal(promptFetches, before + 1, "unused custom sources stop refreshing");
+    });
+    await t.test("failed first fetch waits until the next scheduled retry", async () => {
+        await db.query("DELETE FROM prompt_source_caches WHERE source_url=$1", [url]);
+        const before = promptFetches; promptFails = true;
+        try {
+            assert.equal((await (await call(`/prompts?sourceId=${other.id}`, bob)).json()).total, 0);
+            await call(`/prompts?sourceId=${other.id}`, bob); assert.equal(promptFetches, before + 1);
+        } finally { promptFails = false; }
+        await db.query("UPDATE prompt_source_caches SET last_attempt_at=now()-interval '1 hour' WHERE source_url=$1", [url]);
+        await refreshDuePromptSources(); assert.equal(promptFetches, before + 2);
+        assert.equal((await (await call(`/prompts?sourceId=${other.id}`, bob)).json()).total, 25);
+    });
+    await t.test("independent API processes share first fetch and scheduled refresh", async () => {
+        await db.query("DELETE FROM prompt_source_caches WHERE source_url=$1", [url]);
+        const probe = async (mode: string) => {
+            const children = [0, 1].map(() => spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+                const {searchPrompts,refreshDuePromptSources}=await import('./src/prompts.ts');
+                const {db}=await import('./src/db.ts');let fetches=0;
+                globalThis.fetch=async()=>{fetches++;await new Promise(resolve=>setTimeout(resolve,100));return Response.json([{title:'shared',prompt:'raw content'}]);};
+                process.send({ready:true});
+                process.once('message',async()=>{try{const result=process.env.PROMPT_PROBE_MODE==='due'?await refreshDuePromptSources():await searchPrompts(process.env.PROMPT_PROBE_USER,{});process.send({fetches,result});}catch(error){process.send({error:String(error)});process.exitCode=1;}finally{await db.end();process.disconnect();}});
+            `], {stdio: ["ignore", "ignore", "pipe", "ipc"], env: {...process.env, PROMPT_PROBE_MODE: mode, PROMPT_PROBE_USER: bob}}));
+            const messages: any[] = [];
+            const done = children.map(child => new Promise<void>((resolve, reject) => {
+                let stderr = "";child.stderr!.on("data", chunk => stderr += chunk);
+                child.on("message", (value: any) => { if (value.ready) { messages.push(value); if (messages.filter(item => item.ready).length === 2) children.forEach(item => item.send("go")); } else { assert.equal(value.error, undefined); messages.push(value); } });
+                child.once("error", reject);child.once("exit", code => code === 0 ? resolve() : reject(new Error(stderr || `probe exited ${code}`)));
+            }));
+            try { await Promise.all(done); } finally { children.forEach(child => { if (child.exitCode === null) child.kill(); }); }
+            assert.equal(messages.reduce((sum, item) => sum + (item.fetches || 0), 0), 1);
+            if (mode === "read") for (const message of messages.filter(item => item.result)) { assert.equal(message.result.total, 1);assert.equal(message.result.items[0].id, `${other.id}-0001`); }
+        };
+        await probe("read");
+        await db.query("UPDATE prompt_source_caches SET last_attempt_at=now()-interval '1 hour' WHERE source_url=$1", [url]);
+        await probe("due");
+    });
+    await t.test("individual scheduling endpoint is removed", async () => {
+        assert.equal((await call("/prompt-schedule", alice, "PATCH", {intervalMinutes: 0})).status, 404);
+        assert.equal((await (await call("/prompt-sources")).json()).schedule, undefined);
+    });
 });
 test("plugin records and works filtering use server mutations and pagination", async () => {
     const record = {id: "test-plugin", name: "test", version: "1", url: "https://example.test/plugin.js", source: "export default {}", enabled: true};
