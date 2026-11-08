@@ -4,9 +4,14 @@ import { cloudSession } from "@/services/api/cloud";
 
 export const AGENT_PANEL_MIN_WIDTH=464,AGENT_PANEL_MAX_WIDTH=760;
 const WIDTH_KEY="canvas-server-agent-width";
-const clampWidth=(width:number)=>Number.isFinite(width)?Math.min(AGENT_PANEL_MAX_WIDTH,Math.max(AGENT_PANEL_MIN_WIDTH,width)):AGENT_PANEL_MIN_WIDTH;
+export const getAgentPanelWidthBounds=()=>{
+    const viewport=typeof window==="undefined"?AGENT_PANEL_MAX_WIDTH*2:window.innerWidth;
+    const max=Math.min(AGENT_PANEL_MAX_WIDTH,Math.floor(viewport*(viewport<1024?0.9:0.5)));
+    return {min:max<AGENT_PANEL_MIN_WIDTH?Math.min(260,max):AGENT_PANEL_MIN_WIDTH,max};
+};
+const clampWidth=(width:number)=>{const {min,max}=getAgentPanelWidthBounds();return Number.isFinite(width)?Math.min(max,Math.max(min,width)):min;};
 function initialWidth() {
-    try {return clampWidth(Number(localStorage.getItem(WIDTH_KEY)) || AGENT_PANEL_MIN_WIDTH);} catch {return AGENT_PANEL_MIN_WIDTH;}
+    try {return clampWidth(Number(localStorage.getItem(WIDTH_KEY)) || AGENT_PANEL_MIN_WIDTH);} catch {return clampWidth(AGENT_PANEL_MIN_WIDTH);}
 }
 
 // Only the device's panel width is saved locally; conversations and accepted requests live on the server.

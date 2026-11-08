@@ -1,4 +1,4 @@
-import { App, Button, Select, Switch, Tag } from "antd";
+import { App, Button, Switch, Tag } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -6,8 +6,8 @@ import { useTranslation } from "react-i18next";
 
 import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
-import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
-import { PROMPT_SOURCE_INTERVALS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { fetchPromptSourceStatuses, refreshSource } from "@/services/api/prompts";
+import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
@@ -19,20 +19,16 @@ export function ConfigPromptSources() {
     const sources = usePromptSourceStore((state) => state.sources);
     const load = usePromptSourceStore((state) => state.load);
     useEffect(() => { void load().catch((error) => message.error(error instanceof Error ? error.message : "提示词来源加载失败")); }, [load, message]);
-    const schedule = usePromptSourceStore((state) => state.schedule);
     const addSource = usePromptSourceStore((state) => state.addSource);
     const saveSource = usePromptSourceStore((state) => state.saveSource);
     const removeSource = usePromptSourceStore((state) => state.removeSource);
     const toggleSource = usePromptSourceStore((state) => state.toggleSource);
-    const updateSchedule = usePromptSourceStore((state) => state.updateSchedule);
     const statusQuery = useQuery({ queryKey: STATUS_QUERY_KEY, queryFn: fetchPromptSourceStatuses });
 
     const [editingSource, setEditingSource] = useState<PromptSource | null>(null);
     const [viewingId, setViewingId] = useState("");
     const [refreshingId, setRefreshingId] = useState("");
-    const [refreshingAll, setRefreshingAll] = useState(false);
     const viewingSource = sources.find((item) => item.id === viewingId) || null;
-    const intervalOptions = PROMPT_SOURCE_INTERVALS.map((value) => ({ value, label: t(`config.promptSources.intervals.${intervalKey(value)}`) }));
 
     const invalidatePrompts = async () => {
         await Promise.all([
@@ -72,21 +68,6 @@ export function ConfigPromptSources() {
             message.error(error instanceof Error ? error.message : t("config.promptSources.refreshFailedCached"));
         } finally {
             setRefreshingId("");
-        }
-    };
-
-    const handleRefreshAll = async () => {
-        setRefreshingAll(true);
-        try {
-            const result = await refreshAllSources();
-            await usePromptSourceStore.getState().load();
-            await invalidatePrompts();
-            if (result.failureCount) message.warning(t("config.promptSources.refreshPartial", { success: result.successCount, failed: result.failureCount }));
-            else message.success(t("config.promptSources.refreshAllSuccess", { sources: result.successCount, total: result.total }));
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : t("config.promptSources.refreshFailed"));
-        } finally {
-            setRefreshingAll(false);
         }
     };
 
@@ -133,21 +114,6 @@ export function ConfigPromptSources() {
                 })}
             </div>
 
-            <section className="mt-5 rounded-lg border border-stone-200 p-4 dark:border-stone-800">
-                <div className="mb-3 text-sm font-semibold">{t("config.promptSources.schedule")}</div>
-                <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-stone-500">{t("config.promptSources.interval")}</span>
-                        <Select size="small" className="w-36" value={schedule.intervalMinutes} options={intervalOptions} onChange={(value) => void updateSchedule("intervalMinutes", value).catch((error) => message.error(error.message))} />
-                    </div>
-                    <Button size="small" type="primary" icon={<RefreshCw className="size-3.5" />} loading={refreshingAll} onClick={() => void handleRefreshAll()}>
-                        {t("config.promptSources.refreshAll")}
-                    </Button>
-                    <span className="text-xs text-stone-500">{schedule.lastFetchedAt ? t("config.promptSources.lastFetched", { time: formatTime(schedule.lastFetchedAt, i18n.resolvedLanguage) }) : t("config.promptSources.neverScheduled")}</span>
-                </div>
-                <div className="mt-2 text-xs text-stone-400">{t("config.promptSources.scheduleDescription")}</div>
-            </section>
-
             <PromptSourceEditorDrawer open={Boolean(editingSource)} source={editingSource} onSave={handleSave} onClose={() => setEditingSource(null)} />
             <PromptSourceContentModal source={viewingSource} onClose={() => setViewingId("")} />
         </div>
@@ -157,12 +123,4 @@ export function ConfigPromptSources() {
 function formatTime(value: string, locale?: string) {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function intervalKey(value: number) {
-    if (value === 30) return "minutes30";
-    if (value === 60) return "hour1";
-    if (value === 360) return "hours6";
-    if (value === 1440) return "hours24";
-    return "disabled";
 }
