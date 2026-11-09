@@ -480,7 +480,7 @@ test("text tool schemas expose the two node shapes and identify misplaced storyb
     const nested=toolArgumentErrors([{toolCallId:"nested",toolName:"create_text_nodes",input:{nodes:[{title:"镜头",shots:[{...shot,seconds:"3"}],sourceNodeIds:[]}]}}]);assert.equal(nested[0].problems[0].field,"nodes.0.shots.0.seconds");assert.match(nested[0].problems[0].message,/数字/);
     for(const node of [{title:"空节点",sourceNodeIds:[]},{title:"双正文",text:"正文",shots:[shot],sourceNodeIds:[]}])assert.equal(toolArgumentErrors([{toolCallId:"exclusive",toolName:"create_text_nodes",input:{nodes:[node]}}]).length,1);
 });
-test("all Agent tools send closed strict schemas and nullable optional values match execution schemas",async () => {
+test("all Agent tools send closed strict schemas with nullable optionals and explicit boolean contracts",async () => {
     const ctx=await setup();responses.push(modelText("工具定义巡检"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");
     const definitions=fixture.requests.at(-1).tools;
     assert.equal(definitions.length,Object.keys(toolSchemas).length);
@@ -492,16 +492,20 @@ test("all Agent tools send closed strict schemas and nullable optional values ma
         ["find_nodes",{query:null,type:null}],["read_nodes",{nodeIds:[randomUUID()],includeImages:null}],["read_connections",{nodeIds:[randomUUID()],direction:null}],
         ["arrange_nodes",{nodeIds:null}],["resize_node",{nodeId:randomUUID(),width:360,height:240,freeResize:null}],["update_text_node",{nodeId:randomUUID(),title:null,content:"正文"}],
         ["prompts_search",{keyword:null,page:null,pageSize:null,category:null}],["assets_list",{keyword:null,kind:null}],["assets_add",{source:{content:"正文"},title:null,tags:null}],
-        ["workbench_image_generate",{model:"image-model",prompt:"小猫",count:null,run:null,references:null,parameters:{size:null,quality:null,background:null}}],
-        ["workbench_video_generate",{model:"video-model",prompt:"小猫",count:null,run:null,references:null,parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}],
-        ["prepare_media_nodes",{nodes:[{nodeId:null,newCopy:null,title:"视频",kind:"video",model:"video-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}]}],
-        ["prepare_text_generation",{nodes:[{nodeId:null,newCopy:null,title:"正文",model:"writer-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{reasoningEffort:null}}]}],
+        ["workbench_image_generate",{model:"image-model",prompt:"小猫",count:null,run:false,references:null,parameters:{size:null,quality:null,background:null}}],
+        ["workbench_video_generate",{model:"video-model",prompt:"小猫",count:null,run:false,references:null,parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}],
+        ["prepare_media_nodes",{nodes:[{nodeId:null,newCopy:false,title:"视频",kind:"video",model:"video-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}]}],
+        ["prepare_text_generation",{nodes:[{nodeId:null,newCopy:false,title:"正文",model:"writer-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{reasoningEffort:null}}]}],
         ["request_user_input",{questions:[{id:"duration",question:"目标时长？",options:null}]}],
         ["set_agent_state",{phase:"storyboard",brief:null,approvedPlan:null,targetDurationSeconds:null,approvedNodeIds:null,referenceNodeIds:null}],
     ];
     for(const [toolName,input] of nullable)assert.deepEqual(toolArgumentErrors([{toolName,input,toolCallId:randomUUID()}]),[],toolName);
     assert.equal(toolArgumentErrors([{toolName:"workbench_image_generate",input:{model:"image-model",prompt:"   "},toolCallId:randomUUID()}]).length,1);
-    const defaults=toolSchemas.workbench_image_generate.parse({model:"image-model",prompt:"小猫",count:null,run:null,references:null,parameters:null});assert.equal(defaults.count,1);assert.equal(defaults.run,true);assert.deepEqual(defaults.references,[]);assert.deepEqual(defaults.parameters,{});assert.equal(toolSchemas.assets_list.parse({kind:null}).kind,"all");assert.equal(toolSchemas.read_connections.parse({nodeIds:[randomUUID()],direction:null}).direction,"both");
+    const prepare=definitions.find((tool:any)=>tool.name==="prepare_media_nodes").parameters.properties.nodes.items.anyOf;
+    for(const variant of prepare){assert.deepEqual(variant.properties.newCopy,{type:"boolean",description:"必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受 null 或字符串 true/false。"});assert.ok(variant.required.includes("newCopy"));}
+    const imageWorkbench=definitions.find((tool:any)=>tool.name==="workbench_image_generate");assert.equal(imageWorkbench.parameters.properties.run.type,"boolean");assert.ok(imageWorkbench.parameters.required.includes("run"));
+    for(const run of [null,"false","true",0,1])assert.equal(toolArgumentErrors([{toolName:"workbench_image_generate",input:{model:"image-model",prompt:"小猫",run},toolCallId:randomUUID()}]).length,1);
+    const defaults=toolSchemas.workbench_image_generate.parse({model:"image-model",prompt:"小猫",count:null,references:null,parameters:null});assert.equal(defaults.count,1);assert.equal(defaults.run,true);assert.deepEqual(defaults.references,[]);assert.deepEqual(defaults.parameters,{});assert.equal(toolSchemas.assets_list.parse({kind:null}).kind,"all");assert.equal(toolSchemas.read_connections.parse({nodeIds:[randomUUID()],direction:null}).direction,"both");
     const video=definitions.find((tool:any)=>tool.name==="prepare_media_nodes").parameters.properties.nodes.items.anyOf.find((variant:any)=>variant.properties.kind.const==="video").properties.parameters;
     const workbench=definitions.find((tool:any)=>tool.name==="workbench_video_generate").parameters.properties.parameters.anyOf.find((variant:any)=>variant.type==="object");assert.deepEqual(video,workbench);
     for(const [toolName,input] of [["set_agent_state",{phase:"script",targetDurationSeconds:"15"}],["read_nodes",{nodeIds:[randomUUID()],includeImages:"false"}],["workbench_image_generate",{model:"image-model",prompt:"小猫",count:"2"}],["prompts_search",{pageSize:101}],["read_task_results",{taskIds:["not-a-uuid"]}],["site_navigate",{path:"https://example.com"}],["site_navigate",{path:"/canvas/not-a-uuid"}]] as Array<[string,unknown]>)assert.equal(toolArgumentErrors([{toolName,input,toolCallId:randomUUID()}]).length,1,toolName);
@@ -577,18 +581,18 @@ test("invalid draft parameters stay readable while tool writes still reject them
 });
 test("empty copy flags reuse text and media nodes while strings never request copies",async () => {
     const ctx=await setup(),spec={title:"正文",text:"保留相同正文",sourceNodeIds:[ctx.source]};
-    const first=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:null}]});
-    for(const flag of [null,false,undefined]){const reused=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,...flag===undefined?{}:{newCopy:flag}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);assert.deepEqual(reused.createdNodeIds,[]);}
-    for(const flag of ["false","true","",0,1])await assert.rejects(()=>recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:flag}]}));
+    const first=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:false}]});
+    for(const flag of [false,undefined]){const reused=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,...flag===undefined?{}:{newCopy:flag}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);assert.deepEqual(reused.createdNodeIds,[]);}
+    for(const flag of [null,"false","true","",0,1])await assert.rejects(()=>recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:flag}]}));
     const copy=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:true}]});assert.equal(copy.createdNodeIds.length,1);assert.notEqual(copy.createdNodeIds[0],first.createdNodeIds[0]);
     const media={title:"图片",kind:"image",model:"image-model",prompt:"小猫回家",parameters:{},sourceNodeIds:[ctx.source],referenceNodeIds:[]};
-    const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[media]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:null}]});assert.deepEqual(reused.reusedNodeIds.sort(),prepared.createdNodeIds.sort());assert.deepEqual(reused.createdNodeIds,[]);
+    const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:false}]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:false}]});assert.deepEqual(reused.reusedNodeIds.sort(),prepared.createdNodeIds.sort());assert.deepEqual(reused.createdNodeIds,[]);
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
 });
 test("misnested storyboard decisions automatically correct without executing valid sibling writes",async () => {
     const ctx=await setup(),shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
     const invalid=modelTool("create_text_nodes",{nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:null,...shot})),shots:[shot],text:null});invalid.output.unshift(modelTool("set_agent_state",{phase:"breakdown"}).output[0]);
-    const corrected={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:null,shots:[{...shot,number:index+1}]}))};
+    const corrected={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:false,shots:[{...shot,number:index+1}]}))};
     responses.push(modelTool("create_text_nodes",{nodes:[{title:"已成功正文",text:"已有成果",sourceNodeIds:[ctx.source]}]}),invalid,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);assert.equal(await readCreativeState(db,ctx.thread),null);return Response.json(modelTool("create_text_nodes",corrected));},modelTool("create_text_nodes",corrected),modelText("仅保存未完成分镜"));await executeAgentRun(ctx.id);
     const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,5);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,6);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"已有成果");assert.ok(project.nodes.find((node:any)=>node.title==="镜头1").metadata.content.includes("镜头 1 · 3 秒"));
     const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,invalid.output[1].call_id])).rows[0].result;assert.match(receipt.details.hint,/nodes\[\]\.shots\[\]/);
