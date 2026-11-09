@@ -5,6 +5,7 @@ import { cloudApi } from "@/services/api/cloud";
 import { assertReferenceImageSize } from "@/services/image-storage";
 import type { AgentAttachment } from "@/services/api/server-agent";
 import { AssetPickerModal, type InsertAssetPayload } from "./asset-picker-modal";
+export { clipboardFiles } from "./canvas-agent-clipboard";
 
 export async function agentFileAttachment(file:File):Promise<AgentAttachment> {
     if (/\.(?:txt|md)$/i.test(file.name)) return {kind:"text",title:file.name,text:await file.text()};
