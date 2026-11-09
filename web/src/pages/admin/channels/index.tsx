@@ -109,7 +109,7 @@ export default function ChannelsPage() {
                 </div>
                 {selectedModels.length ? <div className="mb-4 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Checkbox checked={agentEnabledCount === selectedModels.length} indeterminate={agentEnabledCount > 0 && agentEnabledCount < selectedModels.length} disabled={saving} onChange={({ target: { checked } }) => selectedModels.forEach((model) => form.setFieldValue(["model_capabilities", model, "agentEnabled"], checked))}>全部允许创作助手调用</Checkbox>
+                        <Checkbox checked={agentEnabledCount === selectedModels.length} indeterminate={agentEnabledCount > 0 && agentEnabledCount < selectedModels.length} disabled={saving} onChange={({ target: { checked } }) => selectedModels.forEach((model) => form.setFieldValue(["model_capabilities", model, "agentEnabled"], checked))}>全部允许全能助手调用</Checkbox>
                         <span className="text-xs text-muted-foreground">已允许 {agentEnabledCount} / {selectedModels.length}</span>
                     </div>
                     <p className="text-xs text-muted-foreground">批量操作当前功能已配置的模型，点击「确定」后保存。</p>
@@ -125,7 +125,7 @@ export default function ChannelsPage() {
                         {editing === "video" ? <Form.Item name={["video_presets", model]} label="参数预设" rules={[{ required: true, message: "请选择参数预设" }, { validator: (_, value) => !value || videoParameterPresets[value]?.callType === videoTypes[model] ? Promise.resolve() : Promise.reject(new Error("参数预设与调用类型不匹配，请重新选择")) }]} extra="控制允许的参数值、默认值和界面规则；不会替换模型 ID。">
                             <Select aria-label={`${model} 的参数预设`} showSearch optionFilterProp="label" options={Object.entries(videoParameterPresets).filter(([, preset]) => preset.callType === videoTypes[model]).map(([value, preset]) => ({ value, label: preset.label }))} />
                         </Form.Item> : null}
-                        <Form.Item name={["model_capabilities",model,"agentEnabled"]} label="允许创作助手调用" valuePropName="checked" extra={editing==="text"?"仅在已验证支持 Responses 原生工具调用后开启，同时用于独立文本任务。":"仅在已验收该模型生成链路后开启；每批仍须用户确认。"}><Switch aria-label={`${model} 允许创作助手调用`}/></Form.Item>
+                        <Form.Item name={["model_capabilities",model,"agentEnabled"]} label="允许全能助手调用" valuePropName="checked" extra={editing==="text"?"仅在已验证支持 Responses 原生工具调用后开启，同时用于独立文本任务。":"仅在已验收该模型生成链路后开启；每批仍须用户确认。"}><Switch aria-label={`${model} 允许全能助手调用`}/></Form.Item>
                         {editing==="text"?<Form.Item name={["model_capabilities",model,"imageInput"]} label="支持图片理解" valuePropName="checked" extra="仅在已验证图片输入后开启，与图片生成模型无关。"><Switch aria-label={`${model} 支持图片理解`}/></Form.Item>:null}
                         <Form.Item name={["model_descriptions", model]} label="描述（可选）"><Input.TextArea aria-label={`${model} 的描述`} autoSize placeholder="填写希望在模型列表中展示的说明" /></Form.Item>
                     </div>)}

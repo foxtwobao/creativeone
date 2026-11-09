@@ -37,7 +37,7 @@ export function CloudConfigPanel() {
         {cloudSession?.user.admin ? <section className="flex flex-wrap items-center justify-between gap-4 border-t border-border/60 pt-6">
             <div className="flex items-start gap-3">
                 <ShieldCheck size={18} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <div><h2 className="text-sm font-medium text-foreground">管理后台</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理功能模型、图片和视频参数预设、创作助手和用户任务。</p></div>
+                <div><h2 className="text-sm font-medium text-foreground">管理后台</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理功能模型、图片和视频参数预设、全能助手和用户任务。</p></div>
             </div>
             <Link to="/admin" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring" onClick={() => useConfigStore.getState().setConfigDialogOpen(false)}>进入管理后台<ArrowUpRight size={15} aria-hidden="true" /></Link>
         </section> : null}

@@ -217,7 +217,7 @@ export default {
     canvas: {
         defaultTitle: "画布ONE {{count}}",
         library: "画布库",
-        title: "画布ONE",
+        title: "全能画布",
         imported: "已导入 {{count}} 个画布",
         importFailed: "导入失败，请选择有效的画布压缩包",
         opening: "正在打开画布...",
@@ -325,7 +325,7 @@ export default {
     },
     navigation: {
         audio: "音频创作",
-        canvas: "我的画布",
+        canvas: "全能画布",
         image: "生图工作台",
         video: "视频创作台",
         prompts: "提示词库",

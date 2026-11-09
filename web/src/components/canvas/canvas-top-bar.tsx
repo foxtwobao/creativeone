@@ -78,7 +78,7 @@ export function CanvasTopBar({
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex min-h-16 flex-wrap items-center justify-between gap-y-1 py-3 pl-1 pr-3">
                 <div className="pointer-events-auto flex min-w-0 flex-[1_1_20rem] items-center gap-2">
-                    {serverAgentEnabled && !serverAgentOpen ? <button type="button" aria-label="打开创作助手" onClick={() => { if (window.matchMedia("(max-width: 1023px)").matches) useCanvasSidePanelStore.getState().closePanel(); toggleServerAgent(); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>创作助手</button> : null}
+                    {serverAgentEnabled && !serverAgentOpen ? <button type="button" aria-label="打开全能助手" onClick={() => { if (window.matchMedia("(max-width: 1023px)").matches) useCanvasSidePanelStore.getState().closePanel(); toggleServerAgent(); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"><Bot className="size-4"/>全能助手</button> : null}
                     <Dropdown
                         trigger={["click"]}
                         menu={{
