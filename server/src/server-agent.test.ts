@@ -484,6 +484,8 @@ test("all Agent tools send closed strict schemas and nullable optional values ma
     const ctx=await setup();responses.push(modelText("工具定义巡检"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");
     const definitions=fixture.requests.at(-1).tools;
     assert.equal(definitions.length,Object.keys(toolSchemas).length);
+    assert.match(definitions.find((tool:any)=>tool.name==="workbench_image_generate").description,/仅在用户明确要求.*图片工作台/);
+    assert.match(definitions.find((tool:any)=>tool.name==="workbench_image_generate").description,/画布内生图请使用 prepare_media_nodes 和 submit_generation/);
     const inspect=(schema:any)=>{if(!schema||typeof schema!=="object")return;assert.equal(Object.hasOwn(schema,"default"),false);assert.equal(Object.hasOwn(schema,"oneOf"),false);if(schema.properties){assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(schema.properties).sort());}for(const value of Object.values(schema))inspect(value);};
     for(const definition of definitions){assert.equal(definition.strict,true,definition.name);assert.equal(definition.parameters.type,"object",definition.name);assert.equal(definition.parameters.anyOf,undefined);inspect(definition.parameters);}
     const nullable:[keyof typeof toolSchemas,unknown][]=[
