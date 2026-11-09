@@ -3168,7 +3168,7 @@ function InfiniteCanvasPage() {
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     onHome={() => void leaveCanvas("/")}
-                    onProjects={() => void leaveCanvas("/canvas")}
+                    onProjects={() => void leaveCanvas("/canvas?library=1")}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}

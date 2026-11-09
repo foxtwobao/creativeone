@@ -28,9 +28,9 @@ export function AppTopNav() {
     return (
         <>
             {!hideHeader ? (
-                <header className="sticky top-0 z-20 h-14 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
-                    <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
-                        <div className="flex min-w-0 items-center">
+                <header className="sticky top-0 z-20 min-h-14 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
+                    <div className="mx-auto flex min-h-14 max-w-7xl flex-wrap items-center justify-between gap-x-5 gap-y-1 px-6 py-1">
+                        <div className="flex min-w-0 flex-wrap items-center">
                             <Link to="/" className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
                                 <span
                                     className="size-5 shrink-0 bg-current"
@@ -52,7 +52,7 @@ export function AppTopNav() {
                                 <Menu className="size-5" />
                             </button>
 
-                            <nav className="hide-scrollbar ml-8 hidden h-14 min-w-0 items-center gap-7 overflow-x-auto md:flex">
+                            <nav className="ml-8 hidden min-w-0 flex-wrap items-center gap-x-7 md:flex">
                                 {navigationTools.map((tool) => {
                                     const Icon = tool.icon;
                                     const active = tool.slug === activeToolSlug;
@@ -75,7 +75,7 @@ export function AppTopNav() {
                             </nav>
                         </div>
 
-                        <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                        <div className="my-auto flex min-h-9 min-w-0 flex-wrap items-center justify-end gap-2 justify-self-end">
                             <Link to="/" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">首页</Link>
                             <Link to="/studio" className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">新版 UI</Link>
                             {features.assistant && <Tooltip title={t(panelOpen ? "topNav.closeAgent" : "topNav.openAgent")}>

@@ -32,7 +32,7 @@ export const router = createBrowserRouter([
             </UserLayout>
         ),
         children: [
-            { path: "/", element: features.originalUi ? <HomePage /> : <Navigate to="/studio" replace /> },
+            { path: "/", element: features.originalUi ? <HomePage /> : features.canvas ? <Navigate to="/canvas" replace /> : <Navigate to="/studio" replace /> },
             { path: "/image", element: <ImagePage /> },
             { path: "/studio", element: <ImagePage /> },
             { path: "/audio", element: <AudioPage /> },

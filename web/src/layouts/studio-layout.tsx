@@ -11,8 +11,8 @@ import { useOneNavigation } from "@/hooks/use-one-navigation";
 import { useServerAgentActions } from "@/hooks/use-server-agent-actions";
 
 const links = [
+    { to: "/canvas", label: "全能画布", icon: Maximize2 },
     { to: "/studio", label: "图片创作", icon: PenLine },
-    { to: "/canvas", label: "画布ONE", icon: Maximize2 },
     { to: "/video", label: "视频创作", icon: Video },
     { to: "/audio", label: "音频创作", icon: AudioLines },
     { to: "/assets", label: "我的作品", icon: Images },
@@ -23,7 +23,7 @@ const adminLinks = [
     { to: "/admin/channels", label: "功能模型配置", icon: Settings2 },
     { to: "/admin/image-presets", label: "图片参数预设", icon: Images },
     { to: "/admin/video-presets", label: "视频参数预设", icon: SlidersHorizontal },
-    { to: "/admin/agent", label: "创作助手配置", icon: Bot },
+    { to: "/admin/agent", label: "全能助手配置", icon: Bot },
     { to: "/admin/tasks", label: "用户任务", icon: ListChecks },
 ];
 
@@ -58,7 +58,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
                     <nav className="studio-navigation" aria-label={admin ? "管理员导航" : "主导航"}>
                         {!admin ? <Link to="/" className="studio-nav-item"><span>首页</span></Link> : null}
                         {(admin ? adminLinks : links).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} title={label} className={({ isActive }) => `studio-nav-item ${isActive || (to === "/studio" && pathname === "/image") ? "is-active" : ""}`}><Icon size={18} /><span>{label}</span></NavLink>)}
-                        {!admin && features.assistant && <button className="studio-nav-item" title="创作助手" onClick={togglePanel}><Bot size={18} /><span>创作助手</span></button>}
+                        {!admin && features.assistant && <button className="studio-nav-item" title="全能助手" onClick={togglePanel}><Bot size={18} /><span>全能助手</span></button>}
                     </nav>
                     {!admin ? <div className="studio-sidebar-note"><span>让灵感，自由生长。</span><p>从一个想法，到无限可能。</p></div> : null}
                     <footer className="studio-sidebar-footer">

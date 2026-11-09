@@ -30,6 +30,7 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
     const resizeStart=useRef<{x:number;width:number}|null>(null);
     const threadId=useServerAgentStore(state => state.threadIds[projectId]);
     const pending=useServerAgentStore(state => state.pending[projectId]);
+    const entryGoal=useServerAgentStore(state => state.entryGoal);
     const config=useServerAgentStore(state=>state.config);
     const [threads,setThreads]=useState<Array<{id:string;title:string}>>([]);
     const [thread,setThread]=useState<AgentThread>();
@@ -141,10 +142,10 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
     const act=async (operation:() => Promise<unknown>) => {
         if (mutating.current) return;
         mutating.current=true;setBusy(true);setError("");
-        try {await operation();useServerAgentStore.setState({actionWatchId:crypto.randomUUID()});await refresh();} catch (error) {setError((error as Error).message);} finally {mutating.current=false;setBusy(false);}
+        try {await operation();useServerAgentStore.setState({actionWatchId:crypto.randomUUID()});await refresh();} catch (error) {request.current++;setError((error as Error).message);} finally {mutating.current=false;setBusy(false);}
     };
-    const createThread=async () => {
-        const created=await createAgentThread(projectId,draft.trim() || "画布创作");
+    const createThread=async (title=draft.trim() || "画布创作") => {
+        const created=await createAgentThread(projectId,title);
         useServerAgentStore.getState().select(projectId,created.id);
         setThreads((await listAgentThreads(projectId)).threads);
         return created.id;
@@ -161,7 +162,7 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
         await onFlush();
         const current=useCanvasStore.getState().openProject(projectId);
         if(!current)throw new Error("请先保存并打开当前画布");
-        const id=threadId || await createThread();
+        const id=threadId || await createThread(goal);
         const input={submissionId:crypto.randomUUID(),goal,selectedNodeIds:selection,model:chosenModel,skillIds:[...skills],attachments:files,clientId:useServerAgentStore.getState().clientId,baseRevision:current.contentRevision,baseGenerationRevision:current.generationRevision};
         useServerAgentStore.getState().hold(projectId,{threadId:id,input});
         await submit(id,input);useServerAgentStore.getState().hold(projectId,null);setDraft("");setAttachments([]);setReferenceIds([]);
@@ -172,6 +173,13 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
         if(held){await submit(held.threadId,held.input);useServerAgentStore.getState().hold(projectId,null);setDraft("");setAttachments([]);setReferenceIds([]);return;}
         if(draft.trim()&&model)await startGoal(draft.trim(),[...new Set([...selectedNodeIds,...referenceIds])],[...attachments],model);
     });
+    useEffect(()=>{
+        if(!open || entryGoal?.projectId!==projectId || !config || mutating.current)return;
+        // Consume once before starting; uncertain submissions keep the existing pending receipt.
+        useServerAgentStore.setState({entryGoal:null});
+        setDraft(entryGoal.goal);setModel(entryGoal.model);setAttachments(entryGoal.attachments);
+        void act(()=>startGoal(entryGoal.goal,[],entryGoal.attachments,entryGoal.model,[]));
+    },[open,entryGoal,projectId,config,act,startGoal]);
     const retry=(entry:AgentThread["items"][number])=>{
         const original=thread?.items.find(item=>item.turnId===entry.turnId&&item.role==="user"),run=thread?.runs.find(run=>run.id===entry.turnId);
         if(!original||!run||active||pending)return;
@@ -191,9 +199,9 @@ export default function CanvasServerAgentPanel({selectedNodeIds,onFlush,onFocusN
     const wait=active?.wait;
     const presetButtons=<div className="grid grid-cols-2 gap-1">{agentPresets.map(preset=><button key={preset.id} type="button" disabled={busy||Boolean(active)||Boolean(pending)} className={`${button} flex-col items-start py-2 text-left`} onClick={()=>choosePreset(preset)}><span className="font-medium">{preset.title}</span><span className="text-[11px]" style={{color:theme.node.muted}}>{preset.description}</span></button>)}</div>;
 
-    return <aside aria-label="画布创作助手" className="relative z-20 flex h-full min-h-0 min-w-0 shrink-0 max-w-[90vw] lg:max-w-[50%] flex-col border-r max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:z-[70]" style={{width,background:theme.node.panel,borderColor:theme.node.stroke,color:theme.node.text}}>
-        <div role="separator" aria-label="调整创作助手宽度" aria-orientation="vertical" aria-valuemin={panelMinWidth} aria-valuemax={panelMaxWidth} aria-valuenow={width} tabIndex={0} className="group absolute inset-y-0 right-0 z-20 w-3 translate-x-1/2 touch-none cursor-col-resize select-none focus-visible:outline focus-visible:outline-1" onPointerDown={event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);resizeStart.current={x:event.clientX,width};}} onPointerMove={event=>{if(resizeStart.current){event.stopPropagation();setWidth(resizeStart.current.width+event.clientX-resizeStart.current.x);}}} onPointerUp={event=>{event.stopPropagation();event.currentTarget.releasePointerCapture(event.pointerId);}} onLostPointerCapture={()=>{resizeStart.current=null;saveWidth();}} onKeyDown={event=>{const next=event.key==="Home"?panelMinWidth:event.key==="End"?panelMaxWidth:event.key==="ArrowLeft"?width-1:event.key==="ArrowRight"?width+1:undefined;if(next!==undefined){event.preventDefault();setWidth(next);saveWidth();}}}><span aria-hidden="true" className="pointer-events-none absolute inset-y-1/2 left-1/2 h-12 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" style={{background:theme.toolbar.itemHover}}/></div>
-        <header className="flex h-14 shrink-0 items-center gap-2 px-4"><Bot className="size-4"/><strong className="flex-1 text-sm">创作助手</strong><CanvasServerAgentSessions disabled={busy||Boolean(pending)} onChanged={async()=>setThreads((await listAgentThreads(projectId)).threads)}/><button type="button" title="新建会话" aria-label="新建会话" disabled={busy || Boolean(pending)} className={button} onClick={() => void act(createThread)}><Plus className="size-4"/></button><button type="button" title="折叠创作助手" aria-label="折叠创作助手" className={button} onClick={toggle}><PanelLeftClose className="size-4"/></button></header>
+    return <aside aria-label="画布全能助手" className="relative z-20 flex h-full min-h-0 min-w-0 shrink-0 max-w-[90vw] lg:max-w-[50%] flex-col border-r max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:z-[70]" style={{width,background:theme.node.panel,borderColor:theme.node.stroke,color:theme.node.text}}>
+        <div role="separator" aria-label="调整全能助手宽度" aria-orientation="vertical" aria-valuemin={panelMinWidth} aria-valuemax={panelMaxWidth} aria-valuenow={width} tabIndex={0} className="group absolute inset-y-0 right-0 z-20 w-3 translate-x-1/2 touch-none cursor-col-resize select-none focus-visible:outline focus-visible:outline-1" onPointerDown={event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);resizeStart.current={x:event.clientX,width};}} onPointerMove={event=>{if(resizeStart.current){event.stopPropagation();setWidth(resizeStart.current.width+event.clientX-resizeStart.current.x);}}} onPointerUp={event=>{event.stopPropagation();event.currentTarget.releasePointerCapture(event.pointerId);}} onLostPointerCapture={()=>{resizeStart.current=null;saveWidth();}} onKeyDown={event=>{const next=event.key==="Home"?panelMinWidth:event.key==="End"?panelMaxWidth:event.key==="ArrowLeft"?width-1:event.key==="ArrowRight"?width+1:undefined;if(next!==undefined){event.preventDefault();setWidth(next);saveWidth();}}}><span aria-hidden="true" className="pointer-events-none absolute inset-y-1/2 left-1/2 h-12 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" style={{background:theme.toolbar.itemHover}}/></div>
+        <header className="flex h-14 shrink-0 items-center gap-2 px-4"><Bot className="size-4"/><strong className="flex-1 text-sm">全能助手</strong><CanvasServerAgentSessions disabled={busy||Boolean(pending)} onChanged={async()=>setThreads((await listAgentThreads(projectId)).threads)}/><button type="button" title="新建会话" aria-label="新建会话" disabled={busy || Boolean(pending)} className={button} onClick={() => void act(createThread)}><Plus className="size-4"/></button><button type="button" title="折叠全能助手" aria-label="折叠全能助手" className={button} onClick={toggle}><PanelLeftClose className="size-4"/></button></header>
         <div className="px-4 pb-3"><Select className="w-full" variant="borderless" showSearch optionFilterProp="label" aria-label="创作会话" placeholder="新会话" value={threadId} disabled={busy || Boolean(pending)} options={threads.map(item => ({label:item.title,value:item.id}))} onChange={id => useServerAgentStore.getState().select(projectId,id)}/></div>
         {thread?.creativeState ? <details className="mx-4 mb-3 text-xs" style={{color:theme.node.muted}}><summary className="cursor-pointer">创作备忘 · {agentPhases[thread.creativeState.phase as keyof typeof agentPhases] || "待确认"}</summary><div className="space-y-1 pt-2 whitespace-pre-wrap">{thread.creativeState.brief?<p>{thread.creativeState.brief}</p>:null}{thread.creativeState.targetDurationSeconds?<p>目标时长：{thread.creativeState.targetDurationSeconds} 秒</p>:null}{thread.creativeState.approvedPlan?<p>{thread.creativeState.approvedPlan}</p>:null}</div></details> : null}
         <div ref={listRef} role="log" aria-label="助手对话" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4" style={{overflowAnchor:"none"}} onScroll={trackScroll} aria-live="polite">
