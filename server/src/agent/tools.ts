@@ -29,14 +29,14 @@ import type { Channel } from "../tokenone.js";
 
 const ids = z.array(z.string().min(1)).min(1);
 const nodeId=optionalToolParam(z.string().min(1)).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。新建或复用时填 null。");
-const newCopy=z.boolean().default(false).describe("必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受 null 或字符串 true/false。");
-const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
+const copyMode=z.enum(["reuse","new_copy"]).default("reuse").describe("默认 reuse：复用相同内容与来源，无匹配时创建；传 nodeId 时原位修改。仅用户明确要求额外副本或多个版本时传 new_copy，不能同时传 nodeId。");
+const textNodeFields={nodeId,copyMode,title:z.string(),sourceNodeIds:z.array(z.string())};
 const textNodes=z.array(z.union([
     z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
     z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
 ])).min(1);
-const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。每个节点必须传 newCopy 布尔值，默认 false；仅用户明确要求额外副本或多个版本时传 true，不要传字符串。正文示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
-const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1).describe("填写 get_model_capabilities 返回的 model 原值；不要使用 modelId"),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
+const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。每个节点必须传 copyMode：通常用 reuse，仅用户明确要求额外副本或多个版本时用 new_copy。正文示例：{"nodes":[{"nodeId":null,"copyMode":"reuse","title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"copyMode":"reuse","title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
+const mediaNodeFields={nodeId,copyMode,title:z.string(),model:z.string().min(1).describe("填写 get_model_capabilities 返回的 model 原值；不要使用 modelId"),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
     z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true,fastMode:true})}).strict(),
@@ -54,7 +54,8 @@ export const toolSchemas = {
     read_canvas:z.object({}).strict(),
     canvas_export_snapshot:z.object({}).strict(),
     find_nodes:z.object({ query:optionalToolParam(z.string()), type:optionalToolParam(z.enum(["text","config","image","video","audio","group"])) }).strict(),
-    read_nodes:z.object({ nodeIds:ids, includeImages:optionalToolParam(z.boolean()) }).strict(),
+    read_nodes:z.object({ nodeIds:ids }).strict(),
+    read_node_images:z.object({ nodeIds:ids }).strict(),
     get_model_capabilities:z.object({}).strict(),
     create_text_nodes:z.object({nodes:textNodes}).strict(),
     prepare_media_nodes:z.object({ nodes:z.array(preparedMediaNode).min(1) }).strict(),
@@ -69,17 +70,17 @@ const agentStateHint=`phase 必须使用固定阶段标识，不能自造或使�
 export const descriptions:Record<keyof typeof toolSchemas,string> = {
     ...siteToolDescriptions,
     create_primary_script_node:"新创作首次保存正式主剧本；固定主剧本尺寸，复用已有主剧本，不重复创建。空的未命名画布按 projectTitle 命名，已有自定义画布标题保留。已有主剧本修改走相应受控修改工具。",
-    prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。每个节点必须传 newCopy 布尔值，默认 false；仅用户明确要求额外副本或多个版本时传 true，不要传字符串。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
+    prepare_text_generation:"准备独立文本模型任务的配置和空文本输出，不是直接保存助手写好的正文。model 从 get_model_capabilities 中 generation=true 的文本模型选择，可与助手推理模型不同；prompt 必须包含完整任务和必要原文，来源连线不自动拼接正文。referenceNodeIds 仅允许真实图片，且目标文本模型须启用图片理解。每个节点必须传 copyMode：通常用 reuse，仅用户明确要求额外副本或多个版本时用 new_copy。可选 reasoningEffort 沿用画布文本参数。相同请求复用，未提交的助手配对可先读取后用 nodeId 修改；已有正文和已提交任务保留。随后 submit_generation 展示本批确认，wait_for_tasks 等待独立任务。",
     create_attachment_nodes:"按本次附件编号（从 1 开始）把上传图片、视频、音频或文本保存为真实画布节点；相同文件或正文复用，不发起媒体生成。",
     create_asset_nodes:"将账号素材库中的指定真实素材放到当前画布，先 assets_list 查询 ID；已有相同文件或正文复用，不调用模型生成。",
     canvas_export_snapshot:"读取当前画布的结构化布局快照，含节点位置、尺寸和连线；不是截图或已生成图片。",
     ...canvasToolDescriptions,set_agent_state:"保存创作阶段、已确认方案和真实节点引用；该备忘不代表生成授权或完成。",read_agent_state:"读取本会话已保存的创作阶段与备忘，不推断任务状态。",read_skill_file:"读取已加载 Skill 快照中的相对文本附属文件；不能读取服务器文件系统或执行内容。",
-    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息。只有本次推理模型 imageInput=true 且确有视觉需求时才 includeImages=true；不支持识图时仍返回节点信息并说明限制，不会发送图片。节点 width/height 是画布尺寸，原图像素见 file.width/height。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；每个节点必须传 newCopy 布尔值，默认 false，明确要求额外副本时传 true。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用。每个节点必须传 newCopy 布尔值，默认 false，仅用户明确要求额外版本时传 true；不能传字符串 true/false。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
+    load_skill:"加载内置创作规则及版本，不能执行外部代码。",read_canvas:"读取当前画布摘要及本次固定选区。",find_nodes:"按标题、正文关键词或类型查找节点摘要，不读取全画布原媒体。",read_nodes:"按实际 ID 读取当前节点正文、参数和文件信息，不读取图片画面。只传 nodeIds；需要看图时调用 read_node_images。节点 width/height 是画布尺寸，原图像素见 file.width/height。",read_node_images:"按实际 ID 读取节点信息和图片画面，只传确有视觉需求的 nodeIds，不读取其他节点图片。当前推理模型 imageInput=true 时使用；仅需正文或参数时使用 read_nodes。不支持识图时只返回节点信息并说明限制，不发送图片。",get_model_capabilities:"读取已配置模型的公开能力和价格摘要；文本模型 generation 表示可用于独立任务，imageInput 表示该目标模型能否接收图片，与助手推理模型分别判断。",create_text_nodes:"写用户要求保存的正文或分镜，不把方案说明、进度和总结另建节点。text 与 shots 二选一；修改助手已有普通文本先读取再传 nodeId，省略时相同内容和来源复用原节点；每个节点必须传 copyMode：通常用 reuse，明确要求额外副本时用 new_copy。",prepare_media_nodes:"准备配置与媒体输出，不生成媒体。先查找已有镜头；改提示词、画幅、时长时先 read_nodes 读取配置和输出，再传输出 nodeId 原位更新未提交的助手节点，不重建整组。已提交或有作品的节点不可覆盖；省略 nodeId 时相同内容与来源复用。每个节点必须传 copyMode：通常用 reuse，仅用户明确要求额外版本时用 new_copy。参数按 kind 分类：视频画幅用 videoSize，分辨率用 vquality，时长 seconds 为整数字符串；图片尺寸才用 size。先读取模型能力，不得为试探字段创建临时节点。",connect_nodes:"为真实直接生产依赖连线。",submit_generation:"请求生成已准备的文本、图片、视频或音频输出，服务端展示参数并等待用户确认，不能自行授权。已有文本任务只返回原任务，不重复计费；额外文本版本先按用户明确要求准备新输出。",read_task_results:"读取原任务真实状态和已保存作品，不重新生成。",wait_for_tasks:"持久保存本运行关联任务并暂停，由后台唤醒；不要轮询。",request_user_input:"保存必要问题并暂停，等待用户在原运行回复。",
 };
 descriptions.create_text_nodes+=` ${textNodeHint}`;
 descriptions.set_agent_state+=` ${agentStateHint}`;
 descriptions.request_user_input+=" 统一使用 questions 数组，单个问题也用数组；每项须有唯一 id、question，未提供选项时 options 填 null。";
-const argumentHints:Record<string,string>={create_text_nodes:textNodeHint,set_agent_state:agentStateHint,assets_add:siteToolDescriptions.assets_add,request_user_input:descriptions.request_user_input,prepare_media_nodes:"每个节点必须传 newCopy 布尔值：默认 false，仅用户明确要求额外版本时传 true；不能传字符串 true/false。按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。未设置或模型不支持的可选参数填 null；合法取值以模型能力为准。"};
+const argumentHints:Record<string,string>={read_nodes:"只传 nodeIds 数组，不传 includeImages；读取图片画面请调用 read_node_images，同样只传 nodeIds。",read_node_images:"只传 nodeIds 数组，不传 includeImages；本工具直接请求读取图片画面，仍须满足当前模型的图片理解能力。",create_text_nodes:textNodeHint,prepare_text_generation:descriptions.prepare_text_generation,workbench_image_generate:siteToolDescriptions.workbench_image_generate,workbench_video_generate:siteToolDescriptions.workbench_video_generate,set_agent_state:agentStateHint,assets_add:siteToolDescriptions.assets_add,request_user_input:descriptions.request_user_input,prepare_media_nodes:"每个节点必须传 copyMode：通常用 reuse，仅用户明确要求额外版本时用 new_copy。按 kind 使用对应参数。视频使用 videoSize、vquality、seconds、videoMode、generateAudio、watermark；seconds 为整数字符串，不能用 2.5 秒。未设置或模型不支持的可选参数填 null；合法取值以模型能力为准。"};
 const unknownFields=(issues:z.ZodIssue[])=>issues.reduce((count,issue)=>count+(issue.code === "unrecognized_keys" ? issue.keys.length : 0),0);
 function toolIssues(issues:z.ZodIssue[],path:PropertyKey[]=[]):z.ZodIssue[] {
     return issues.flatMap(issue=>issue.code === "invalid_union" && issue.errors.length
@@ -249,13 +250,13 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
     if (name === "set_agent_state") return saveCreativeState(client,run,input);
     if (name === "read_canvas" || name === "canvas_export_snapshot") return { title:project.title,viewport:project.viewport,agentCapabilities:{model:run.model_config.model,imageInput:Boolean(run.model_config.imageInput)},selectedNodeIds:run.input.selectedNodeIds,nodes:project.nodes.map((node:any) => ({...publicNode(node),position:node.position,width:node.width,height:node.height})),connections:project.connections.map((edge:any) => ({id:edge.entityId || edge.id,fromNodeId:publicNode(getNode(project,edge.fromNodeId)).id,toNodeId:publicNode(getNode(project,edge.toNodeId)).id})) };
     if (name === "find_nodes") return project.nodes.filter((node:any) => (!input.type || node.type === input.type) && (!input.query || `${node.title}\n${node.metadata?.content || ""}\n${node.metadata?.prompt || ""}`.includes(input.query))).map((node:any) => publicNode(node));
-    if (name === "read_nodes") {
+    if (name === "read_nodes" || name === "read_node_images") {
         const nodes=input.nodeIds.map((id:string) => getNode(project,id));
-        const supported=Boolean(run.model_config.imageInput);
+        const supported=Boolean(run.model_config.imageInput),requested=name === "read_node_images";
         await rememberSources(client,run,project,nodes.filter((node:any) => node.metadata?.status !== "loading"));
         const images=[];
-        if (input.includeImages && supported) for (const node of nodes.filter((node:any) => node.type === "image" && node.metadata?.storageKey)) images.push((await storedFileInfo(run.user_id,node.metadata.content,client)).url);
-        return { nodes:nodes.map((node:any) => ({...publicNode(node,true),groupId:node.metadata?.groupId ? publicNode(getNode(project,node.metadata.groupId)).id : undefined})),images,vision:{supported,requested:Boolean(input.includeImages),provided:images.length},...input.includeImages && !supported ? {notice:agentImageInputNotice} : {} };
+        if (requested && supported) for (const node of nodes.filter((node:any) => node.type === "image" && node.metadata?.storageKey)) images.push((await storedFileInfo(run.user_id,node.metadata.content,client)).url);
+        return { nodes:nodes.map((node:any) => ({...publicNode(node,true),groupId:node.metadata?.groupId ? publicNode(getNode(project,node.metadata.groupId)).id : undefined})),images,vision:{supported,requested,provided:images.length},...requested && !supported ? {notice:agentImageInputNotice} : {} };
     }
     if (name === "get_model_capabilities") {
         const channels=await attachModelProfiles((await client.query("SELECT * FROM channels WHERE enabled")).rows, client);
@@ -300,15 +301,15 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
         };
         const x=Math.max(0,...project.nodes.map((node:any) => node.position.x+node.width))+80;
         for (const [index,spec] of (name === "prepare_text_generation" ? input.nodes.map((node:any)=>({...node,kind:"text"})) : input.nodes).entries()) {
-            if (spec.nodeId && spec.newCopy) throw new ToolParameterError("nodeId 原位修改与 newCopy 新副本不能同时使用。","AGENT_NODE_NOT_EDITABLE");
+            if (spec.nodeId && spec.copyMode === "new_copy") throw new ToolParameterError("nodeId 原位修改与 copyMode=new_copy 不能同时使用。","AGENT_NODE_NOT_EDITABLE");
             const sources=spec.sourceNodeIds.map((id:string) => getNode(project,id));
             const text=spec.text || spec.shots?.map((shot:any) => `镜头 ${shot.number} · ${shot.seconds} 秒\n画面：${shot.scene}\n镜头：${shot.camera}\n声音：${shot.sound}\n素材：${shot.materials}`).join("\n\n");
             const base={id:randomUUID(),type:"text",title:spec.title,position:{x,y:index*340},width:360,height:260,metadata:{content:text}};
             if (name === "create_text_nodes") {
-                const existing=spec.nodeId ? getNode(project,spec.nodeId) : spec.newCopy ? undefined : project.nodes.find((node:any) => owned.has(node.entityId || node.id) && node.type === "text" && node.metadata?.content === text && sameSources(node,sources));
+                const existing=spec.nodeId ? getNode(project,spec.nodeId) : spec.copyMode === "new_copy" ? undefined : project.nodes.find((node:any) => owned.has(node.entityId || node.id) && node.type === "text" && node.metadata?.content === text && sameSources(node,sources));
                 if (existing && !spec.nodeId) {results.push(existing);reused.push(existing);continue;}
-                const conflict=!spec.nodeId && !spec.newCopy && project.nodes.find((node:any) => owned.has(node.entityId || node.id) && node.type === "text" && node.title === spec.title && sameSources(node,sources));
-                if (conflict) throw new ToolParameterError(`已有同名同来源文本 ${publicNode(conflict).id}，请先读取并传 nodeId 修改；用户明确要额外版本时才用 newCopy。`,"AGENT_NODE_EXISTS");
+                const conflict=!spec.nodeId && spec.copyMode === "reuse" && project.nodes.find((node:any) => owned.has(node.entityId || node.id) && node.type === "text" && node.title === spec.title && sameSources(node,sources));
+                if (conflict) throw new ToolParameterError(`已有同名同来源文本 ${publicNode(conflict).id}，请先读取并传 nodeId 修改；用户明确要额外版本时才用 copyMode=new_copy。`,"AGENT_NODE_EXISTS");
                 if (existing) {if (existing.type !== "text") throw new ToolParameterError("nodeId 必须指向普通文本节点。","AGENT_NODE_NOT_EDITABLE");await editable([existing]);}
                 const node=existing ? {...existing,title:spec.title,metadata:{...existing.metadata,content:text}} : base;
                 write([node],sources,node);results.push(node);(existing ? updated : created).push(node);continue;
@@ -338,11 +339,11 @@ export async function executeTool(client:Client,run:Run,call:any,external:{ grou
                 if (node.metadata?.model !== metadata.model || !isDeepStrictEqual(node.metadata?.references || [],metadata.references)) return false;
                 try {return isDeepStrictEqual(upstreamBody(canvasRequestBody(spec.model,spec.kind,family as any,node.metadata,refs,"","",spec.kind === "video" ? channelVideoConfig(channel,spec.model) : undefined,spec.kind === "image" ? channelImageConfig(channel,spec.model) : undefined)),expected);} catch {return false;}
             };
-            const existing=spec.nodeId ? pair(getNode(project,spec.nodeId),spec.kind) : spec.newCopy ? undefined : project.nodes.filter((node:any) => node.type === spec.kind).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id) && matches(node)) && sameSources(nodes[0],inputs));
+            const existing=spec.nodeId ? pair(getNode(project,spec.nodeId),spec.kind) : spec.copyMode === "new_copy" ? undefined : project.nodes.filter((node:any) => node.type === spec.kind).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id) && matches(node)) && sameSources(nodes[0],inputs));
             if (spec.nodeId && !existing) throw new ToolParameterError("未找到唯一的同类型配置与输出配对，请先读取当前画布，不会自动新建副本。","AGENT_NODE_NOT_EDITABLE");
             if (existing && !spec.nodeId) {results.push(...existing);reused.push(...existing);continue;}
-            const conflict=!spec.nodeId && !spec.newCopy && project.nodes.filter((node:any) => node.type === spec.kind && node.title === spec.title).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id)) && sameSources(nodes[0],inputs));
-            if (conflict) throw new ToolParameterError(`已有同名同来源输出 ${publicNode(conflict[1]).id} 与配置 ${publicNode(conflict[0]).id}，请先读取两者并传 nodeId 修改；用户明确要额外版本时才用 newCopy。`,"AGENT_NODE_EXISTS");
+            const conflict=!spec.nodeId && spec.copyMode === "reuse" && project.nodes.filter((node:any) => node.type === spec.kind && node.title === spec.title).map((node:any) => pair(node,spec.kind)).find((nodes:any) => nodes?.every((node:any) => owned.has(node.entityId || node.id)) && sameSources(nodes[0],inputs));
+            if (conflict) throw new ToolParameterError(`已有同名同来源输出 ${publicNode(conflict[1]).id} 与配置 ${publicNode(conflict[0]).id}，请先读取两者并传 nodeId 修改；用户明确要额外版本时才用 copyMode=new_copy。`,"AGENT_NODE_EXISTS");
             if (existing) await editable(existing);
             const merge=(node:any) => ({...Object.fromEntries(Object.entries(node?.metadata || {}).filter(([key]) => !Object.hasOwn(mediaParams.shape,key))),...metadata});
             const config=existing ? {...existing[0],title:spec.title,metadata:merge(existing[0])} : {...base,type:"config",metadata};

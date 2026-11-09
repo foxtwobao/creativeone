@@ -5,7 +5,7 @@ const freeze=async () => {
     await new Promise<void>(resolve => process.stdout.write("AGENT_CRASH_POINT\n",() => resolve()));
     await new Promise(() => undefined);
 };
-const fixture=mockAgentModel(["during_model","summary_during_model"].includes(mode) ? [freeze] : mode.startsWith("summary_") ? [modelText("原历史摘要，保留目标与未完成事项。 ")] : mode==="read_after_commit"?[modelTool("read_nodes",{nodeIds:[process.env.TEST_AGENT_READ_NODE_ID],includeImages:"false"})]:[modelTool("create_text_nodes",{nodes:[{title:"中断恢复镜头",text:"只创建一次",sourceNodeIds:[],...mode==="invalid_decision_saved"?{newCopy:[0]}:{}}]})]);
+const fixture=mockAgentModel(["during_model","summary_during_model"].includes(mode) ? [freeze] : mode.startsWith("summary_") ? [modelText("原历史摘要，保留目标与未完成事项。 ")] : mode==="read_after_commit"?[modelTool("read_nodes",{nodeIds:process.env.TEST_AGENT_READ_NODE_ID})]:[modelTool("create_text_nodes",{nodes:[{title:"中断恢复镜头",text:"只创建一次",sourceNodeIds:[],...mode==="invalid_decision_saved"?{newCopy:[0]}:{}}]})]);
 const original=pg.Client.prototype.query;
 pg.Client.prototype.query=async function (this:pg.Client & {agentProbeReceipt?:boolean;agentSummarySaved?:boolean;agentSummaryApplied?:boolean},...args:any[]) {
     const result=await (original as any).apply(this,args);

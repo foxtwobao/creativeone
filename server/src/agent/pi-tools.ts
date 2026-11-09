@@ -4,7 +4,7 @@ import { validateToolCall } from "@earendil-works/pi-ai";
 import { descriptions, toolSchemas, toolArgumentErrors } from "./tools.js";
 import { toolJsonSchema } from "./schema.js";
 
-export const piReadOnlyTools=new Set(["read_agent_state","read_skill_file","load_skill","read_canvas","canvas_export_snapshot","find_nodes","read_nodes","get_model_capabilities","read_task_results","read_connections","get_browser_actions","canvas_list_projects","read_project","prompts_search","assets_list","workbench_image_get_config","workbench_video_get_config"]);
+export const piReadOnlyTools=new Set(["read_agent_state","read_skill_file","load_skill","read_canvas","canvas_export_snapshot","find_nodes","read_nodes","read_node_images","get_model_capabilities","read_task_results","read_connections","get_browser_actions","canvas_list_projects","read_project","prompts_search","assets_list","workbench_image_get_config","workbench_video_get_config"]);
 type CreativeCall={toolCallId:string;toolName:string;input:unknown;argumentsError?:string};
 export function creativePiInput(call:CreativeCall,tools:ToolDefinition<any>[]) {
     return piReadOnlyTools.has(call.toolName)?validateToolCall(tools,{type:"toolCall",id:call.toolCallId,name:call.toolName,arguments:call.input as any,argumentsError:call.argumentsError}):call.input;

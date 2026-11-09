@@ -287,7 +287,7 @@ test("SIGKILL recovery distinguishes dispatched models, pre-commit rollback and 
             assert.match(await resumeChild(ctx.id,[]),/"requests":0/);assert.equal((await record(ctx.id)).status,"unknown");
         } else if(mode==="read_after_commit"){
             const receipt=(await db.query("SELECT input,result FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0];
-            assert.equal(receipt.input.includeImages,false);assert.equal(receipt.result.nodes[0].content,"小猫回家");
+            assert.deepEqual(receipt.input.nodeIds,[ctx.source]);assert.equal(receipt.result.nodes[0].content,"小猫回家");
             assert.match(await resumeChild(ctx.id,[modelText("基于真实正文继续")]),/"requests":1/);assert.equal((await record(ctx.id)).status,"completed");
             assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"1");
             assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
@@ -473,39 +473,45 @@ test("text tool schemas expose the two node shapes and identify misplaced storyb
     assert.equal(definition.strict,true);assert.deepEqual(Object.keys(definition.parameters.properties),["nodes"]);
     const strictObjects=(schema:any)=>{if(!schema||typeof schema!=="object")return;assert.equal(Object.hasOwn(schema,"default"),false);if(schema.properties){assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(schema.properties).sort());}for(const value of Object.values(schema))strictObjects(value);};strictObjects(definition.parameters);
     const shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
-    const input={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[],newCopy:"false",...shot})),shots:[shot],text:"错误的顶层正文"};
+    const input={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[],copyMode:"false",...shot})),shots:[shot],text:"错误的顶层正文"};
     const errors=toolArgumentErrors([{toolCallId:"misnested",toolName:"create_text_nodes",input}]);assert.equal(errors.length,1);assert.match(errors[0].hint!,/顶层只传 nodes/);
-    for(let index=0;index<4;index++)for(const field of ["newCopy","camera","materials","number","scene","seconds","sound"])assert.ok(errors[0].problems.some(problem=>problem.field===`nodes.${index}.${field}`),`${index}.${field}`);
-    assert.match(errors[0].problems.find(problem=>problem.field==="nodes.0.newCopy")!.message,/布尔值/);assert.ok(errors[0].problems.some(problem=>problem.field==="shots"));assert.ok(errors[0].problems.some(problem=>problem.field==="text"));
+    for(let index=0;index<4;index++)for(const field of ["copyMode","camera","materials","number","scene","seconds","sound"])assert.ok(errors[0].problems.some(problem=>problem.field===`nodes.${index}.${field}`),`${index}.${field}`);
+    assert.match(errors[0].problems.find(problem=>problem.field==="nodes.0.copyMode")!.message,/reuse.*new_copy/);assert.ok(errors[0].problems.some(problem=>problem.field==="shots"));assert.ok(errors[0].problems.some(problem=>problem.field==="text"));
     const nested=toolArgumentErrors([{toolCallId:"nested",toolName:"create_text_nodes",input:{nodes:[{title:"镜头",shots:[{...shot,seconds:"3"}],sourceNodeIds:[]}]}}]);assert.equal(nested[0].problems[0].field,"nodes.0.shots.0.seconds");assert.match(nested[0].problems[0].message,/数字/);
     for(const node of [{title:"空节点",sourceNodeIds:[]},{title:"双正文",text:"正文",shots:[shot],sourceNodeIds:[]}])assert.equal(toolArgumentErrors([{toolCallId:"exclusive",toolName:"create_text_nodes",input:{nodes:[node]}}]).length,1);
 });
-test("all Agent tools send closed strict schemas with nullable optionals and explicit boolean contracts",async () => {
+test("all Agent tools send closed strict schemas with nullable optionals and explicit action enums",async () => {
     const ctx=await setup();responses.push(modelText("工具定义巡检"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");
     const definitions=fixture.requests.at(-1).tools;
     assert.equal(definitions.length,Object.keys(toolSchemas).length);
+    for(const name of ["read_nodes","read_node_images"]){const definition=definitions.find((tool:any)=>tool.name===name);assert.deepEqual(Object.keys(definition.parameters.properties),["nodeIds"]);assert.deepEqual(definition.parameters.required,["nodeIds"]);assert.equal(definition.strict,true);}
     assert.match(definitions.find((tool:any)=>tool.name==="workbench_image_generate").description,/仅在用户明确要求.*图片工作台/);
     assert.match(definitions.find((tool:any)=>tool.name==="workbench_image_generate").description,/画布内生图请使用 prepare_media_nodes 和 submit_generation/);
     const inspect=(schema:any)=>{if(!schema||typeof schema!=="object")return;assert.equal(Object.hasOwn(schema,"default"),false);assert.equal(Object.hasOwn(schema,"oneOf"),false);if(schema.properties){assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(schema.properties).sort());}for(const value of Object.values(schema))inspect(value);};
     for(const definition of definitions){assert.equal(definition.strict,true,definition.name);assert.equal(definition.parameters.type,"object",definition.name);assert.equal(definition.parameters.anyOf,undefined);inspect(definition.parameters);}
     const nullable:[keyof typeof toolSchemas,unknown][]=[
-        ["find_nodes",{query:null,type:null}],["read_nodes",{nodeIds:[randomUUID()],includeImages:null}],["read_connections",{nodeIds:[randomUUID()],direction:null}],
+        ["find_nodes",{query:null,type:null}],["read_nodes",{nodeIds:[randomUUID()]}],["read_node_images",{nodeIds:[randomUUID()]}],["read_connections",{nodeIds:[randomUUID()],direction:null}],
         ["arrange_nodes",{nodeIds:null}],["resize_node",{nodeId:randomUUID(),width:360,height:240,freeResize:null}],["update_text_node",{nodeId:randomUUID(),title:null,content:"正文"}],
         ["prompts_search",{keyword:null,page:null,pageSize:null,category:null}],["assets_list",{keyword:null,kind:null}],["assets_add",{source:{content:"正文"},title:null,tags:null}],
-        ["workbench_image_generate",{model:"image-model",prompt:"小猫",count:null,run:false,references:null,parameters:{size:null,quality:null,background:null}}],
-        ["workbench_video_generate",{model:"video-model",prompt:"小猫",count:null,run:false,references:null,parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}],
-        ["prepare_media_nodes",{nodes:[{nodeId:null,newCopy:false,title:"视频",kind:"video",model:"video-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}]}],
-        ["prepare_text_generation",{nodes:[{nodeId:null,newCopy:false,title:"正文",model:"writer-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{reasoningEffort:null}}]}],
+        ["workbench_image_generate",{model:"image-model",prompt:"小猫",count:null,action:"fill_form",references:null,parameters:{size:null,quality:null,background:null}}],
+        ["workbench_video_generate",{model:"video-model",prompt:"小猫",count:null,action:"fill_form",references:null,parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}],
+        ["prepare_media_nodes",{nodes:[{nodeId:null,copyMode:"reuse",title:"视频",kind:"video",model:"video-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{videoSize:null,vquality:null,seconds:null,videoMode:null,generateAudio:null,watermark:null,fastMode:null}}]}],
+        ["prepare_text_generation",{nodes:[{nodeId:null,copyMode:"reuse",title:"正文",model:"writer-model",prompt:"小猫",sourceNodeIds:[],referenceNodeIds:[],parameters:{reasoningEffort:null}}]}],
         ["request_user_input",{questions:[{id:"duration",question:"目标时长？",options:null}]}],
         ["set_agent_state",{phase:"storyboard",brief:null,approvedPlan:null,targetDurationSeconds:null,approvedNodeIds:null,referenceNodeIds:null}],
     ];
     for(const [toolName,input] of nullable)assert.deepEqual(toolArgumentErrors([{toolName,input,toolCallId:randomUUID()}]),[],toolName);
     assert.equal(toolArgumentErrors([{toolName:"workbench_image_generate",input:{model:"image-model",prompt:"   "},toolCallId:randomUUID()}]).length,1);
-    const prepare=definitions.find((tool:any)=>tool.name==="prepare_media_nodes").parameters.properties.nodes.items.anyOf;
-    for(const variant of prepare){assert.deepEqual(variant.properties.newCopy,{type:"boolean",description:"必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受 null 或字符串 true/false。"});assert.ok(variant.required.includes("newCopy"));}
-    const imageWorkbench=definitions.find((tool:any)=>tool.name==="workbench_image_generate");assert.equal(imageWorkbench.parameters.properties.run.type,"boolean");assert.ok(imageWorkbench.parameters.required.includes("run"));
-    for(const run of [null,"false","true",0,1])assert.equal(toolArgumentErrors([{toolName:"workbench_image_generate",input:{model:"image-model",prompt:"小猫",run},toolCallId:randomUUID()}]).length,1);
-    const defaults=toolSchemas.workbench_image_generate.parse({model:"image-model",prompt:"小猫",count:null,references:null,parameters:null});assert.equal(defaults.count,1);assert.equal(defaults.run,true);assert.deepEqual(defaults.references,[]);assert.deepEqual(defaults.parameters,{});assert.equal(toolSchemas.assets_list.parse({kind:null}).kind,"all");assert.equal(toolSchemas.read_connections.parse({nodeIds:[randomUUID()],direction:null}).direction,"both");
+    for(const name of ["create_text_nodes","prepare_media_nodes","prepare_text_generation"]){
+        const items=definitions.find((tool:any)=>tool.name===name).parameters.properties.nodes.items;
+        for(const variant of items.anyOf || [items]){assert.equal(variant.properties.copyMode.type,"string");assert.deepEqual(variant.properties.copyMode.enum,["reuse","new_copy"]);assert.ok(variant.required.includes("copyMode"));assert.equal(variant.properties.newCopy,undefined);}
+    }
+    for(const toolName of ["workbench_image_generate","workbench_video_generate"]){
+        const definition=definitions.find((tool:any)=>tool.name===toolName);assert.equal(definition.parameters.properties.action.type,"string");assert.deepEqual(definition.parameters.properties.action.enum,["fill_form","request_generation"]);assert.ok(definition.parameters.required.includes("action"));assert.equal(definition.parameters.properties.run,undefined);
+        for(const action of [null,false,true,"false","true",0,1,["fill_form"],["request_generation"],[null,null,null,0],[null,null,null,1]])assert.equal(toolArgumentErrors([{toolName,input:{model:"image-model",prompt:"小猫",action},toolCallId:randomUUID()}]).length,1);
+        assert.equal(toolArgumentErrors([{toolName,input:{model:"image-model",prompt:"小猫",run:false},toolCallId:randomUUID()}]).length,1);
+    }
+    const defaults=toolSchemas.workbench_image_generate.parse({model:"image-model",prompt:"小猫",count:null,references:null,parameters:null});assert.equal(defaults.count,1);assert.equal(defaults.action,"request_generation");assert.deepEqual(defaults.references,[]);assert.deepEqual(defaults.parameters,{});assert.equal(toolSchemas.assets_list.parse({kind:null}).kind,"all");assert.equal(toolSchemas.read_connections.parse({nodeIds:[randomUUID()],direction:null}).direction,"both");
     const video=definitions.find((tool:any)=>tool.name==="prepare_media_nodes").parameters.properties.nodes.items.anyOf.find((variant:any)=>variant.properties.kind.const==="video").properties.parameters;
     const workbench=definitions.find((tool:any)=>tool.name==="workbench_video_generate").parameters.properties.parameters.anyOf.find((variant:any)=>variant.type==="object");assert.deepEqual(video,workbench);
     for(const [toolName,input] of [["set_agent_state",{phase:"script",targetDurationSeconds:"15"}],["read_nodes",{nodeIds:[randomUUID()],includeImages:"false"}],["workbench_image_generate",{model:"image-model",prompt:"小猫",count:"2"}],["prompts_search",{pageSize:101}],["read_task_results",{taskIds:["not-a-uuid"]}],["site_navigate",{path:"https://example.com"}],["site_navigate",{path:"/canvas/not-a-uuid"}]] as Array<[string,unknown]>)assert.equal(toolArgumentErrors([{toolName,input,toolCallId:randomUUID()}]).length,1,toolName);
@@ -553,7 +559,7 @@ test("workbench configuration uses generation field names and media availability
     const first=await recordedTool(ctx,"prepare_media_nodes",{nodes:[base]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,parameters:{...base.parameters,generateAudio:null,watermark:null,fastMode:null}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);
     for(const field of ["generateAudio","watermark","fastMode"]) {
         await assert.rejects(()=>recordedTool(ctx,"prepare_media_nodes",{nodes:[{...base,parameters:{...base.parameters,[field]:"true"}}]}),{code:"MODEL_CAPABILITY_INVALID"});
-        await assert.rejects(()=>recordedTool(ctx,"workbench_video_generate",{model:motion.model,prompt:"小猫回家",run:false,parameters:{...base.parameters,[field]:"true"}}),{code:"MODEL_CAPABILITY_INVALID"});
+        await assert.rejects(()=>recordedTool(ctx,"workbench_video_generate",{model:motion.model,prompt:"小猫回家",action:"fill_form",parameters:{...base.parameters,[field]:"true"}}),{code:"MODEL_CAPABILITY_INVALID"});
     }
     try {
         await db.query("UPDATE channels SET model_capabilities=jsonb_set(model_capabilities,'{image-model,agentEnabled}','false') WHERE id=$1",[image.id]);
@@ -577,63 +583,65 @@ test("a saved argument failure can replan after its null value becomes valid wit
 test("invalid draft parameters stay readable while tool writes still reject them",async () => {
     const ctx=await setup(),project=await findCanvasProject(ctx.user,ctx.project),id=randomUUID(),channel=(await db.query("SELECT id FROM channels WHERE capability='video'")).rows[0].id;
     await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{id,type:"config",title:"待修正参数",position:{x:0,y:340},width:300,height:200,metadata:{model:`${channel}::video-model`,seconds:"2.5",vquality:"720",internalKey:"不得公开"}}}]}},client));
-    const result=await recordedTool(ctx,"read_nodes",{nodeIds:[id],includeImages:null});assert.equal(result.nodes[0].parameters.seconds,"2.5");assert.equal(result.nodes[0].parameters.internalKey,undefined);assert.equal(result.nodes[0].parameters.model,"video-model");assert.equal(toolArgumentErrors([{toolName:"prepare_media_nodes",toolCallId:randomUUID(),input:{nodes:[videoSpec({seconds:"2.5"})]}}]).length,1);await cancelRun(ctx.user,ctx.id);
+    const result=await recordedTool(ctx,"read_nodes",{nodeIds:[id]});assert.equal(result.nodes[0].parameters.seconds,"2.5");assert.equal(result.nodes[0].parameters.internalKey,undefined);assert.equal(result.nodes[0].parameters.model,"video-model");assert.equal(toolArgumentErrors([{toolName:"prepare_media_nodes",toolCallId:randomUUID(),input:{nodes:[videoSpec({seconds:"2.5"})]}}]).length,1);await cancelRun(ctx.user,ctx.id);
 });
-test("empty copy flags reuse text and media nodes while strings never request copies",async () => {
+test("copy modes reuse text and media nodes and only explicit new_copy creates extra nodes",async () => {
     const ctx=await setup(),spec={title:"正文",text:"保留相同正文",sourceNodeIds:[ctx.source]};
-    const first=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:false}]});
-    for(const flag of [false,undefined]){const reused=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,...flag===undefined?{}:{newCopy:flag}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);assert.deepEqual(reused.createdNodeIds,[]);}
-    for(const flag of [null,"false","true","",0,1])await assert.rejects(()=>recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:flag}]}));
-    const copy=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,newCopy:true}]});assert.equal(copy.createdNodeIds.length,1);assert.notEqual(copy.createdNodeIds[0],first.createdNodeIds[0]);
+    const first=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,copyMode:"reuse"}]});
+    for(const flag of ["reuse",undefined]){const reused=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,...flag===undefined?{}:{copyMode:flag}}]});assert.deepEqual(reused.reusedNodeIds,first.createdNodeIds);assert.deepEqual(reused.createdNodeIds,[]);}
+    for(const flag of [null,false,true,"false","true","",0,1,["reuse"],["new_copy"],[null,null,null,0],[null,null,null,1]])await assert.rejects(()=>recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,copyMode:flag}]}));
+    const copy=await recordedTool(ctx,"create_text_nodes",{nodes:[{...spec,copyMode:"new_copy"}]});assert.equal(copy.createdNodeIds.length,1);assert.notEqual(copy.createdNodeIds[0],first.createdNodeIds[0]);
     const media={title:"图片",kind:"image",model:"image-model",prompt:"小猫回家",parameters:{},sourceNodeIds:[ctx.source],referenceNodeIds:[]};
-    const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:false}]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,newCopy:false}]});assert.deepEqual(reused.reusedNodeIds.sort(),prepared.createdNodeIds.sort());assert.deepEqual(reused.createdNodeIds,[]);
+    const prepared=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,copyMode:"reuse"}]}),reused=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...media,copyMode:"reuse"}]});assert.deepEqual(reused.reusedNodeIds.sort(),prepared.createdNodeIds.sort());assert.deepEqual(reused.createdNodeIds,[]);
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);
 });
 test("misnested storyboard decisions automatically correct without executing valid sibling writes",async () => {
     const ctx=await setup(),shot={number:1,seconds:3,scene:"小猫回家",camera:"固定镜头",sound:"脚步",materials:"场景图"};
-    const invalid=modelTool("create_text_nodes",{nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:null,...shot})),shots:[shot],text:null});invalid.output.unshift(modelTool("set_agent_state",{phase:"breakdown"}).output[0]);
-    const corrected={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],newCopy:false,shots:[{...shot,number:index+1}]}))};
+    const invalid=modelTool("create_text_nodes",{nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],copyMode:null,...shot})),shots:[shot],text:null});invalid.output.unshift(modelTool("set_agent_state",{phase:"breakdown"}).output[0]);
+    const corrected={nodes:Array.from({length:4},(_,index)=>({title:`镜头${index+1}`,sourceNodeIds:[ctx.source],copyMode:"reuse",shots:[{...shot,number:index+1}]}))};
     responses.push(modelTool("create_text_nodes",{nodes:[{title:"已成功正文",text:"已有成果",sourceNodeIds:[ctx.source]}]}),invalid,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);assert.equal(await readCreativeState(db,ctx.thread),null);return Response.json(modelTool("create_text_nodes",corrected));},modelTool("create_text_nodes",corrected),modelText("仅保存未完成分镜"));await executeAgentRun(ctx.id);
     const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,5);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,6);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"已有成果");assert.ok(project.nodes.find((node:any)=>node.title==="镜头1").metadata.content.includes("镜头 1 · 3 秒"));
     const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,invalid.output[1].call_id])).rows[0].result;assert.match(receipt.details.hint,/nodes\[\]\.shots\[\]/);
     const original=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND step=2",[ctx.id])).rows[0].decision.raw;assert.equal(original.output[1].arguments,invalid.output[1].arguments);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
 test("same-run correction automatically rejects lingering top-level text and keeps successful nodes",async () => {
-    const ctx=await setup(),start=fixture.requests.length,body={nodes:[{nodeId:null,newCopy:false,title:"未完成正文",text:"保存这一段",sourceNodeIds:[ctx.source]}]},invalid=()=>modelTool("create_text_nodes",{...body,text:"误留的顶层正文"});
+    const ctx=await setup(),start=fixture.requests.length,body={nodes:[{nodeId:null,copyMode:"reuse",title:"未完成正文",text:"保存这一段",sourceNodeIds:[ctx.source]}]},invalid=()=>modelTool("create_text_nodes",{...body,text:"误留的顶层正文"});
     responses.push(modelTool("create_text_nodes",{nodes:[{title:"已成功正文",text:"保留原成果",sourceNodeIds:[ctx.source]}]}),invalid(),invalid(),async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,2);return Response.json(modelTool("create_text_nodes",body));},modelTool("create_text_nodes",body),modelText("仅补全未完成正文"));await executeAgentRun(ctx.id);
     assert.equal((await record(ctx.id)).status,"completed");const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,3);assert.equal(project.nodes.find((node:any)=>node.title==="已成功正文").metadata.content,"保留原成果");
     const feedback=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND result->>'error'='AGENT_INVALID_TOOL_ARGUMENTS'",[ctx.id])).rows;assert.equal(feedback.length,2);for(const row of feedback)assert.deepEqual(row.result.details.problems.map((problem:any)=>problem.field),["text"]);
     for(const request of fixture.requests.slice(start)){const tool=request.tools.find((tool:any)=>tool.name==="create_text_nodes");assert.equal(tool.strict,true);assert.deepEqual(Object.keys(tool.parameters.properties),["nodes"]);}
     assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
-test("Pi normalizes a production read option and returns full text across question recovery",async()=>{
-    const ctx=await setup(),before=fixture.requests.length,bad=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:[null,null,null,0]}),read=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"});
+test("Pi normalizes node IDs and returns full text across question recovery",async()=>{
+    const ctx=await setup(),before=fixture.requests.length,bad=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:[null,null,null,0]}),read=modelTool("read_nodes",{nodeIds:ctx.source});
     responses.push(bad,read,modelTool("request_user_input",{questions:[{id:"next",question:"接下来修改哪段正文？"}]}));await executeAgentRun(ctx.id);
     const receipt=(await db.query("SELECT input,result FROM agent_tool_receipts WHERE run_id=$1 AND call_id=$2",[ctx.id,read.output[0].call_id])).rows[0];
-    assert.equal(receipt.input.includeImages,false);assert.equal(receipt.result.nodes[0].content,"小猫回家");assert.equal(receipt.result.error,undefined);
-    const saved=await nativeEntries(ctx.thread),raw=saved.filter(e=>e.type==="message"&&e.message.role==="assistant").flatMap(e=>e.message.content).find(p=>p.type==="toolCall"&&p.name==="read_nodes"&&p.arguments.includeImages==="false");assert.ok(raw);
+    assert.deepEqual(receipt.input.nodeIds,[ctx.source]);assert.equal(receipt.result.nodes[0].content,"小猫回家");assert.equal(receipt.result.error,undefined);
+    const saved=await nativeEntries(ctx.thread),raw=saved.filter(e=>e.type==="message"&&e.message.role==="assistant").flatMap(e=>e.message.content).find(p=>p.type==="toolCall"&&p.name==="read_nodes"&&p.arguments.nodeIds===ctx.source);assert.ok(raw);
     const run=await record(ctx.id);assert.equal(run.wait.type,"question");await inputRun(ctx.user,ctx.id,{waitVersion:run.wait_version,action:"reply",answers:{next:"仅核对正文，不修改"}});
-    responses.push(modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"}),modelText("已读取正文：小猫回家"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal(fixture.requests.length,before+5);
+    responses.push(modelTool("read_nodes",{nodeIds:ctx.source}),modelText("已读取正文：小猫回家"));await executeAgentRun(ctx.id);assert.equal((await record(ctx.id)).status,"completed");assert.equal(fixture.requests.length,before+5);
     assert.deepEqual((await nativeEntries(ctx.thread)).slice(0,saved.length),saved);
     for(const request of fixture.requests.slice(before+2)){
         const results=request.input.filter((p:any)=>p.type==="function_call_output"&&p.call_id===read.output[0].call_id);assert.equal(results.length,1);assert.equal(JSON.parse(results[0].output).nodes[0].content,"小猫回家");
     }
 });
 test("a normalized read cannot bypass raw write guards in a mixed decision",async()=>{
-    const ctx=await setup(),read=modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:"false"}),write=modelTool("create_text_nodes",{nodes:[{title:"未经允许的副本",text:"正文",sourceNodeIds:[ctx.source],newCopy:"true"}]});read.output.push(write.output[0]);
+    const ctx=await setup(),read=modelTool("read_nodes",{nodeIds:ctx.source}),write=modelTool("create_text_nodes",{nodes:[{title:"未经允许的副本",text:"正文",sourceNodeIds:[ctx.source],copyMode:["new_copy"]}]});read.output.push(write.output[0]);
     responses.push(read,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);return Response.json(modelText("先修正写入参数"));});await executeAgentRun(ctx.id);
     const receipts=(await db.query("SELECT name,result FROM agent_tool_receipts WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;
     assert.equal(receipts.length,2);assert.ok(receipts.every(r=>r.result.error==="AGENT_INVALID_TOOL_ARGUMENTS"));
-    assert.equal(receipts.find(r=>r.name==="read_nodes").result.details.problems,undefined);assert.ok(receipts.find(r=>r.name==="create_text_nodes").result.details.problems.some((p:any)=>p.field==="nodes.0.newCopy"));
+    assert.equal(receipts.find(r=>r.name==="read_nodes").result.details.problems,undefined);assert.ok(receipts.find(r=>r.name==="create_text_nodes").result.details.problems.some((p:any)=>p.field==="nodes.0.copyMode"));
     assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
 });
-test("production-shaped boolean arrays receive exactly one authoritative result per call during correction",async () => {
+test("invalid copy modes and workbench actions receive exactly one authoritative result per call during correction",async () => {
     for(const [name,field,input,values] of [
         ["read_nodes","includeImages",(ctx:any,value:unknown)=>({nodeIds:[ctx.source],includeImages:value}),[[null,null,null,0],[null,null,null,1]]],
-        ["prepare_media_nodes","nodes.0.newCopy",(ctx:any,value:unknown)=>({nodes:[{title:"角色图",kind:"image",model:"image-model",prompt:"小猫",parameters:{size:"1024x1024",quality:"auto"},sourceNodeIds:[ctx.source],referenceNodeIds:[],newCopy:value}]}),[[null,null,null,0]]],
+        ["prepare_media_nodes","nodes.0.copyMode",(ctx:any,value:unknown)=>({nodes:[{title:"角色图",kind:"image",model:"image-model",prompt:"小猫",parameters:{size:"1024x1024",quality:"auto"},sourceNodeIds:[ctx.source],referenceNodeIds:[],copyMode:value}]}),[[null,null,null,0],[null,null,null,1]]],
+        ["workbench_image_generate","action",(_ctx:any,value:unknown)=>({model:"image-model",prompt:"小猫",action:value}),[[null,null,null,0],[null,null,null,1]]],
+        ["workbench_video_generate","action",(_ctx:any,value:unknown)=>({model:"video-model",prompt:"小猫",action:value}),[[null,null,null,0],[null,null,null,1]]],
     ] as const){
         const ctx=await setup(),before=fixture.requests.length,invalid=values.map(value=>modelTool(name,input(ctx,value)));
-        responses.push(...invalid,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);return Response.json(modelTool(name,input(ctx,false)));},modelText("已修正参数并完成"));await executeAgentRun(ctx.id);
+        responses.push(...invalid,async()=>{assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);return Response.json(modelTool(name,name==="read_nodes"?{nodeIds:[ctx.source]}:input(ctx,name==="prepare_media_nodes"?"reuse":"fill_form")));},modelText("已修正参数并完成"));await executeAgentRun(ctx.id);
         assert.equal((await record(ctx.id)).status,"completed");
         for(const [index,body] of invalid.entries()){
             const callId=body.output[0].call_id,step=(await db.query("SELECT decision FROM agent_steps WHERE run_id=$1 AND step=$2",[ctx.id,index+1])).rows[0].decision;
@@ -786,8 +794,8 @@ test("draft changes invalidate old media grants and require a new concrete confi
     await recordedTool(next,"prepare_media_nodes",{nodes:[{nodeId:target.id,title:"改好后待确认",kind:"image",model:"image-model",prompt:"小猫改为侧面构图",parameters:{size:"1024x1024"},sourceNodeIds:[ctx.source],referenceNodeIds:[]}]});await assert.rejects(()=>confirmRun(ctx.user,ctx.id,{waitVersion:old.wait_version,approve:true}),{code:"AGENT_CONFIRMATION_CHANGED"});responses.push(modelTool("submit_generation",{nodeIds:[target.id]}));await executeAgentRun(next.id);const run=await record(next.id);assert.equal(run.status,"waiting_confirmation");assert.equal(run.wait.approved,undefined);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
 });
 test("explicit extra copies remain available without weakening draft edit protection",async () => {
-    const ctx=await setup(),spec={...videoSpec({videoSize:"16:9",seconds:"3",vquality:"720"}),sourceNodeIds:[ctx.source]};const first=await recordedTool(ctx,"prepare_media_nodes",{nodes:[spec]});const copies=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...spec,newCopy:true},{...spec,newCopy:true}]});assert.equal(copies.createdNodeIds.length,4);assert.deepEqual(copies.reusedNodeIds,[]);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,7);
-    await assert.rejects(()=>recordedTool(ctx,"prepare_media_nodes",{nodes:[{...spec,nodeId:first.nodes[1].id,newCopy:true}]}),{code:"AGENT_NODE_NOT_EDITABLE"});
+    const ctx=await setup(),spec={...videoSpec({videoSize:"16:9",seconds:"3",vquality:"720"}),sourceNodeIds:[ctx.source]};const first=await recordedTool(ctx,"prepare_media_nodes",{nodes:[spec]});const copies=await recordedTool(ctx,"prepare_media_nodes",{nodes:[{...spec,copyMode:"new_copy"},{...spec,copyMode:"new_copy"}]});assert.equal(copies.createdNodeIds.length,4);assert.deepEqual(copies.reusedNodeIds,[]);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,7);
+    await assert.rejects(()=>recordedTool(ctx,"prepare_media_nodes",{nodes:[{...spec,nodeId:first.nodes[1].id,copyMode:"new_copy"}]}),{code:"AGENT_NODE_NOT_EDITABLE"});
 });
 test("same-title same-source changes request an explicit target instead of another copy",async () => {
     const ctx=await setup(),text={title:"唯一方案",text:"原正文",sourceNodeIds:[ctx.source]},spec={...videoSpec({videoSize:"16:9",seconds:"3",vquality:"720"}),sourceNodeIds:[ctx.source]};
@@ -1000,17 +1008,24 @@ test("site tools isolate projects and save source assets through the shared sing
     await assert.rejects(()=>recordedTool(ctx,"site_navigate",{path:"https://outside.test"}),{name:"ZodError"});
 });
 test("workbench media uses exact confirmation and one transaction receipt, with no implicit dispatch",async()=>{
-    const ctx=await setup();await db.query("UPDATE agent_runs SET input=input||$2::jsonb WHERE id=$1",[ctx.id,JSON.stringify({clientId:randomUUID()})]);responses.push(modelTool("workbench_image_generate",{model:"image-model",prompt:"小猫回家",count:2,parameters:{size:"1024x1024"}}));await executeAgentRun(ctx.id);let run=await record(ctx.id);
-    assert.equal(run.wait.type,"workbench");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");const publicWait=(await readThread(ctx.user,ctx.thread)).runs[0].wait;assert.equal(publicWait.manifest.channelId,undefined);assert.equal(publicWait.manifest.path,undefined);
-    await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});responses.push(modelText("已受理工作台请求，等待任务"));await executeAgentRun(ctx.id);
-    const tasks=(await db.query("SELECT * FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows;const ui=(await db.query("SELECT payload FROM agent_ui_actions WHERE run_id=$1",[ctx.id])).rows[0].payload;assert.equal(ui.submitted,true);assert.equal(ui.taskIds.length,2);assert.equal(tasks.length,2);assert.ok(tasks.every(task=>task.status==="pending"&&task.canvas_project_id===null&&task.request.size==="1024x1024"));
-    const requests=fixture.requests.length;await executeAgentRun(ctx.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"2");assert.equal(fixture.requests.length,requests);
+    for(const kind of ["image","video"]){
+        const ctx=await setup(),name=`workbench_${kind}_generate`,parameters=kind==="image"?{size:"1024x1024"}:{videoSize:"16:9",seconds:"6",vquality:"720"};
+        await db.query("UPDATE agent_runs SET input=input||$2::jsonb WHERE id=$1",[ctx.id,JSON.stringify({clientId:randomUUID()})]);responses.push(modelTool(name,{model:`${kind}-model`,prompt:"小猫回家",count:2,action:"request_generation",parameters}));await executeAgentRun(ctx.id);const run=await record(ctx.id);
+        assert.equal(run.wait.type,"workbench",JSON.stringify({kind,wait:run.wait,receipts:(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows}));assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");assert.equal((await db.query("SELECT count(*) FROM agent_ui_actions WHERE run_id=$1",[ctx.id])).rows[0].count,"0");const publicWait=(await readThread(ctx.user,ctx.thread)).runs[0].wait;assert.equal(publicWait.manifest.channelId,undefined);assert.equal(publicWait.manifest.path,undefined);
+        await confirmRun(ctx.user,ctx.id,{waitVersion:run.wait_version,approve:true});responses.push(modelText("已受理工作台请求，等待任务"));await executeAgentRun(ctx.id);
+        const tasks=(await db.query("SELECT * FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows,ui=(await db.query("SELECT payload FROM agent_ui_actions WHERE run_id=$1",[ctx.id])).rows[0].payload;assert.equal(ui.submitted,true);assert.equal(ui.kind,kind);assert.equal(ui.prompt,"小猫回家");assert.equal(ui.taskIds.length,2);assert.equal(tasks.length,2);assert.ok(tasks.every(task=>task.status==="pending"&&task.canvas_project_id===null&&task.capability===kind));if(kind==="image")assert.ok(tasks.every(task=>task.request.size==="1024x1024"));assert.deepEqual(ui.parameters,parameters);
+        const requests=fixture.requests.length;await executeAgentRun(ctx.id);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"2");assert.equal(fixture.requests.length,requests);
+    }
 });
 test("workbench drafts and UI actions bind to the originating browser without accepting media",async()=>{
     const ctx=await setup(),clientId=randomUUID();await db.query("UPDATE agent_runs SET input=input||$2::jsonb WHERE id=$1",[ctx.id,JSON.stringify({clientId})]);
-    const first=await recordedTool(ctx,"workbench_image_generate",{model:"image-model",prompt:"只填入表单",run:false,parameters:{}});assert.equal(first.browserStatus,"queued");
+    for(const kind of ["image","video"]){
+        const first=await recordedTool(ctx,`workbench_${kind}_generate`,{model:`${kind}-model`,prompt:"只填入表单",action:"fill_form",parameters:{}});assert.equal(first.browserStatus,"queued");
+    }
     await recordedTool(ctx,"select_nodes",{nodeIds:[ctx.source]});await recordedTool(ctx,"set_viewport",{x:10,y:20,k:2});
-    const actions=(await db.query("SELECT * FROM agent_ui_actions WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;assert.equal(actions.length,3);assert.ok(actions.every(action=>action.user_id===ctx.user&&action.client_id===clientId));assert.equal(actions[0].payload.type,"workbench");assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
+    const actions=(await db.query("SELECT * FROM agent_ui_actions WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;assert.equal(actions.length,4);assert.ok(actions.every(action=>action.user_id===ctx.user&&action.client_id===clientId));
+    for(const action of actions.slice(0,2)){assert.equal(action.payload.type,"workbench");assert.equal(action.payload.submitted,false);assert.equal(action.payload.prompt,"只填入表单");}
+    assert.equal((await record(ctx.id)).wait,null);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
 
 async function agentHttpFixture(admins:string[]=[]) {
@@ -1121,18 +1136,33 @@ test("stream subscriptions release pooled listeners across reconnects and close 
     await db.query("SELECT pg_terminate_backend($1)",[listener[0].pid]);await closed;await unsubscribe();assert.equal(agentEvents.listenerCount(ctx.thread),0);
     const next=await subscribeAgentThread(ctx.thread,()=>{});await next();
 });
+test("node images are read only for explicitly requested IDs and never by metadata tools",async()=>{
+    const ctx=await setup(),{saveFile}=await import("./storage.js"),png=await (await import("sharp")).default({create:{width:2,height:1,channels:3,background:"white"}}).png().toBuffer();
+    const keys=[`image:${randomUUID()}`,`image:${randomUUID()}`],urls=await Promise.all(keys.map(key=>saveFile(ctx.user,"image_files",key,png,"image/png"))),ids=urls.map(()=>randomUUID()),project=await findCanvasProject(ctx.user,ctx.project);
+    await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),command:{type:"edit_project",graphEdits:ids.map((id,index)=>({type:"put_node",node:{id,type:"image",title:`参考 ${index}`,position:{x:index*300,y:0},width:220,height:110,metadata:{content:urls[index],storageKey:keys[index],status:"success",naturalWidth:2,naturalHeight:1}}}))}},client));
+    await db.query("UPDATE agent_runs SET model_config=jsonb_set(model_config,'{imageInput}','true') WHERE id=$1",[ctx.id]);
+    const before=fixture.requests.length;
+    responses.push(modelTool("read_canvas",{}),modelTool("read_nodes",{nodeIds:[ctx.source,...ids]}),modelTool("read_node_images",{nodeIds:[ids[0]]}),modelText("仅检查指定参考图"));await executeAgentRun(ctx.id);
+    assert.equal((await record(ctx.id)).status,"completed");
+    const images=(request:any)=>request.input.flatMap((part:any)=>[...(Array.isArray(part.content)?part.content:[]),...(Array.isArray(part.output)?part.output:[])].filter((block:any)=>block.type==="input_image"));
+    for(const request of fixture.requests.slice(before,before+3))assert.deepEqual(images(request),[]);
+    assert.equal(images(fixture.requests[before+3]).length,1);assert.equal(images(fixture.requests[before+3])[0].image_url,`data:image/png;base64,${png.toString("base64")}`);
+    const receipts=(await db.query("SELECT name,input,result FROM agent_tool_receipts WHERE run_id=$1 ORDER BY created_at",[ctx.id])).rows;
+    assert.deepEqual(receipts.find(r=>r.name==="read_nodes").result.images,[]);const read=receipts.find(r=>r.name==="read_node_images");assert.deepEqual(read.input,{nodeIds:[ids[0]]});assert.deepEqual(read.result.images,[urls[0]]);assert.deepEqual(read.result.vision,{supported:true,requested:true,provided:1});assert.equal(read.result.nodes.length,1);assert.equal(read.result.nodes[0].file.url,urls[0]);
+    const other=await setup();await assert.rejects(()=>recordedTool(other,"read_node_images",{nodeIds:[ids[0]]}),{code:"CANVAS_NODE_NOT_FOUND"});
+});
 test("text-only node reads retain mixed node metadata when image pixels are requested",async()=>{
     const ctx=await setup(),{saveFile}=await import("./storage.js"),{agentImageInputNotice}=await import("../../shared/agent.js"),imageId=randomUUID();
     const png=await (await import("sharp")).default({create:{width:2,height:1,channels:3,background:"white"}}).png().toBuffer(),key=`image:${randomUUID()}`,url=await saveFile(ctx.user,"image_files",key,png,"image/png"),project=await findCanvasProject(ctx.user,ctx.project);
     await transaction(client=>applyCanvasCommand(ctx.user,ctx.project,{operationId:randomUUID(),baseRevision:Number(project.content_revision),baseGenerationRevision:Number(project.generation_revision),command:{type:"edit_project",graphEdits:[{type:"put_node",node:{id:imageId,type:"image",title:"已有参考图",position:{x:400,y:0},width:220,height:110,metadata:{content:url,storageKey:key,mimeType:"image/png",naturalWidth:2,naturalHeight:1,status:"success"}}}]}},client));
-    const requests=fixture.requests.length,result=await recordedTool(ctx,"read_nodes",{nodeIds:[ctx.source,imageId],includeImages:true});assert.equal(result.nodes.length,2);assert.deepEqual(result.images,[]);assert.deepEqual(result.vision,{supported:false,requested:true,provided:0});assert.equal(result.notice,agentImageInputNotice);assert.equal(result.error,undefined);assert.equal(result.nodes[0].content,"小猫回家");assert.equal(result.nodes[1].file.width,2);assert.equal(result.nodes[1].width,220);assert.equal(fixture.requests.length,requests);
+    const requests=fixture.requests.length,result=await recordedTool(ctx,"read_node_images",{nodeIds:[ctx.source,imageId]});assert.equal(result.nodes.length,2);assert.deepEqual(result.images,[]);assert.deepEqual(result.vision,{supported:false,requested:true,provided:0});assert.equal(result.notice,agentImageInputNotice);assert.equal(result.error,undefined);assert.equal(result.nodes[0].content,"小猫回家");assert.equal(result.nodes[1].file.width,2);assert.equal(result.nodes[1].width,220);assert.equal(fixture.requests.length,requests);
     assert.ok(Object.keys((await record(ctx.id)).sources).includes(imageId));assert.equal((await recordedTool(ctx,"read_canvas",{})).agentCapabilities.imageInput,false);assert.equal((await db.query("SELECT count(*) FROM generation_tasks WHERE user_id=$1",[ctx.user])).rows[0].count,"0");
 });
 test("old run rules receive explicit live image-input capability and successful metadata receipts",async()=>{
     const ctx=await setup(),oldRules="旧运行规则：读取选区并准备参考图";await db.query("UPDATE agent_runs SET model_config=jsonb_set(model_config,'{coreRules}',$2::jsonb) WHERE id=$1",[ctx.id,JSON.stringify(oldRules)]);
-    const before=fixture.requests.length;responses.push(modelTool("read_nodes",{nodeIds:[ctx.source],includeImages:true}),modelText("节点正文已读取；当前推理模型没有启用图片理解，需要你补充画面说明。"));await executeAgentRun(ctx.id);
+    const before=fixture.requests.length;responses.push(modelTool("read_node_images",{nodeIds:[ctx.source]}),modelText("节点正文已读取；当前推理模型没有启用图片理解，需要你补充画面说明。"));await executeAgentRun(ctx.id);
     assert.ok(fixture.requests[before].input.some((entry:any)=>Array.isArray(entry.content)&&entry.content.some((part:any)=>part.text?.includes('"imageInput":false'))));
-    const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='read_nodes'",[ctx.id])).rows[0].result;assert.equal(receipt.error,undefined);assert.equal(receipt.vision.supported,false);assert.equal(receipt.nodes[0].content,"小猫回家");assert.ok(receipt.notice.includes("未启用图片理解"));assert.ok(JSON.stringify(fixture.requests[before+1]).includes("不能判断画面内容"));const run=await record(ctx.id);assert.equal(run.model_config.imageInput,false);assert.equal(run.model_config.coreRules,oldRules);assert.equal(run.status,"completed");
+    const receipt=(await db.query("SELECT result FROM agent_tool_receipts WHERE run_id=$1 AND name='read_node_images'",[ctx.id])).rows[0].result;assert.equal(receipt.error,undefined);assert.equal(receipt.vision.supported,false);assert.equal(receipt.nodes[0].content,"小猫回家");assert.ok(receipt.notice.includes("未启用图片理解"));assert.ok(JSON.stringify(fixture.requests[before+1]).includes("不能判断画面内容"));const run=await record(ctx.id);assert.equal(run.model_config.imageInput,false);assert.equal(run.model_config.coreRules,oldRules);assert.equal(run.status,"completed");
 });
 
 const textJob=(ctx:Awaited<ReturnType<typeof setup>>,parameters:Record<string,string>={})=>({title:"独立分镜稿",model:"writer-model",prompt:"根据剧本「小猫回家」写三条分镜，保留原意。",sourceNodeIds:[ctx.source],referenceNodeIds:[] as string[],parameters});
@@ -1155,7 +1185,7 @@ test("text task preparation reuses canonical requests across runs and updates on
     await recordedTool(next,"read_nodes",{nodeIds:first.nodes.map((node:any)=>node.id)});
     const changed=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,nodeId:first.nodes.find((node:any)=>node.type==="text").id,prompt:"根据「小猫回家」写六条分镜。",parameters:{reasoningEffort:"high"}}]});assert.equal(changed.updatedNodeIds.length,2);assert.deepEqual(changed.createdNodeIds,[]);assert.ok(changed.nodes.every((node:any)=>node.parameters.reasoningEffort==="high"));
     await assert.rejects(()=>recordedTool(next,"prepare_text_generation",{nodes:[spec]}),{code:"AGENT_NODE_EXISTS"});
-    const copy=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,newCopy:true}]});assert.equal(copy.createdNodeIds.length,2);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,5);assert.equal(project.nodes.find((node:any)=>node.id===ctx.source).metadata.content,"小猫回家");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
+    const copy=await recordedTool(next,"prepare_text_generation",{nodes:[{...spec,copyMode:"new_copy"}]});assert.equal(copy.createdNodeIds.length,2);const project=await findCanvasProject(ctx.user,ctx.project);assert.equal(project.nodes.length,5);assert.equal(project.nodes.find((node:any)=>node.id===ctx.source).metadata.content,"小猫回家");await cancelRun(ctx.user,ctx.id);await cancelRun(next.user,next.id);
 });
 test("text generation requires confirmation, uses an independent durable task, and resumes from saved results after restart",async()=>{
     const ctx=await setup(),spec=textJob(ctx,{reasoningEffort:"low"}),{executeMediaTask}=await import("./generation-executor.js");
