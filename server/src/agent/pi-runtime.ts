@@ -106,7 +106,7 @@ export async function executePiRun(owner:pg.Client,id:string,userId:string,token
         };
         const count=Number((await owner.query("SELECT count(*) FROM agent_pi_inputs WHERE thread_id=$1 AND NOT delivered",[run.thread_id])).rows[0].count);
         const latest=(await owner.query("SELECT * FROM agent_steps WHERE run_id=$1 ORDER BY step DESC LIMIT 1",[id])).rows[0];
-        if(!count&&latest?.decision?.native?.stopReason==="stop"&&latest.kind==="decision")return await complete();
+        if(!count&&latest?.decision?.valid&&latest.decision.native?.stopReason==="stop"&&latest.kind==="decision")return await complete();
         const compactState=(await owner.query("SELECT pi_needs_compaction FROM agent_runs WHERE id=$1",[id])).rows[0];
         maintenance=compactState.pi_needs_compaction||(host.session.getContextUsage()?.tokens??0)>=run.model_config.limits.contextTokens;
         if(!maintenance)await deliver();

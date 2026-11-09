@@ -16,7 +16,7 @@ import { lockRun,setState,item,digest,type Run } from "./state.js";
 
 export const retryableAgentError=(error:unknown)=>APICallError.isInstance(error)
     ? error.isRetryable && (error.statusCode===undefined || [408,409,429].includes(error.statusCode) || error.statusCode>=500)
-    : error instanceof TypeError || error instanceof Error && error.message==="AGENT_STREAM_INCOMPLETE";
+    : error instanceof TypeError || error instanceof Error && error.message==="AGENT_STREAM_INCOMPLETE" || error instanceof HttpError && error.code==="AGENT_MODEL_EMPTY_RESPONSE";
 export function agentRetryDelay(error:unknown,fallback:number){
     const headers=APICallError.isInstance(error)?error.responseHeaders:undefined,ms=headers?.["retry-after-ms"],value=headers?.["retry-after"];
     const parsed=ms!==undefined?Number(ms):value!==undefined?(Number.isFinite(Number(value))?Number(value)*1000:Date.parse(value)-Date.now()):NaN;
@@ -83,7 +83,7 @@ export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:A
             await client.query("UPDATE agent_runs SET decision_count=$2 WHERE id=$1",[run.id,number]);return number;
         },owner);
         if(!step)throw new HttpError(409,"AGENT_BUDGET_PAUSED");
-        let raw:any,transportError:unknown,responseMessage:AssistantMessage|undefined,text="",receivedEvent=false;
+        let raw:any,transportError:unknown,responseMessage:AssistantMessage|undefined,text="",receivedEvent=false,emptyResponse=false;
         try{
             const response=stream(model,context,{...options,apiKey:key.key,signal,maxRetries:0,identity:{attribution:null},
                 maxTokens:kind==="compaction"?run.model_config.limits.summaryTokens:run.model_config.limits.outputTokens,
@@ -125,6 +125,8 @@ export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:A
             text=message.content.filter(part=>part.type==="text").map(part=>part.text).join("");
             const rawCalls=raw.output?.filter((part:any)=>part.type==="function_call")||[];
             const calls=message.content.filter(part=>part.type==="toolCall").map((part,index)=>({nativeId:part.id,toolCallId:rawCalls[index]?.call_id,toolName:part.name,input:part.arguments,argumentsError:part.argumentsError}));
+            emptyResponse=kind==="decision"&&raw.status==="completed"&&message.stopReason==="stop"&&!raw.error&&!raw.incomplete_details&&!calls.length&&!rawCalls.length&&!text.trim()&&raw.output?.every((entry:any)=>entry.type==="reasoning"||entry.type==="message"&&entry.content?.every((part:any)=>part.type==="output_text"&&!part.text.trim()));
+            if(emptyResponse)throw new HttpError(409,"AGENT_MODEL_EMPTY_RESPONSE");
             const valid=raw.status==="completed"&&["stop","toolUse"].includes(message.stopReason)&&calls.every(call=>typeof call.toolCallId==="string"&&call.toolCallId)&&new Set(calls.map(call=>call.toolCallId)).size===calls.length&&!raw.output?.some((entry:any)=>entry.content?.some((part:any)=>part.type==="refusal"))&&(calls.length>0||message.content.some(part=>part.type==="text"&&part.text.trim()))&&(kind==="decision"||calls.length===0&&message.usage.output<=run.model_config.limits.summaryTokens);
             const code=message.stopReason==="length"?"AGENT_MODEL_OUTPUT_LIMIT":"AGENT_INVALID_MODEL_RESPONSE";
             await transaction(async client=>{
@@ -138,8 +140,8 @@ export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:A
             output.push(terminal);return message;
         }catch(error){
             const current=(await owner.query("SELECT status FROM agent_runs WHERE id=$1",[run.id])).rows[0];if(current?.status!=="running")throw error;
-            const known=APICallError.isInstance(error)&&error.statusCode!==undefined;
-            if(kind==="decision"&&known&&responseMessage&&isContextOverflow(responseMessage)){
+            const known=emptyResponse||APICallError.isInstance(error)&&error.statusCode!==undefined;
+            if(kind==="decision"&&!emptyResponse&&known&&responseMessage&&isContextOverflow(responseMessage)){
                 await transaction(async client=>{
                     run=await lockRun(client,run.id,run.user_id,token);
                     await client.query("UPDATE agent_steps SET status='finished',decision=$3 WHERE run_id=$1 AND step=$2",[run.id,step,JSON.stringify({status:(error as APICallError).statusCode,body:(error as APICallError).responseBody})]);
@@ -152,9 +154,10 @@ export function requestPiModel(owner:pg.Client,initial:Run,token:string,cancel:A
             const wait=agentRetryDelay(error,2000*2**(attempt-1));retryAt=Date.now()+wait;
             await transaction(async client=>{
                 run=await lockRun(client,run.id,run.user_id,token);
-                await client.query("UPDATE agent_steps SET status=$3,decision=$4,request=jsonb_set(request,'{retry}',$5) WHERE run_id=$1 AND step=$2",[run.id,step,retry||known?"finished":"unknown",JSON.stringify({raw,error:error instanceof Error?error.name:"Error",message:error instanceof Error?error.message:"Unknown",status:known?(error as APICallError).statusCode:undefined,body:known?(error as APICallError).responseBody:undefined}),JSON.stringify({attempt,deadline,retryAt,pending:retry,known})]);
-                if(retry){await item(client,run,"system",`文本推理暂时失败，等待后自动重试 ${attempt}/${run.model_config.limits.modelRetries}；计入调用预算，失败尝试也可能计费。`,{kind:"model_retry"});}
-                else await setState(client,run,known?"failed":"unknown",known?null:{type:"unknown_model",question:"模型结果未知，可能已计费；不会自动重发，请结束后明确发起新尝试。"},signal.aborted?"AGENT_MODEL_RETRY_TIMEOUT":attempt>1&&retryableAgentError(error)?"AGENT_MODEL_RETRIES_EXHAUSTED":known?"AGENT_MODEL_REJECTED":"AGENT_MODEL_UNKNOWN");
+                await client.query("UPDATE agent_steps SET status=$3,decision=$4,request=jsonb_set(request,'{retry}',$5),usage=COALESCE($6::jsonb,usage) WHERE run_id=$1 AND step=$2",[run.id,step,retry||known?"finished":"unknown",JSON.stringify({...(emptyResponse?{native:responseMessage,calls:[],text,valid:false,finishReason:"stop",errorCode:"AGENT_MODEL_EMPTY_RESPONSE"}:{}),raw,error:error instanceof Error?error.name:"Error",message:error instanceof Error?error.message:"Unknown",status:known?(error as APICallError).statusCode:undefined,body:known?(error as APICallError).responseBody:undefined}),JSON.stringify({attempt,deadline,retryAt,pending:retry,known}),emptyResponse?JSON.stringify(responseMessage!.usage):null]);
+                if(emptyResponse)await client.query("UPDATE agent_runs SET token_count=token_count+$2 WHERE id=$1",[run.id,responseMessage!.usage.totalTokens||0]);
+                if(retry){await item(client,run,"system",`${emptyResponse?"模型未返回正文或工具调用":"文本推理暂时失败"}，等待后自动重试 ${attempt}/${run.model_config.limits.modelRetries}；计入调用预算，失败尝试也可能计费。`,{kind:"model_retry"});}
+                else await setState(client,run,known?"failed":"unknown",known?null:{type:"unknown_model",question:"模型结果未知，可能已计费；不会自动重发，请结束后明确发起新尝试。"},signal.aborted?"AGENT_MODEL_RETRY_TIMEOUT":attempt>1&&retryableAgentError(error)?"AGENT_MODEL_RETRIES_EXHAUSTED":emptyResponse?"AGENT_MODEL_EMPTY_RESPONSE":known?"AGENT_MODEL_REJECTED":"AGENT_MODEL_UNKNOWN");
             },owner);
             if(!retry)throw error;
         }

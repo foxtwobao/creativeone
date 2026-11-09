@@ -2,6 +2,7 @@ import { HttpError } from "./http.js";
 import { agentImageInputNotice } from "../../shared/agent.js";
 
 const messages: Record<string, string> = {
+    AGENT_MODEL_EMPTY_RESPONSE:"模型未返回正文或工具调用，本次决定未执行；自动重试未启用，已停止。",
     AGENT_MODEL_RETRIES_EXHAUSTED:"文本推理自动重试次数已用完，已停止；已有成果保留，请查看失败记录。",
     AGENT_MODEL_RETRY_TIMEOUT:"文本推理及重试已达到本次等待期限，已停止自动执行；已有记录保留。",
     AGENT_OPERATION_CONFLICT: "工具调用标识对应的参数已变化，已拒绝重复执行。",
