@@ -18,7 +18,7 @@ import { optionalToolParam, mediaParams, videoToolParameterError, mediaModelAllo
 import { digest, getNode, setState, type Client, type Run } from "./state.js";
 
 const keyword=z.object({keyword:optionalToolParam(z.string())}).strict();
-const generation=z.object({model:z.string().min(1),prompt:z.string().min(1),count:optionalToolParam(z.number().int().positive(),1),run:optionalToolParam(z.boolean(),true),references:optionalToolParam(z.array(z.string()),[])}).strict();
+const generation=z.object({model:z.string().min(1),prompt:z.string().trim().min(1),count:optionalToolParam(z.number().int().positive(),1),run:optionalToolParam(z.boolean(),true),references:optionalToolParam(z.array(z.string()),[])}).strict();
 const sitePaths=["/","/studio","/image","/video","/audio","/canvas","/assets","/prompts","/config"] as const;
 export const siteToolSchemas={
     site_navigate:z.object({path:z.union([z.enum(sitePaths),z.templateLiteral(["/canvas/",z.uuid()])])}).strict(),

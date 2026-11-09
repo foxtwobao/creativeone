@@ -500,6 +500,7 @@ test("all Agent tools send closed strict schemas and nullable optional values ma
         ["set_agent_state",{phase:"storyboard",brief:null,approvedPlan:null,targetDurationSeconds:null,approvedNodeIds:null,referenceNodeIds:null}],
     ];
     for(const [toolName,input] of nullable)assert.deepEqual(toolArgumentErrors([{toolName,input,toolCallId:randomUUID()}]),[],toolName);
+    assert.equal(toolArgumentErrors([{toolName:"workbench_image_generate",input:{model:"image-model",prompt:"   "},toolCallId:randomUUID()}]).length,1);
     const defaults=toolSchemas.workbench_image_generate.parse({model:"image-model",prompt:"小猫",count:null,run:null,references:null,parameters:null});assert.equal(defaults.count,1);assert.equal(defaults.run,true);assert.deepEqual(defaults.references,[]);assert.deepEqual(defaults.parameters,{});assert.equal(toolSchemas.assets_list.parse({kind:null}).kind,"all");assert.equal(toolSchemas.read_connections.parse({nodeIds:[randomUUID()],direction:null}).direction,"both");
     const video=definitions.find((tool:any)=>tool.name==="prepare_media_nodes").parameters.properties.nodes.items.anyOf.find((variant:any)=>variant.properties.kind.const==="video").properties.parameters;
     const workbench=definitions.find((tool:any)=>tool.name==="workbench_video_generate").parameters.properties.parameters.anyOf.find((variant:any)=>variant.type==="object");assert.deepEqual(video,workbench);
