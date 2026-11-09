@@ -1308,6 +1308,27 @@ async function retrySetup(modelRetries=5,patch:Record<string,number>={}){
     try{return await setup();}finally{await saveAgentSettings({...original,revision:(await readAgentSettings()).revision});}
 }
 const transient=(status=503)=>({httpStatus:status,headers:{"retry-after":"0"}});
+const reasoningOnly=()=>({...modelText(""),output:[{id:`reasoning_${randomUUID()}`,type:"reasoning",status:"completed",summary:[{type:"summary_text",text:"正在规划下一步工具调用"}]}]});
+test("reasoning-only completed responses retry with the same context and preserve usage and raw responses",async()=>{
+    const ctx=await retrySetup(1),before=fixture.requests.length,empty=reasoningOnly();responses.push(empty,modelText("重试后正常回复"));await executeAgentRun(ctx.id);
+    const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,2);assert.equal(Number(run.token_count),50);assert.equal(fixture.requests.length,before+2);assert.deepEqual(fixture.requests[before+1].input,fixture.requests[before].input);
+    const steps=(await db.query("SELECT status,request,decision,usage FROM agent_steps WHERE run_id=$1 ORDER BY step",[ctx.id])).rows;assert.equal(steps[0].status,"finished");assert.equal(steps[0].decision.errorCode,"AGENT_MODEL_EMPTY_RESPONSE");assert.deepEqual(steps[0].decision.raw,empty);assert.equal(steps[0].usage.totalTokens,25);assert.equal(steps[0].request.retry.known,true);assert.equal(steps[0].request.retry.deadline,steps[1].request.retry.deadline);assert.equal((await db.query("SELECT count(*) FROM agent_tool_receipts WHERE run_id=$1",[ctx.id])).rows[0].count,"0");
+});
+test("empty responses exhaust the shared retry budget and stay failed without automatic restart",async()=>{
+    for(const first of [transient(),reasoningOnly()]){
+        const ctx=await retrySetup(1),before=fixture.requests.length;responses.push(first,reasoningOnly());await executeAgentRun(ctx.id);const run=await record(ctx.id);assert.equal(run.status,"failed");assert.equal(run.error,"AGENT_MODEL_RETRIES_EXHAUSTED");assert.equal(run.decision_count,2);assert.equal(Number(run.token_count),first.httpStatus?25:50);await executeAgentRun(ctx.id);assert.equal(fixture.requests.length,before+2);assert.equal((await findCanvasProject(ctx.user,ctx.project)).nodes.length,1);
+    }
+});
+test("empty responses respect disabled retries, the total deadline and the model-call budget",async()=>{
+    const disabled=await retrySetup(0),before=fixture.requests.length;responses.push({...modelText(""),output:[],usage:{input_tokens:0,output_tokens:0,total_tokens:0}});await executeAgentRun(disabled.id);assert.equal((await record(disabled.id)).status,"failed");assert.equal((await record(disabled.id)).error,"AGENT_MODEL_EMPTY_RESPONSE");assert.equal(fixture.requests.length,before+1);
+    const timeout=await retrySetup(1,{requestTimeoutMs:200});responses.push(reasoningOnly());await executeAgentRun(timeout.id);assert.equal((await record(timeout.id)).status,"failed");assert.equal((await record(timeout.id)).error,"AGENT_MODEL_RETRY_TIMEOUT");assert.equal((await record(timeout.id)).decision_count,1);
+    const budget=await retrySetup(1);await db.query("UPDATE agent_runs SET decision_count=23 WHERE id=$1",[budget.id]);responses.push(reasoningOnly());await executeAgentRun(budget.id);let run=await record(budget.id);assert.equal(run.status,"waiting_input");assert.equal(run.wait.type,"budget");assert.equal(run.decision_count,24);await inputRun(budget.user,budget.id,{waitVersion:run.wait_version,action:"continue_budget"});responses.push(reasoningOnly());await executeAgentRun(budget.id);run=await record(budget.id);assert.equal(run.status,"failed");assert.equal(run.error,"AGENT_MODEL_RETRIES_EXHAUSTED");assert.equal(run.decision_count,25);
+});
+test("reasoning-only retry checkpoints resume across processes without completing the invalid stop response",{timeout:15000},async()=>{
+    const ctx=await retrySetup(1),empty=reasoningOnly(),child=spawn(process.execPath,["--import","tsx","src/fixtures/agent-worker-child.ts",ctx.id],{env:{...process.env,TEST_AGENT_RESPONSES:JSON.stringify([empty])},stdio:["ignore","pipe","pipe"]});
+    let exited=false;const exit=new Promise<void>(resolve=>child.on("exit",()=>{exited=true;resolve();}));
+    try{const pending=await pendingRetry(ctx.id);assert.equal(pending.decision.errorCode,"AGENT_MODEL_EMPTY_RESPONSE");child.kill("SIGKILL");await exit;await db.query("UPDATE agent_steps SET request=jsonb_set(request,'{retry,retryAt}','0') WHERE run_id=$1 AND step=$2",[ctx.id,pending.step]);assert.match(await resumeChild(ctx.id,[modelText("恢复后完成")]),/"requests":1/);const run=await record(ctx.id);assert.equal(run.status,"completed");assert.equal(run.decision_count,2);assert.equal(Number(run.token_count),50);}finally{if(!exited){child.kill("SIGKILL");await exit;}}
+});
 async function pendingRetry(id:string){
     for(let i=0;i<200;i++){const step=(await db.query("SELECT * FROM agent_steps WHERE run_id=$1 AND request#>>'{retry,pending}'='true' ORDER BY step DESC LIMIT 1",[id])).rows[0];if(step)return step;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error("Retry checkpoint not saved");
 }
