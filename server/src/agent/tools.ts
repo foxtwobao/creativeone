@@ -29,14 +29,14 @@ import type { Channel } from "../tokenone.js";
 
 const ids = z.array(z.string().min(1)).min(1);
 const nodeId=optionalToolParam(z.string().min(1)).describe("修改已有助手节点时传其实际 ID；先 read_nodes 读取当前节点，媒体配置和输出须一起读取。新建或复用时填 null。");
-const newCopy=optionalToolParam(z.boolean(),false).describe("每个节点必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受字符串 true/false。");
+const newCopy=z.boolean().default(false).describe("必须传布尔值：默认 false；仅用户明确要求额外副本或多个版本时传 true。不接受 null 或字符串 true/false。");
 const textNodeFields={nodeId,newCopy,title:z.string(),sourceNodeIds:z.array(z.string())};
 const textNodes=z.array(z.union([
     z.object({...textNodeFields,text:z.string().min(1).describe("此节点的完整正文；使用本结构时不传 shots。")}).strict(),
     z.object({...textNodeFields,shots:z.array(z.object({number:z.number().int().positive(),seconds:z.number().positive(),scene:z.string().min(1),camera:z.string(),sound:z.string(),materials:z.string()}).strict()).min(1).describe("此文本节点内的镜头数组；镜头字段仅放在 nodes[].shots[]，使用本结构时不传 text。")}).strict(),
 ])).min(1);
 const textNodeHint='顶层只传 nodes 数组；每个节点内二选一：text（完整正文）或 shots（镜头数组）。number、seconds、scene、camera、sound、materials 只能放在 nodes[].shots[]。每个节点必须传 newCopy 布尔值，默认 false；仅用户明确要求额外副本或多个版本时传 true，不要传字符串。正文示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"正文","text":"完整正文","sourceNodeIds":[]}]}。分镜示例：{"nodes":[{"nodeId":null,"newCopy":false,"title":"镜头一","shots":[{"number":1,"seconds":3,"scene":"画面动作","camera":"固定镜头","sound":"环境声","materials":"所需素材"}],"sourceNodeIds":[]}]}。实际来源须填写已读取的真实节点 ID；修正仅处理未完成内容，不重复已成功节点。';
-const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
+const mediaNodeFields={nodeId,newCopy,title:z.string(),model:z.string().min(1).describe("填写 get_model_capabilities 返回的 model 原值；不要使用 modelId"),prompt:z.string().min(1),sourceNodeIds:z.array(z.string()),referenceNodeIds:z.array(z.string())};
 const preparedMediaNode=z.discriminatedUnion("kind",[
     z.object({...mediaNodeFields,kind:z.literal("image"),parameters:mediaParams.pick({size:true,quality:true,background:true})}).strict(),
     z.object({...mediaNodeFields,kind:z.literal("video"),parameters:mediaParams.pick({videoSize:true,vquality:true,seconds:true,videoMode:true,generateAudio:true,watermark:true,fastMode:true})}).strict(),

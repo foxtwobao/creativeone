@@ -163,6 +163,8 @@ function getImageConfig() {
 }
 
 function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
+    const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+    if (!prompt) throw new Error("图片工作台需要非空提示词，未执行跳转");
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
     if (typeof input.model === "string" && input.model.trim()) {
@@ -187,10 +189,9 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         configStore.updateConfig("count", count);
         applied.count = count;
     }
-    const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;
-    navigate("/image");
     const taskId = useWorkbenchAgentStore.getState().dispatchImage({ prompt, run, references:input.references as any });
+    navigate("/image");
     return { ok: true, navigated: "/image", prompt, run, taskId, applied, note: siteText(run ? "imageGenerationStarted" : "imageConfigApplied") };
 }
 
